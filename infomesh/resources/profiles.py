@@ -162,4 +162,4 @@ def build_custom_profile(**overrides: object) -> ResourceProfile:
             fields[k] = v
         else:
             logger.warning("profile_unknown_field", field=k)
-    return ResourceProfile(**fields)  # type: ignore[arg-type]
+    return ResourceProfile(**fields)

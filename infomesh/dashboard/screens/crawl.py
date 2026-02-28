@@ -27,7 +27,7 @@ class CrawlStatsPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._active_workers = 0
         self._queue_size = 0
@@ -76,8 +76,8 @@ class TopDomainsPanel(Widget):
 
     def __init__(self, config: Config, **kwargs: object) -> None:
         # Pop data_cache from kwargs so Widget.__init__ doesn't get it
-        self._data_cache: DashboardDataCache | None = kwargs.pop("data_cache", None)  # type: ignore[arg-type]
-        super().__init__(**kwargs)
+        self._data_cache: DashboardDataCache | None = kwargs.pop("data_cache", None)  # type: ignore[assignment]
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def compose(self) -> ComposeResult:
@@ -162,7 +162,7 @@ class CrawlPane(Widget):
         data_cache: DashboardDataCache | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._data_cache = data_cache
         self._refresh_timer: Timer | None = None

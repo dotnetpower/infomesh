@@ -34,7 +34,7 @@ class Compressor:
         self._level = level
 
         if dict_data:
-            self._dict = zstd.ZstdCompressionDict(dict_data)
+            self._dict: zstd.ZstdCompressionDict | None = zstd.ZstdCompressionDict(dict_data)
             self._compressor = zstd.ZstdCompressor(level=level, dict_data=self._dict)
             self._decompressor = zstd.ZstdDecompressor(dict_data=self._dict)
         else:
@@ -117,4 +117,4 @@ def train_dictionary(samples: list[bytes], *, dict_size: int = 112_640) -> bytes
     Returns:
         Dictionary data bytes.
     """
-    return zstd.train_dictionary(dict_size, samples).as_bytes()
+    return zstd.train_dictionary(dict_size, samples).as_bytes()  # type: ignore[arg-type]

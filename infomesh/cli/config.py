@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -82,7 +83,7 @@ def _coerce_cli_value(value: str) -> object:
     return value
 
 
-def _write_toml(path: Path | str, data: dict) -> None:
+def _write_toml(path: Path | str, data: dict[str, Any]) -> None:
     """Write a flat TOML dict to *path*.
 
     Uses a simple serializer sufficient for InfoMesh's config structure.

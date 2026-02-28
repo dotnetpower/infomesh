@@ -21,6 +21,7 @@ import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import msgpack
 import structlog
@@ -109,7 +110,7 @@ def export_snapshot(
     )
 
 
-def read_snapshot_metadata(snapshot_path: Path | str) -> dict:
+def read_snapshot_metadata(snapshot_path: Path | str) -> dict[str, Any]:
     """Read only the metadata header from a snapshot file.
 
     Args:
@@ -124,7 +125,7 @@ def read_snapshot_metadata(snapshot_path: Path | str) -> dict:
         header_compressed = f.read(header_len)
 
     header_json = compressor.decompress(header_compressed)
-    return json.loads(header_json)
+    return dict(json.loads(header_json))
 
 
 def import_snapshot(

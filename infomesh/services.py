@@ -471,7 +471,7 @@ class AppContext:
                 try:
                     from infomesh.index.vector_store import VectorStore
 
-                    self.vector_store = VectorStore(
+                    self.vector_store = VectorStore(  # type: ignore[assignment]
                         persist_dir=c.node.data_dir / "chroma",
                         model_name=c.index.embedding_model,
                     )

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -171,7 +172,7 @@ def verify_attestation(
     return result
 
 
-def serialize_attestation(att: ContentAttestation) -> dict:
+def serialize_attestation(att: ContentAttestation) -> dict[str, Any]:
     """Serialize an attestation to a dict suitable for msgpack/JSON.
 
     Args:
@@ -191,7 +192,7 @@ def serialize_attestation(att: ContentAttestation) -> dict:
     }
 
 
-def deserialize_attestation(data: dict) -> ContentAttestation:
+def deserialize_attestation(data: dict[str, Any]) -> ContentAttestation:
     """Deserialize an attestation from a dict.
 
     Args:

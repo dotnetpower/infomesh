@@ -206,6 +206,7 @@ class SubnetLimiter:
             Subnet string (e.g., "192.168.1.0/24").
         """
         addr = ipaddress.ip_address(ip)
+        network: ipaddress.IPv4Network | ipaddress.IPv6Network
         if isinstance(addr, ipaddress.IPv4Address):
             network = ipaddress.IPv4Network(f"{ip}/24", strict=False)
         else:

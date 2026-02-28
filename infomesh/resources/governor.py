@@ -32,7 +32,7 @@ try:
 
     _HAS_PSUTIL = True
 except ImportError:  # pragma: no cover
-    psutil = None  # type: ignore[assignment]
+    psutil = None
     _HAS_PSUTIL = False
 
 
@@ -205,14 +205,14 @@ class ResourceGovernor:
         """Return current CPU usage percentage (0–100)."""
         if not _HAS_PSUTIL:
             return 0.0
-        return psutil.cpu_percent(interval=0)
+        return float(psutil.cpu_percent(interval=0))
 
     @staticmethod
     def _sample_memory() -> float:
         """Return current memory usage percentage (0–100)."""
         if not _HAS_PSUTIL:
             return 0.0
-        return psutil.virtual_memory().percent
+        return float(psutil.virtual_memory().percent)
 
     def sample_network_mbps(self) -> tuple[float, float]:
         """Return (upload_mbps, download_mbps) since last call.

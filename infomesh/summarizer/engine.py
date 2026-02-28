@@ -137,7 +137,7 @@ class OllamaBackend(LLMBackend):
             },
         )
         resp.raise_for_status()
-        return resp.json()["response"]
+        return str(resp.json()["response"])
 
     async def is_available(self) -> bool:
         import httpx
@@ -211,7 +211,7 @@ class LlamaCppBackend(LLMBackend):
             },
         )
         resp.raise_for_status()
-        return resp.json()["content"]
+        return str(resp.json()["content"])
 
     async def is_available(self) -> bool:
         try:

@@ -16,7 +16,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -44,7 +44,7 @@ class QueryResult:
 class HybridResult:
     """Aggregated hybrid search result with merged scoring."""
 
-    results: list  # list[MergedResult]
+    results: list[Any]  # list[MergedResult]
     total: int
     elapsed_ms: float
     source: str  # "hybrid", "fts", or "vector"

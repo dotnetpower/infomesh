@@ -18,6 +18,7 @@ import hashlib
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 import structlog
 
@@ -277,7 +278,7 @@ class MerkleTree:
             payload = (
                 f"{self._root_hash}|{self.leaf_count}|{self._built_at}|{peer_id}"
             ).encode()
-            signature = key_pair.sign(payload)  # type: ignore[union-attr]
+            signature = key_pair.sign(payload)
 
         return MerkleRoot(
             root_hash=self._root_hash,
@@ -288,7 +289,7 @@ class MerkleTree:
         )
 
 
-def serialize_merkle_root(root: MerkleRoot) -> dict:
+def serialize_merkle_root(root: MerkleRoot) -> dict[str, Any]:
     """Serialize a MerkleRoot to a dict for msgpack/JSON."""
     return {
         "root_hash": root.root_hash,
@@ -299,7 +300,7 @@ def serialize_merkle_root(root: MerkleRoot) -> dict:
     }
 
 
-def deserialize_merkle_root(data: dict) -> MerkleRoot:
+def deserialize_merkle_root(data: dict[str, Any]) -> MerkleRoot:
     """Deserialize a MerkleRoot from a dict."""
     return MerkleRoot(
         root_hash=data["root_hash"],
@@ -310,7 +311,7 @@ def deserialize_merkle_root(data: dict) -> MerkleRoot:
     )
 
 
-def serialize_proof(proof: MerkleProof) -> dict:
+def serialize_proof(proof: MerkleProof) -> dict[str, Any]:
     """Serialize a MerkleProof to a dict."""
     return {
         "doc_hash": proof.doc_hash,
@@ -320,7 +321,7 @@ def serialize_proof(proof: MerkleProof) -> dict:
     }
 
 
-def deserialize_proof(data: dict) -> MerkleProof:
+def deserialize_proof(data: dict[str, Any]) -> MerkleProof:
     """Deserialize a MerkleProof from a dict."""
     return MerkleProof(
         doc_hash=data["doc_hash"],

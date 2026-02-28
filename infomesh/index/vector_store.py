@@ -121,7 +121,7 @@ class VectorStore:
         """Generate embeddings for a list of texts."""
         model = self._get_embedder()
         # sentence-transformers returns numpy arrays — convert to lists
-        embeddings = model.encode(texts, show_progress_bar=False)  # type: ignore[union-attr]
+        embeddings = model.encode(texts, show_progress_bar=False)  # type: ignore[attr-defined]
         return [emb.tolist() for emb in embeddings]
 
     # ------------------------------------------------------------------

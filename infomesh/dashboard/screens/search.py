@@ -23,7 +23,7 @@ class SearchResultsPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def display_results(
@@ -111,7 +111,7 @@ class SearchPane(Widget):
     ]
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def compose(self) -> ComposeResult:

@@ -149,7 +149,7 @@ class QueryRouter:
         # Step 1: Find candidate peers via DHT
         peer_scores: dict[str, float] = {}
         for kw in keywords:
-            pointers = await self._dht.query_keyword(kw)
+            pointers = await self._dht.query_keyword(kw)  # type: ignore[attr-defined]
             for ptr in pointers:
                 pid = ptr.get("peer_id", "")
                 if pid and pid != self._peer_id:
@@ -253,7 +253,7 @@ class QueryRouter:
 
         target_id = PeerID.from_base58(peer_id)
 
-        stream = await self._host.new_stream(target_id, [PROTOCOL_SEARCH])
+        stream = await self._host.new_stream(target_id, [PROTOCOL_SEARCH])  # type: ignore[attr-defined]
         try:
             # Send request
             payload = dataclass_to_payload(request)
@@ -314,7 +314,7 @@ class QueryRouter:
 
             # Perform local search
             start = time.monotonic()
-            results = await local_search_fn(query, limit)  # type: ignore[misc]
+            results = await local_search_fn(query, limit)  # type: ignore[operator]
             elapsed = (time.monotonic() - start) * 1000
 
             # Build response

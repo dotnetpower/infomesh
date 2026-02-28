@@ -174,7 +174,7 @@ class MDNSDiscovery:
             },
             use_bin_type=True,
         )
-        return MAGIC + payload
+        return bytes(MAGIC + payload)
 
     def _parse_announce(
         self, data: bytes, addr: tuple[str, int]

@@ -245,7 +245,7 @@ class RestartConfirmScreen(ModalScreen[bool]):
     """
 
     def __init__(self, changed_keys: list[str], **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._changed_keys = changed_keys
 
     def compose(self) -> ComposeResult:
@@ -335,7 +335,7 @@ class SettingsPane(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._sections = _all_specs()
 
@@ -413,22 +413,22 @@ class SettingsPane(Widget):
                     continue
 
                 if spec.kind == "bool":
-                    val = widget.value  # type: ignore[union-attr]
+                    val = widget.value  # type: ignore[attr-defined]
                 elif spec.kind == "select":
-                    raw = widget.value  # type: ignore[union-attr]
+                    raw = widget.value  # type: ignore[attr-defined]
                     val = str(raw) if raw is not Select.BLANK else spec.default
                 elif spec.kind == "int":
                     try:
-                        val = int(widget.value)  # type: ignore[union-attr]
+                        val = int(widget.value)  # type: ignore[attr-defined]
                     except (ValueError, TypeError):
                         val = spec.default
                 elif spec.kind == "float":
                     try:
-                        val = float(widget.value)  # type: ignore[union-attr]
+                        val = float(widget.value)  # type: ignore[attr-defined]
                     except (ValueError, TypeError):
                         val = spec.default
                 else:
-                    val = widget.value  # type: ignore[union-attr]
+                    val = widget.value  # type: ignore[attr-defined]
 
                 result.setdefault(spec.section, {})[spec.key] = val
 
@@ -452,11 +452,11 @@ class SettingsPane(Widget):
         kwargs: dict[str, object] = {}
         for section_name, current_obj in section_map.items():
             cls = type(current_obj)
-            base = dict(asdict(current_obj))
+            base = dict(asdict(current_obj))  # type: ignore[call-overload]
             if section_name in values:
                 base.update(values[section_name])
             # Convert Path fields back
-            for f in fields(cls):
+            for f in fields(cls):  # type: ignore[arg-type]
                 if f.name in base and isinstance(getattr(current_obj, f.name), Path):
                     base[f.name] = Path(str(base[f.name]))
             kwargs[section_name] = cls(**base)
@@ -477,11 +477,11 @@ class SettingsPane(Widget):
                     continue
 
                 if spec.kind == "bool":
-                    widget.value = bool(val)  # type: ignore[union-attr]
+                    widget.value = bool(val)  # type: ignore[attr-defined]
                 elif spec.kind == "select":
-                    widget.value = str(val)  # type: ignore[union-attr]
+                    widget.value = str(val)  # type: ignore[attr-defined]
                 else:
-                    widget.value = str(val)  # type: ignore[union-attr]
+                    widget.value = str(val)  # type: ignore[attr-defined]
 
     # ── event handlers ────────────────────────────────────────
 
@@ -518,7 +518,7 @@ class SettingsPane(Widget):
                 )
                 self.app.push_screen(
                     RestartConfirmScreen(restart_keys),
-                    self._handle_restart_response,
+                    self._handle_restart_response,  # type: ignore[arg-type]
                 )
             else:
                 status.update("[bold green]✓ Settings saved and applied[/bold green]")
@@ -561,11 +561,11 @@ class SettingsPane(Widget):
 
             # Apply theme change immediately
             if hasattr(app, "theme"):
-                app.theme = new_config.dashboard.theme  # type: ignore[assignment]
+                app.theme = new_config.dashboard.theme
 
             # Update dashboard data cache refresh interval
             if hasattr(app, "_data_cache"):
-                app._data_cache._ttl = new_config.dashboard.refresh_interval  # type: ignore[attr-defined]
+                app._data_cache._ttl = new_config.dashboard.refresh_interval
         except Exception:  # noqa: BLE001
             pass
 
@@ -614,7 +614,7 @@ class SettingsPane(Widget):
             log_file.close()
             # Update app's node_pid so quit dialog still works
             if hasattr(app, "_node_pid"):
-                app._node_pid = proc.pid  # type: ignore[attr-defined]
+                app._node_pid = proc.pid
             self.notify(
                 f"Node restarted (PID {proc.pid})",
                 title="Settings",

@@ -147,7 +147,7 @@ class FarmingDetector(SQLiteStore):
         if row is None:
             return True  # Unregistered = on probation
         elapsed_hours = (now - row[0]) / 3600.0
-        return elapsed_hours < PROBATION_HOURS
+        return bool(elapsed_hours < PROBATION_HOURS)
 
     def probation_remaining(self, peer_id: str, *, now: float | None = None) -> float:
         """Return remaining probation hours (0 if past probation)."""
@@ -159,7 +159,7 @@ class FarmingDetector(SQLiteStore):
         if row is None:
             return PROBATION_HOURS
         elapsed = (now - row[0]) / 3600.0
-        return max(0.0, PROBATION_HOURS - elapsed)
+        return float(max(0.0, PROBATION_HOURS - elapsed))
 
     # --- Action logging ----------------------------------------------------
 

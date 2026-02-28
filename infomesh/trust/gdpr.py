@@ -22,6 +22,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 import structlog
 
@@ -351,7 +352,7 @@ class DeletionManager:
 # --- Serialization ----------------------------------------------------------
 
 
-def serialize_request(request: DeletionRequest) -> dict:
+def serialize_request(request: DeletionRequest) -> dict[str, Any]:
     """Serialize a DeletionRequest for wire format."""
     return {
         "request_id": request.request_id,
@@ -365,7 +366,7 @@ def serialize_request(request: DeletionRequest) -> dict:
     }
 
 
-def deserialize_request(data: dict) -> DeletionRequest:
+def deserialize_request(data: dict[str, Any]) -> DeletionRequest:
     """Deserialize a DeletionRequest from a dict."""
     return DeletionRequest(
         request_id=data["request_id"],

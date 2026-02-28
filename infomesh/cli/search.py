@@ -37,7 +37,7 @@ def search(query: str, limit: int, local: bool, vector: bool) -> None:
                 persist_dir=config.node.data_dir / "chroma",
                 model_name=config.index.embedding_model,
             )
-            hybrid = search_hybrid(store, vec_store, query, limit=limit)
+            hybrid = search_hybrid(store, vec_store, query, limit=limit)  # type: ignore[arg-type]
             click.echo(format_hybrid_results(hybrid))
             vec_store.close()
             store.close()

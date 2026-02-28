@@ -8,7 +8,7 @@ concrete implementations — when all they need is a structural contract.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 # ── Key pair protocol ───────────────────────────────────────────────
 
@@ -62,11 +62,11 @@ class VectorStoreLike(Protocol):
         """Add a document to the vector index."""
         ...
 
-    def search(self, query: str, limit: int = 10) -> list:
+    def search(self, query: str, limit: int = 10) -> list[Any]:
         """Return the *limit* most similar results for *query*."""
         ...
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Return index statistics."""
         ...
 

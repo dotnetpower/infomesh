@@ -35,6 +35,7 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -103,7 +104,7 @@ class CreditProofBuilder:
         *,
         sample_size: int = 10,
         request_id: str = "",
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Build a credit proof for P2P verification.
 
         Args:
@@ -132,8 +133,8 @@ class CreditProofBuilder:
 
         # Select random sample
         sample_indices = _select_sample(len(entries), sample_size)
-        sample_entries: list[dict] = []
-        sample_proofs: list[dict] = []
+        sample_entries: list[dict[str, Any]] = []
+        sample_proofs: list[dict[str, Any]] = []
 
         for idx in sample_indices:
             entry = entries[idx]
@@ -172,7 +173,7 @@ class CreditProofBuilder:
         )
         return result
 
-    def _empty_proof(self, request_id: str) -> dict:
+    def _empty_proof(self, request_id: str) -> dict[str, Any]:
         """Return a valid proof for an empty ledger."""
         return {
             "peer_id": self._key_pair.peer_id,
@@ -192,7 +193,7 @@ class CreditProofBuilder:
     # ── Verify (static) ────────────────────────────────────────
 
     @staticmethod
-    def verify_proof(proof_data: dict) -> CreditVerificationResult:
+    def verify_proof(proof_data: dict[str, Any]) -> CreditVerificationResult:
         """Verify a credit proof received from a peer.
 
         Performs three levels of verification:
@@ -359,7 +360,7 @@ def _select_sample(total: int, sample_size: int) -> list[int]:
     return sorted(random.sample(range(total), sample_size))
 
 
-def _entry_to_dict(entry: CreditEntry) -> dict:
+def _entry_to_dict(entry: CreditEntry) -> dict[str, Any]:
     """Convert a CreditEntry to a dict for serialization."""
     return {
         "entry_hash": entry.entry_hash,

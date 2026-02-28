@@ -25,7 +25,7 @@ class P2PStatusPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def on_mount(self) -> None:
@@ -66,7 +66,7 @@ class DHTPanel(Static):
     """
 
     def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._keys_stored = 0
         self._lookups_hr = 0
         self._publications = 0
@@ -111,7 +111,7 @@ class PeerTable(Widget):
 
     def compose(self) -> ComposeResult:
         yield Static("[bold]Connected Peers[/bold]", classes="panel-title")
-        table = DataTable(id="peers-table")
+        table: DataTable[str] = DataTable(id="peers-table")
         table.add_columns("Peer ID", "Latency", "Trust", "State")
         yield table
 
@@ -161,7 +161,7 @@ class BandwidthPanel(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def compose(self) -> ComposeResult:
@@ -212,7 +212,7 @@ class NetworkPane(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._refresh_timer: Timer | None = None
 

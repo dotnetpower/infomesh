@@ -258,7 +258,7 @@ class InfoMeshNode:
     async def _trio_main(self) -> None:
         """Main trio async entry point — sets up libp2p and runs until stopped."""
         import trio
-        from libp2p import create_new_ed25519_key_pair, new_host
+        from libp2p import create_new_ed25519_key_pair, new_host  # type: ignore[attr-defined]
         from libp2p.kad_dht import KadDHT
         from libp2p.kad_dht.kad_dht import DHTMode
         from libp2p.records.validator import NamespacedValidator, Validator
@@ -287,12 +287,12 @@ class InfoMeshNode:
         )
         self._host = new_host(key_pair=key_pair)
 
-        async with self._host.run([listen_addr]):  # type: ignore[attr-defined]
-            self._peer_id = str(self._host.get_id())  # type: ignore[attr-defined]
+        async with self._host.run([listen_addr]):
+            self._peer_id = str(self._host.get_id())
             logger.info(
                 "node_started",
                 peer_id=self._peer_id,
-                addrs=[str(a) for a in self._host.get_addrs()],  # type: ignore[attr-defined]
+                addrs=[str(a) for a in self._host.get_addrs()],
             )
 
             # Create DHT with InfoMesh namespace validator
@@ -429,8 +429,8 @@ class InfoMeshNode:
 
                     msg_type, payload = decode_message(data)
                     if msg_type == MessageType.INDEX_SUBMIT:
-                        ack = await receiver.handle_submit(payload)
-                        ack_msg = receiver.build_ack_message(ack)
+                        ack = await receiver.handle_submit(payload)  # type: ignore[attr-defined]
+                        ack_msg = receiver.build_ack_message(ack)  # type: ignore[attr-defined]
                         await stream.write(ack_msg)  # type: ignore[attr-defined]
                 except Exception:
                     logger.exception("index_submit_handler_error")
@@ -473,7 +473,7 @@ class InfoMeshNode:
             try:
                 maddr = Multiaddr(addr_str)
                 peer_info = info_from_p2p_addr(maddr)
-                await self._host.connect(peer_info)  # type: ignore[attr-defined]
+                await self._host.connect(peer_info)  # type: ignore[union-attr]
                 logger.info("bootstrap_connected", addr=addr_str)
             except Exception:
                 logger.warning("bootstrap_failed", addr=addr_str)
@@ -542,7 +542,7 @@ class InfoMeshNode:
         if self._dht is None:
             return
 
-        from infomesh.p2p.keys import KEY_DIR
+        from infomesh.p2p.keys import KEY_DIR  # type: ignore[attr-defined]
 
         revocation_dir = KEY_DIR / "revocations"
         if not revocation_dir.exists():

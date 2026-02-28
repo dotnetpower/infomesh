@@ -20,6 +20,8 @@ from enum import IntEnum
 
 import msgpack
 
+from typing import Any
+
 from infomesh.hashing import content_hash
 
 # ─── Protocol IDs ──────────────────────────────────────────
@@ -129,7 +131,7 @@ class SearchResponse:
     """Response to a search query from a peer."""
 
     request_id: str
-    results: list[dict]  # list of SearchResult as dicts
+    results: list[dict[str, Any]]  # list of SearchResult as dicts
     peer_id: str = ""
     elapsed_ms: float = 0.0
 
@@ -139,7 +141,7 @@ class IndexPublish:
     """Publish keyword → peer pointer mapping to DHT."""
 
     keyword: str
-    pointers: list[dict]  # list of PeerPointer as dicts
+    pointers: list[dict[str, Any]]  # list of PeerPointer as dicts
     peer_id: str = ""
     timestamp: float = field(default_factory=time.time)
     signature: bytes = b""
@@ -219,12 +221,12 @@ class CreditProofResponse:
     request_id: str
     total_earned: float
     total_spent: float
-    action_breakdown: dict  # action_type -> total_credits
+    action_breakdown: dict[str, Any]  # action_type -> total_credits
     entry_count: int
     merkle_root: str
     root_signature: str  # hex-encoded Ed25519 signature
-    sample_entries: list[dict]  # list of SignedCreditEntry as dicts
-    sample_proofs: list[dict]  # list of MerkleProof as dicts
+    sample_entries: list[dict[str, Any]]  # list of SignedCreditEntry as dicts
+    sample_proofs: list[dict[str, Any]]  # list of MerkleProof as dicts
     timestamp: float = field(default_factory=time.time)
     public_key: str = ""  # hex-encoded 32-byte raw public key
 
@@ -289,7 +291,7 @@ MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 _LENGTH_PREFIX_BYTES = 4
 
 
-def encode_message(msg_type: MessageType, payload: dict) -> bytes:
+def encode_message(msg_type: MessageType, payload: dict[str, Any]) -> bytes:
     """Encode a message as length-prefixed msgpack.
 
     Wire format: [4-byte length][msgpack({type: int, payload: dict})]
@@ -305,10 +307,10 @@ def encode_message(msg_type: MessageType, payload: dict) -> bytes:
     if len(raw) > MAX_MESSAGE_SIZE:
         raise ValueError(f"Message too large: {len(raw)} > {MAX_MESSAGE_SIZE}")
     length = len(raw).to_bytes(_LENGTH_PREFIX_BYTES, byteorder="big")
-    return length + raw
+    return bytes(length + raw)
 
 
-def decode_message(data: bytes) -> tuple[MessageType, dict]:
+def decode_message(data: bytes) -> tuple[MessageType, dict[str, Any]]:
     """Decode a length-prefixed msgpack message.
 
     Args:
@@ -339,12 +341,12 @@ def decode_message(data: bytes) -> tuple[MessageType, dict]:
     return MessageType(unpacked["type"]), unpacked["payload"]
 
 
-def dataclass_to_payload(obj: object) -> dict:
+def dataclass_to_payload(obj: object) -> dict[str, Any]:
     """Convert a dataclass instance to a msgpack-compatible dict.
 
     Handles bytes fields by keeping them as bytes (msgpack supports bin).
     """
-    return asdict(obj)  # type: ignore[arg-type]
+    return asdict(obj)  # type: ignore[call-overload, no-any-return]
 
 
 def url_to_dht_key(url: str) -> str:

@@ -11,6 +11,7 @@ import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -204,7 +205,7 @@ def rank_results(
 
 
 def rank_local_results(
-    results: list,  # list[SearchResult] from LocalStore
+    results: list[Any],  # list[SearchResult] from LocalStore
     *,
     trust: float = DEFAULT_TRUST,
     authority_fn: Callable[[str], float] | None = None,

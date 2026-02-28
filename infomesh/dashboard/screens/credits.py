@@ -28,7 +28,7 @@ class BalancePanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def on_mount(self) -> None:
@@ -93,7 +93,7 @@ class EarningsBreakdownPanel(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def compose(self) -> ComposeResult:
@@ -172,12 +172,12 @@ class TransactionTable(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def compose(self) -> ComposeResult:
         yield Static("[bold]Recent Transactions[/bold]", classes="panel-title")
-        table = DataTable(id="tx-table")
+        table: DataTable[str] = DataTable(id="tx-table")
         table.add_columns("Time", "Amount", "Type", "Note")
         yield table
 
@@ -248,7 +248,7 @@ class CreditsPane(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._refresh_timer: Timer | None = None
         self._prev_balance: float | None = None

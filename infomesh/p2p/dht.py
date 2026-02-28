@@ -19,6 +19,8 @@ from dataclasses import dataclass
 import msgpack
 import structlog
 
+from typing import Any
+
 from infomesh.hashing import content_hash
 from infomesh.p2p.protocol import (
     keyword_to_dht_key,
@@ -83,7 +85,7 @@ class InfoMeshDHT:
     async def publish_keyword(
         self,
         keyword: str,
-        pointers: list[dict],
+        pointers: list[dict[str, Any]],
         *,
         signature: bytes = b"",
     ) -> bool:
@@ -118,7 +120,7 @@ class InfoMeshDHT:
         value = msgpack.packb(entry, use_bin_type=True)
 
         try:
-            await self._dht.put_value(dht_key, value)
+            await self._dht.put_value(dht_key, value)  # type: ignore[attr-defined]
             self._stats.puts_performed += 1
             self._stats.keys_published += 1
             self._record_publish(keyword)
@@ -130,7 +132,7 @@ class InfoMeshDHT:
             logger.exception("dht_publish_failed", keyword=keyword)
             return False
 
-    async def query_keyword(self, keyword: str) -> list[dict]:
+    async def query_keyword(self, keyword: str) -> list[dict[str, Any]]:
         """Query the DHT for peer pointers associated with a keyword.
 
         Returns:
@@ -139,12 +141,12 @@ class InfoMeshDHT:
         dht_key = keyword_to_dht_key(keyword)
 
         try:
-            raw = await self._dht.get_value(dht_key)
+            raw = await self._dht.get_value(dht_key)  # type: ignore[attr-defined]
             self._stats.gets_performed += 1
             if raw is None:
                 return []
             entry = msgpack.unpackb(raw, raw=False)
-            return entry.get("pointers", [])
+            return entry.get("pointers", [])  # type: ignore[no-any-return]
         except Exception:
             logger.exception("dht_query_failed", keyword=keyword)
             return []
@@ -173,7 +175,7 @@ class InfoMeshDHT:
 
         # Check existing lock
         try:
-            existing = await self._dht.get_value(lock_key)
+            existing = await self._dht.get_value(lock_key)  # type: ignore[attr-defined]
             if existing is not None:
                 lock_data = msgpack.unpackb(existing, raw=False)
                 lock_time = lock_data.get("timestamp", 0)
@@ -197,7 +199,7 @@ class InfoMeshDHT:
         value = msgpack.packb(lock_data, use_bin_type=True)
 
         try:
-            await self._dht.put_value(lock_key, value)
+            await self._dht.put_value(lock_key, value)  # type: ignore[attr-defined]
             self._stats.locks_acquired += 1
             logger.debug("crawl_lock_acquired", url=url, ttl=ttl_seconds)
             return True
@@ -229,7 +231,7 @@ class InfoMeshDHT:
         value = msgpack.packb(unlock_data, use_bin_type=True)
 
         try:
-            await self._dht.put_value(lock_key, value)
+            await self._dht.put_value(lock_key, value)  # type: ignore[attr-defined]
             self._stats.locks_released += 1
             logger.debug("crawl_lock_released", url=url)
             return True
@@ -273,7 +275,7 @@ class InfoMeshDHT:
         value = msgpack.packb(att_data, use_bin_type=True)
 
         try:
-            await self._dht.put_value(att_key, value)
+            await self._dht.put_value(att_key, value)  # type: ignore[attr-defined]
             self._stats.puts_performed += 1
             logger.debug("attestation_published", url=url)
             return True
@@ -281,7 +283,7 @@ class InfoMeshDHT:
             logger.exception("attestation_publish_failed", url=url)
             return False
 
-    async def get_attestation(self, url: str) -> dict | None:
+    async def get_attestation(self, url: str) -> dict[str, Any] | None:
         """Retrieve the attestation record for a URL.
 
         Returns:
@@ -291,11 +293,11 @@ class InfoMeshDHT:
         att_key = f"{_PREFIX_ATTESTATION}{url_hash}"
 
         try:
-            raw = await self._dht.get_value(att_key)
+            raw = await self._dht.get_value(att_key)  # type: ignore[attr-defined]
             self._stats.gets_performed += 1
             if raw is None:
                 return None
-            return msgpack.unpackb(raw, raw=False)
+            return msgpack.unpackb(raw, raw=False)  # type: ignore[no-any-return]
         except Exception:
             logger.exception("attestation_get_failed", url=url)
             return None
@@ -313,7 +315,7 @@ class InfoMeshDHT:
             True if stored successfully.
         """
         try:
-            await self._dht.put_value(key, value)
+            await self._dht.put_value(key, value)  # type: ignore[attr-defined]
             self._stats.puts_performed += 1
             return True
         except Exception:
@@ -330,9 +332,9 @@ class InfoMeshDHT:
             Raw bytes or None if not found.
         """
         try:
-            result = await self._dht.get_value(key)
+            result = await self._dht.get_value(key)  # type: ignore[attr-defined]
             self._stats.gets_performed += 1
-            return result
+            return result  # type: ignore[no-any-return]
         except Exception:
             logger.exception("dht_get_failed", key=key)
             return None

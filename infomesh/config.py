@@ -9,8 +9,6 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
-
 import structlog
 
 logger = structlog.get_logger()
@@ -239,15 +237,12 @@ def _validate_value(key: str, value: object) -> object:
     return value
 
 
-_T = TypeVar("_T")
-
-
-def _build_section[T](
+def _build_section[_T](
     cls: type[_T], toml_section: dict[str, object], section_name: str
 ) -> _T:
     """Build a dataclass instance from TOML data + env overrides."""
     kwargs: dict[str, object] = {}
-    for f in cls.__dataclass_fields__.values():
+    for f in cls.__dataclass_fields__.values():  # type: ignore[attr-defined]
         # TOML value
         raw = toml_section.get(f.name)
         # env override
@@ -343,7 +338,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
 
     for section_name, current_section, default_section in section_map:
         section_dict: dict[str, object] = {}
-        for f in type(current_section).__dataclass_fields__.values():
+        for f in type(current_section).__dataclass_fields__.values():  # type: ignore[attr-defined]
             cur_val = getattr(current_section, f.name)
             def_val = getattr(default_section, f.name)
             if cur_val != def_val:

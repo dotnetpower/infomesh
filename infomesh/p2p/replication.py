@@ -226,7 +226,7 @@ class Replicator:
             ack_data = await stream.read(1024)
             if ack_data:
                 ack = msgpack.unpackb(ack_data, raw=False)
-                return ack.get("type") == int(MessageType.REPLICATE_RESPONSE)
+                return ack.get("type") == int(MessageType.REPLICATE_RESPONSE)  # type: ignore[no-any-return]
             return False
         except Exception:
             logger.exception("replicate_request_failed", peer_id=peer_id)
@@ -246,7 +246,7 @@ class Replicator:
             store_fn: Callable(url, title, text, text_hash, language) → bool.
         """
         try:
-            data = await stream.read(1024 * 1024)  # type: ignore[attr-defined] — 1MB max
+            data = await stream.read(1024 * 1024)  # type: ignore[attr-defined]  # 1MB max
             if not data:
                 return
 
@@ -264,7 +264,7 @@ class Replicator:
                 return
 
             # Store locally
-            ok = await store_fn(  # type: ignore[misc]
+            ok = await store_fn(  # type: ignore[operator]
                 url=payload.get("url", ""),
                 title=payload.get("title", ""),
                 text=payload.get("text", ""),

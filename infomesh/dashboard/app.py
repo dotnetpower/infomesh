@@ -216,7 +216,7 @@ class DashboardApp(App[None]):
         for pane_type in (OverviewPane, CrawlPane, NetworkPane, CreditsPane):
             try:
                 pane = self.query_one(pane_type)
-                pane.refresh_data()
+                pane.refresh_data()  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001
                 pass
 
@@ -271,12 +271,12 @@ class DashboardApp(App[None]):
             timeout=5,
         )
 
-    def action_quit(self) -> None:
+    def action_quit(self) -> None:  # type: ignore[override]
         """Override quit to show confirmation when node is running."""
         self._bgm.stop()
         self._data_cache.close()
         if self._node_pid is not None:
-            self.push_screen(QuitConfirmScreen(), self._handle_quit_response)
+            self.push_screen(QuitConfirmScreen(), self._handle_quit_response)  # type: ignore[arg-type]
         else:
             self.exit()
 

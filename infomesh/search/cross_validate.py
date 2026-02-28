@@ -103,7 +103,7 @@ def cross_validate_results(
 
     if total_peers < MIN_PEERS_FOR_VALIDATION:
         # Not enough peers — return all results as unverified
-        all_results = []
+        all_results: list[ValidatedResult] = []
         for peer_id, results in peer_results.items():
             for r in results:
                 all_results.append(
@@ -122,11 +122,11 @@ def cross_validate_results(
 
         # Deduplicate by URL, keep the first appearance
         seen: set[str] = set()
-        deduped = []
-        for r in all_results:
-            if r.url not in seen:
-                seen.add(r.url)
-                deduped.append(r)
+        deduped: list[ValidatedResult] = []
+        for vr in all_results:
+            if vr.url not in seen:
+                seen.add(vr.url)
+                deduped.append(vr)
 
         return CrossValidationReport(
             query=query,

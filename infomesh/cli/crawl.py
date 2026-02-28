@@ -22,7 +22,7 @@ def crawl(url: str, depth: int) -> None:
         ctx = AppContext(config)
 
         clamped_depth = min(depth, config.crawl.max_depth)
-        result = await ctx.worker.crawl_url(url, depth=clamped_depth)
+        result = await ctx.worker.crawl_url(url, depth=clamped_depth)  # type: ignore[union-attr]
 
         if result.success and result.page:
             index_document(result.page, ctx.store, ctx.vector_store)

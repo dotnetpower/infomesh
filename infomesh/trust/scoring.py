@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -380,7 +380,7 @@ def trust_tier(score: float) -> TrustTier:
     return TrustTier.UNTRUSTED
 
 
-def _compute_trust(row: tuple) -> PeerTrust:
+def _compute_trust(row: tuple[Any, ...]) -> PeerTrust:
     """Build a PeerTrust from a DB row."""
     (
         peer_id,

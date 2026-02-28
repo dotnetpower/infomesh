@@ -17,6 +17,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 import structlog
 
@@ -296,7 +297,7 @@ class PeerSummarizationHandler:
         return self._total_rejected
 
 
-def serialize_request(req: SummarizeRequest) -> dict:
+def serialize_request(req: SummarizeRequest) -> dict[str, Any]:
     """Serialize a SummarizeRequest to a dict for wire format."""
     return {
         "request_id": req.request_id,
@@ -309,7 +310,7 @@ def serialize_request(req: SummarizeRequest) -> dict:
     }
 
 
-def deserialize_request(data: dict) -> SummarizeRequest:
+def deserialize_request(data: dict[str, Any]) -> SummarizeRequest:
     """Deserialize a SummarizeRequest from a dict."""
     return SummarizeRequest(
         request_id=data["request_id"],
@@ -322,7 +323,7 @@ def deserialize_request(data: dict) -> SummarizeRequest:
     )
 
 
-def serialize_response(resp: SummarizeResponse) -> dict:
+def serialize_response(resp: SummarizeResponse) -> dict[str, Any]:
     """Serialize a SummarizeResponse to a dict for wire format."""
     return {
         "request_id": resp.request_id,
@@ -336,7 +337,7 @@ def serialize_response(resp: SummarizeResponse) -> dict:
     }
 
 
-def deserialize_response(data: dict) -> SummarizeResponse:
+def deserialize_response(data: dict[str, Any]) -> SummarizeResponse:
     """Deserialize a SummarizeResponse from a dict."""
     return SummarizeResponse(
         request_id=data["request_id"],

@@ -492,7 +492,7 @@ class CreditLedger(SQLiteStore):
         ).fetchone()
         if row is None:
             return None
-        return row[0]
+        return float(row[0])
 
     def _clear_grace(self) -> None:
         """Reset grace period when balance returns to positive."""

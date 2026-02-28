@@ -24,6 +24,8 @@ from dataclasses import asdict
 
 import structlog
 
+from typing import Any
+
 from infomesh.config import Config
 from infomesh.crawler.parser import ParsedPage
 from infomesh.index.local_store import LocalStore
@@ -172,7 +174,7 @@ class IndexSubmitReceiver:
             return True
         return peer_id in self._peer_acl
 
-    def handle_submit(self, payload: dict) -> IndexSubmitAck:
+    def handle_submit(self, payload: dict[str, Any]) -> IndexSubmitAck:
         """Process an index-submit message and index the page.
 
         Args:

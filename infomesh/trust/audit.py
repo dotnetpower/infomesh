@@ -374,7 +374,7 @@ def perform_merkle_audit(
 
     try:
         # Check 1: proof root matches expected root from DHT
-        if proof.root_hash != expected_root_hash:  # type: ignore[attr-defined]
+        if proof.root_hash != expected_root_hash:
             return AuditResult(
                 audit_id=audit_id,
                 auditor_peer_id=auditor_peer_id,
@@ -387,12 +387,12 @@ def perform_merkle_audit(
                     "merkle_root_mismatch:"
                     f" proof_root={proof.root_hash[:16]}..."
                     f" expected={expected_root_hash[:16]}..."
-                ),  # type: ignore[attr-defined]
+                ),
                 completed_at=now,
             )
 
         # Check 2: verify document membership via the proof path
-        if not MerkleTree.verify_document(document_hash, proof):  # type: ignore[arg-type]
+        if not MerkleTree.verify_document(document_hash, proof):
             return AuditResult(
                 audit_id=audit_id,
                 auditor_peer_id=auditor_peer_id,

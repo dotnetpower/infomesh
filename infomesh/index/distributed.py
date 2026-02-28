@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -261,7 +262,7 @@ class DistributedIndex:
         """
         self._stats.queries_performed += 1
 
-        pointer_scores: dict[tuple[str, int], dict] = {}
+        pointer_scores: dict[tuple[str, int], dict[str, Any]] = {}
 
         for kw in keywords:
             pointers = await self._dht.query_keyword(kw)  # type: ignore[attr-defined]
@@ -292,7 +293,7 @@ class DistributedIndex:
 
     async def publish_batch(
         self,
-        documents: list[dict],
+        documents: list[dict[str, Any]],
     ) -> int:
         """Publish multiple documents to the distributed index.
 

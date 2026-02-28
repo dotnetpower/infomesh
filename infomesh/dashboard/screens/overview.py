@@ -74,7 +74,7 @@ class NodeInfoPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def on_mount(self) -> None:
@@ -119,7 +119,7 @@ class ResourcePanel(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def compose(self) -> ComposeResult:
@@ -182,7 +182,7 @@ class ActivityPanel(Widget):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._crawl_count = 0
         self._index_count = 0
@@ -247,7 +247,7 @@ class OverviewPane(Widget):
         data_cache: DashboardDataCache | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._data_cache = data_cache
         self._refresh_timer: Timer | None = None

@@ -159,7 +159,7 @@ async def recrawl_url(
 
     try:
         return await _do_recrawl(
-            client,
+            client,  # type: ignore[arg-type]
             url,
             etag,
             last_modified,
@@ -170,7 +170,7 @@ async def recrawl_url(
         )
     finally:
         if own_client:
-            await client.aclose()
+            await client.aclose()  # type: ignore[union-attr]
 
 
 async def _do_recrawl(
@@ -249,7 +249,7 @@ async def _do_recrawl(
     new_last_modified = resp.headers.get("last-modified")
 
     # Extract text
-    text = extract_fn(html, url) if extract_fn is not None else html  # type: ignore[operator]
+    text = extract_fn(html, url) if extract_fn is not None else html
 
     if text is None:
         return RecrawlOutcome(

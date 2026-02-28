@@ -62,7 +62,7 @@ class SQLiteStore:
         self._conn = sqlite3.connect(path, check_same_thread=check_same_thread)
 
         if row_factory is not None:
-            self._conn.row_factory = row_factory  # type: ignore[assignment]
+            self._conn.row_factory = row_factory
 
         # Standard pragmas
         self._conn.execute("PRAGMA journal_mode=WAL")

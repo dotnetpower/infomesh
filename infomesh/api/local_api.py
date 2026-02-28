@@ -126,7 +126,7 @@ def create_admin_app(
         return cfg
 
     @app.post("/config/reload")
-    async def reload_config(request: Request) -> dict[str, str]:
+    async def reload_config(request: Request) -> dict[str, str] | JSONResponse:
         """Reload configuration from disk."""
         st: AdminState = request.app.state.admin
         try:

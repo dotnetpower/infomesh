@@ -116,7 +116,7 @@ class KeyPair:
         public_path = keys_dir / "public.pem"
 
         # Write private key with restrictive permissions
-        private_bytes = self._private_key.private_bytes(
+        private_bytes = self._private_key.private_bytes(  # type: ignore[attr-defined]
             encoding=Encoding.PEM,
             format=PrivateFormat.PKCS8,
             encryption_algorithm=NoEncryption(),
@@ -125,7 +125,7 @@ class KeyPair:
         os.chmod(private_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
 
         # Write public key
-        public_bytes = self._public_key.public_bytes(
+        public_bytes = self._public_key.public_bytes(  # type: ignore[attr-defined]
             encoding=Encoding.PEM,
             format=PublicFormat.SubjectPublicKeyInfo,
         )
@@ -145,7 +145,7 @@ class KeyPair:
         Returns:
             Ed25519 signature (64 bytes).
         """
-        return self._private_key.sign(data)
+        return self._private_key.sign(data)  # type: ignore[attr-defined, no-any-return]
 
     def verify(self, data: bytes, signature: bytes) -> bool:
         """Verify a signature against the public key.
@@ -158,7 +158,7 @@ class KeyPair:
             True if valid, False otherwise.
         """
         try:
-            self._public_key.verify(signature, data)
+            self._public_key.verify(signature, data)  # type: ignore[attr-defined]
             return True
         except InvalidSignature:
             return False
@@ -170,7 +170,7 @@ class KeyPair:
             PublicFormat,
         )
 
-        return self._public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        return self._public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)  # type: ignore[attr-defined, no-any-return]
 
     @property
     def peer_id(self) -> str:
@@ -186,7 +186,7 @@ class KeyPair:
             PublicFormat,
         )
 
-        raw = public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        raw = public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)  # type: ignore[attr-defined]
         return hashlib.sha256(raw).hexdigest()[:16]
 
 

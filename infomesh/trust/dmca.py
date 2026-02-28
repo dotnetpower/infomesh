@@ -19,6 +19,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 import structlog
 
@@ -335,7 +336,7 @@ class TakedownManager:
 # --- Serialization ----------------------------------------------------------
 
 
-def serialize_notice(notice: TakedownNotice) -> dict:
+def serialize_notice(notice: TakedownNotice) -> dict[str, Any]:
     """Serialize a TakedownNotice for wire format."""
     return {
         "notice_id": notice.notice_id,
@@ -349,7 +350,7 @@ def serialize_notice(notice: TakedownNotice) -> dict:
     }
 
 
-def deserialize_notice(data: dict) -> TakedownNotice:
+def deserialize_notice(data: dict[str, Any]) -> TakedownNotice:
     """Deserialize a TakedownNotice from a dict."""
     return TakedownNotice(
         notice_id=data["notice_id"],

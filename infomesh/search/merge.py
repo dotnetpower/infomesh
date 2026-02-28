@@ -7,6 +7,7 @@ using Reciprocal Rank Fusion (RRF) for robust re-ranking.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
@@ -63,7 +64,7 @@ def merge_results(
         Merged results sorted by combined RRF score (descending).
     """
     # Build per-document score accumulator keyed by URL (canonical identifier)
-    scores: dict[str, dict] = {}
+    scores: dict[str, dict[str, Any]] = {}
 
     # Process FTS5 results
     for rank, r in enumerate(fts_results, 1):
@@ -84,17 +85,17 @@ def merge_results(
         scores[key]["fts_score"] = r.score
 
     # Process vector results
-    for rank, r in enumerate(vector_results, 1):
+    for rank, vr in enumerate(vector_results, 1):
         rrf = vector_weight / (_RRF_K + rank)
-        key = r.url
+        key = vr.url
         if key not in scores:
             scores[key] = {
-                "doc_id": r.doc_id,
-                "url": r.url,
-                "title": r.title,
-                "snippet": r.text_preview[:200] if r.text_preview else "",
+                "doc_id": vr.doc_id,
+                "url": vr.url,
+                "title": vr.title,
+                "snippet": vr.text_preview[:200] if vr.text_preview else "",
                 "fts_score": None,
-                "vector_score": r.score,
+                "vector_score": vr.score,
                 "rrf": 0.0,
                 "source": "vector",
             }
@@ -102,7 +103,7 @@ def merge_results(
             # Merge — document found in both FTS and vector
             scores[key]["source"] = "hybrid"
         scores[key]["rrf"] += rrf
-        scores[key]["vector_score"] = r.score
+        scores[key]["vector_score"] = vr.score
 
     # Sort by RRF score descending
     ranked = sorted(scores.values(), key=lambda d: d["rrf"], reverse=True)

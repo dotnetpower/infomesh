@@ -73,7 +73,7 @@ def _create_app(
     link_graph = ctx.link_graph
     ledger = ctx.ledger
 
-    @app.list_tools()
+    @app.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
     async def list_tools() -> list[Tool]:
         return [
             Tool(
@@ -177,7 +177,7 @@ def _create_app(
             ),
         ]
 
-    @app.call_tool()
+    @app.call_tool()  # type: ignore[untyped-decorator]
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         match name:
             case "search" | "search_local":
@@ -254,7 +254,7 @@ def _create_app(
                 fp = await fetch_page_async(
                     url,
                     store=store,
-                    worker=worker,
+                    worker=worker,  # type: ignore[arg-type]
                     vector_store=vector_store,
                     max_size_bytes=max_size,
                     cache_ttl_seconds=cache_ttl,
@@ -318,7 +318,7 @@ def _create_app(
 
                 ci = await crawl_and_index(
                     url,
-                    worker=worker,
+                    worker=worker,  # type: ignore[arg-type]
                     store=store,
                     vector_store=vector_store,
                     link_graph=link_graph,
@@ -415,7 +415,7 @@ def _create_app(
                             f"{vec_info}"
                             f"{link_info}"
                             f"{credit_info}"
-                            f"Pending crawl URLs: {scheduler.pending_count}\n"
+                            f"Pending crawl URLs: {scheduler.pending_count}\n"  # type: ignore[union-attr]
                             f"Ranking: BM25 + freshness + trust + authority\n"
                             f"{p2p_info}"
                         ),
