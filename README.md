@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/og-banner.png" alt="InfoMesh — Decentralized P2P Search Engine for LLMs" width="100%">
+  <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/og-banner.png" alt="InfoMesh — Decentralized P2P Search Engine for LLMs" width="100%">
 </p>
 
 <h1 align="center">InfoMesh</h1>
