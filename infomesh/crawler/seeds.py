@@ -16,8 +16,7 @@ CATEGORIES = {
     "academic": "Academic paper sources",
     "encyclopedia": "Encyclopedia sources",
     "quickstart": (
-        "Lightweight seed pack"
-        " (~100 curated content pages for instant start)"
+        "Lightweight seed pack (~100 curated content pages for instant start)"
     ),
 }
 

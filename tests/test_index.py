@@ -71,8 +71,7 @@ def test_multiple_documents_ranked() -> None:
         url="https://example.com/rust",
         title="Rust Language",
         text=(
-            "Rust is a systems programming language"
-            " focused on safety and performance."
+            "Rust is a systems programming language focused on safety and performance."
         ),
         raw_html_hash="h1",
         text_hash="t1",

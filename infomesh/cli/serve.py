@@ -232,10 +232,7 @@ def status() -> None:
     click.echo(f"Documents:       {stats['document_count']}")
     comp_on = "on" if config.storage.compression_enabled else "off"
     comp_lvl = config.storage.compression_level
-    click.echo(
-        f"Compression:     {comp_on}"
-        f" (zstd level {comp_lvl})"
-    )
+    click.echo(f"Compression:     {comp_on} (zstd level {comp_lvl})")
     click.echo(f"Vector search:   {'on' if config.index.vector_search else 'off'}")
     if config.index.vector_search:
         click.echo(f"Embedding model: {config.index.embedding_model}")

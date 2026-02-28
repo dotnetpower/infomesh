@@ -241,8 +241,7 @@ class PeerSummarizationHandler:
                 status=RequestStatus.REJECTED,
                 reject_reason=RejectReason.TEXT_TOO_LONG,
                 detail=(
-                    f"text length {len(request.text)}"
-                    f" exceeds max {MAX_TEXT_LENGTH}"
+                    f"text length {len(request.text)} exceeds max {MAX_TEXT_LENGTH}"
                 ),
             )
 
@@ -253,9 +252,7 @@ class PeerSummarizationHandler:
                 status=RequestStatus.REJECTED,
                 reject_reason=RejectReason.CAPACITY_FULL,
                 detail=(
-                    f"active requests"
-                    f" {self._active_count}"
-                    f"/{MAX_CONCURRENT_REQUESTS}"
+                    f"active requests {self._active_count}/{MAX_CONCURRENT_REQUESTS}"
                 ),
             )
 
@@ -277,9 +274,7 @@ class PeerSummarizationHandler:
                 status=RequestStatus.REJECTED,
                 reject_reason=RejectReason.COOLDOWN,
                 detail=(
-                    "cooldown:"
-                    f" {PEER_COOLDOWN_SECONDS - (now - last):.1f}"
-                    "s remaining"
+                    f"cooldown: {PEER_COOLDOWN_SECONDS - (now - last):.1f}s remaining"
                 ),
             )
 

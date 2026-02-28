@@ -54,7 +54,11 @@ async def crawl_and_search(url: str, query: str | None = None) -> None:
 
 
 def main() -> None:
-    url = sys.argv[1] if len(sys.argv) > 1 else "https://docs.python.org/3/library/asyncio.html"
+    url = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else "https://docs.python.org/3/library/asyncio.html"
+    )
     query = sys.argv[2] if len(sys.argv) > 2 else None
     asyncio.run(crawl_and_search(url, query))
 

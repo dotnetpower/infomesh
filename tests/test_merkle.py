@@ -294,8 +294,7 @@ class TestCreateRootRecord:
 
         # Manually verify signature
         payload = (
-            f"{root.root_hash}|{root.document_count}"
-            f"|{root.built_at}|{root.peer_id}"
+            f"{root.root_hash}|{root.document_count}|{root.built_at}|{root.peer_id}"
         ).encode()
         assert keypair.verify(payload, root.signature) is True
 

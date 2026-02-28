@@ -63,7 +63,7 @@ class TestNodeRoleConfig:
         config_file = tmp_path / "config.toml"
         config_file.write_text(
             "[network]\n"
-            'index_submit_peers = ['
+            "index_submit_peers = ["
             '"/ip4/10.0.0.1/tcp/4001", '
             '"/ip4/10.0.0.2/tcp/4001"'
             "]\n"

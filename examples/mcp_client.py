@@ -28,8 +28,10 @@ async def main() -> None:
         args=["-m", "infomesh", "mcp"],
     )
 
-    async with stdio_client(server_params) as (read, write), \
-            ClientSession(read, write) as session:
+    async with (
+        stdio_client(server_params) as (read, write),
+        ClientSession(read, write) as session,
+    ):
         await session.initialize()
 
         # List available tools

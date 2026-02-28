@@ -6,8 +6,8 @@ import pytest
 
 chromadb = pytest.importorskip("chromadb", reason="chromadb not installed")
 
-from infomesh.index.vector_store import VectorSearchResult, VectorStore
-from infomesh.search.merge import merge_results
+from infomesh.index.vector_store import VectorSearchResult, VectorStore  # noqa: E402
+from infomesh.search.merge import merge_results  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # VectorStore tests (ChromaDB ephemeral, no sentence-transformers needed)
