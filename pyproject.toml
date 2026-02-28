@@ -8,17 +8,25 @@ license = "MIT"
 authors = [
     { name = "InfoMesh Contributors" },
 ]
-keywords = ["search", "p2p", "llm", "mcp", "decentralized", "crawler", "index"]
+keywords = ["search", "p2p", "llm", "mcp", "decentralized", "crawler", "index", "web-search", "mcp-server", "search-api", "free-search", "model-context-protocol", "search-engine", "web-crawler", "ai-search"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Internet :: WWW/HTTP",
     "Topic :: System :: Networking",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Indexing",
     "Framework :: AsyncIO",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "Typing :: Typed",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Environment :: No Input/Output (Daemon)",
 ]
 
 dependencies = [

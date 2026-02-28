@@ -91,7 +91,28 @@ You run a node, you contribute to the network, and **search is free — forever.
 
 ---
 
-## 🔐 Safe by Design — The Most Secure Search Engine You Can Run
+## � InfoMesh vs Other Web Search MCP Servers
+
+Looking for a **free web search MCP server**? Here's how InfoMesh compares:
+
+| Feature | **InfoMesh** | Brave Search MCP | Tavily MCP | DuckDuckGo MCP | SearXNG |
+|---------|-------------|-----------------|------------|----------------|---------|
+| **Free tier** | ♾️ Unlimited (credit-based) | 2,000 queries/mo | 1,000 queries/mo | Unlimited | Unlimited |
+| **API key** | ❌ Not required | ✅ Required (free signup) | ✅ Required (free signup) | ❌ Not required | ❌ Not required |
+| **Decentralized** | ✅ Fully P2P | ❌ Centralized | ❌ Centralized | ❌ Centralized | ❌ Single instance |
+| **Offline search** | ✅ Local index works offline | ❌ | ❌ | ❌ | ❌ |
+| **Privacy** | ✅ Queries never leave node | ⚠️ Logged by provider | ⚠️ Logged by provider | ✅ Minimal logging | ✅ Self-hosted |
+| **Self-hosted** | ✅ You own everything | ❌ | ❌ | ❌ | ✅ Docker required |
+| **Crawl your own URLs** | ✅ `crawl_url()` tool | ❌ | ❌ | ❌ | ❌ |
+| **Full page fetch** | ✅ `fetch_page()` tool | ❌ | ✅ Extract | ❌ | ❌ |
+| **Install** | `pip install infomesh` | npm package | pip package | npm package | Docker Compose |
+| **Open source** | ✅ MIT | ✅ MIT | ⚠️ Partial | ✅ MIT | ✅ AGPL |
+
+> **InfoMesh is the only web search MCP server that is fully decentralized, works offline, requires no API key, and lets you crawl and index your own content — all for free.**
+
+---
+
+## �🔐 Safe by Design — The Most Secure Search Engine You Can Run
 
 Most search engines ask you to trust *them*. InfoMesh asks you to trust *math*.
 

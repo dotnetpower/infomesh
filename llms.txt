@@ -1,0 +1,68 @@
+# InfoMesh
+
+> Fully decentralized P2P search engine for LLMs — free web search via MCP (Model Context Protocol).
+
+InfoMesh is a free, open-source, decentralized web search MCP server.
+No API key required. No per-query billing. No usage caps. Forever free.
+
+## What is InfoMesh?
+
+InfoMesh is a peer-to-peer search engine designed exclusively for LLMs and AI agents.
+It crawls, indexes, and searches the web via a P2P network and exposes search
+results through MCP (Model Context Protocol) — the standard protocol for connecting
+AI assistants to external tools.
+
+## Key Facts
+
+- License: MIT
+- Language: Python 3.12+
+- Install: `pip install infomesh` or `uv add infomesh`
+- Transport: stdio (MCP standard)
+- API Key Required: No
+- Per-Query Cost: $0 (free, forever)
+- Usage Cap: None (earn credits by contributing)
+- Works Offline: Yes (local index)
+- Privacy: Search queries never leave your node
+
+## MCP Tools Provided
+
+- `search(query, limit)` — Full network web search, merges local + remote results
+- `search_local(query, limit)` — Local-only search (works offline)
+- `fetch_page(url)` — Fetch and return full text of any web page
+- `crawl_url(url, depth)` — Crawl a URL and add it to the index
+- `network_stats()` — Network status: peer count, index size, credits
+
+## MCP Configuration
+
+```json
+{
+  "mcpServers": {
+    "infomesh": {
+      "command": "infomesh",
+      "args": ["mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+## Comparison with Other Free Web Search MCP Servers
+
+| MCP Server | Free Tier | API Key | Decentralized | Offline | Privacy |
+|------------|-----------|---------|---------------|---------|---------|
+| InfoMesh | Unlimited (credit-based) | Not required | Yes (P2P) | Yes | Queries never recorded |
+| Brave Search MCP | 2,000/month | Required (free) | No | No | Logged by provider |
+| Tavily MCP | 1,000/month | Required (free) | No | No | Logged by provider |
+| DuckDuckGo MCP | Unlimited | Not required | No | No | Minimal logging |
+| SearXNG | Unlimited (self-host) | Not required | No (single instance) | No | Self-hosted |
+
+## Links
+
+- Homepage: https://github.com/dotnetpower/infomesh
+- PyPI: https://pypi.org/project/infomesh/
+- Documentation: https://github.com/dotnetpower/infomesh/tree/main/docs
+- Issues: https://github.com/dotnetpower/infomesh/issues
+
+## Detailed Documentation
+
+See [llms-full.txt](https://github.com/dotnetpower/infomesh/blob/main/llms-full.txt) for comprehensive technical documentation.

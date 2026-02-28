@@ -1,0 +1,94 @@
+{
+  "$schema": "https://smithery.ai/schema/server.json",
+  "name": "infomesh",
+  "displayName": "InfoMesh — Free Web Search MCP",
+  "description": "Fully decentralized P2P web search engine for LLMs. No API key, no billing, unlimited free search via MCP. Crawls, indexes, and searches the web through a peer-to-peer network.",
+  "author": "InfoMesh Contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/dotnetpower/infomesh",
+  "repository": "https://github.com/dotnetpower/infomesh",
+  "tags": [
+    "web-search",
+    "search",
+    "free",
+    "decentralized",
+    "p2p",
+    "crawler",
+    "mcp-server",
+    "llm",
+    "search-engine",
+    "web-crawler"
+  ],
+  "categories": [
+    "search",
+    "web",
+    "data"
+  ],
+  "installation": {
+    "command": "infomesh",
+    "args": ["mcp"],
+    "env": {}
+  },
+  "tools": [
+    {
+      "name": "search",
+      "description": "Search the web via the decentralized P2P network. Merges local index + remote peer results. Returns ranked text snippets with source URLs.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Search query string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of results to return",
+          "default": 10
+        }
+      }
+    },
+    {
+      "name": "search_local",
+      "description": "Search the local index only (works offline). Returns results from locally crawled and indexed pages.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Search query string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of results to return",
+          "default": 10
+        }
+      }
+    },
+    {
+      "name": "fetch_page",
+      "description": "Fetch and return the full extracted text of a web page by URL.",
+      "parameters": {
+        "url": {
+          "type": "string",
+          "description": "URL of the page to fetch"
+        }
+      }
+    },
+    {
+      "name": "crawl_url",
+      "description": "Crawl a URL and add it to the search index for future queries.",
+      "parameters": {
+        "url": {
+          "type": "string",
+          "description": "URL to crawl"
+        },
+        "depth": {
+          "type": "integer",
+          "description": "Crawl depth (how many links deep to follow)",
+          "default": 1
+        }
+      }
+    },
+    {
+      "name": "network_stats",
+      "description": "Get network statistics: peer count, index size, credit balance, node health.",
+      "parameters": {}
+    }
+  ]
+}
