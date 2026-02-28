@@ -125,7 +125,7 @@ def create_admin_app(
         _redact_paths(cfg)
         return cfg
 
-    @app.post("/config/reload")
+    @app.post("/config/reload", response_model=None)
     async def reload_config(request: Request) -> dict[str, str] | JSONResponse:
         """Reload configuration from disk."""
         st: AdminState = request.app.state.admin
