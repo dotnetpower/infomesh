@@ -34,10 +34,17 @@ def _pid_path(data_dir: Path) -> Path:
     help="Seed category (tech-docs, academic, encyclopedia)",
 )
 @click.option(
+    "--background",
+    "-b",
+    is_flag=True,
+    default=False,
+    help="Run in background: start node, show log path, and exit (no dashboard, no live log)",
+)
+@click.option(
     "--no-dashboard",
     is_flag=True,
     default=False,
-    help="Start node without launching dashboard",
+    help="Start node without launching dashboard (kept for backward compat, same as --background)",
 )
 @click.option(
     "--role",
@@ -46,10 +53,33 @@ def _pid_path(data_dir: Path) -> Path:
     default=None,
     help="Node role: full (default), crawler (DMZ), or search (private)",
 )
-def start(seeds: str | None, no_dashboard: bool, role: str | None) -> None:
-    """Start the InfoMesh node and launch the dashboard."""
+def start(
+    seeds: str | None,
+    background: bool,
+    no_dashboard: bool,
+    role: str | None,
+) -> None:
+    """Start the InfoMesh node.
+
+    \b
+    Background mode (--background):
+      Starts the node as a background process, prints the log file path,
+      and exits immediately. No live log output.
+
+    \b
+    Foreground mode (default):
+      Runs an initial crawl pass with live progress, then launches the
+      interactive dashboard (TUI) with BGM off.
+
+    In both modes, the P2P listen port is checked and cloud firewall
+    auto-open is offered if the port appears blocked.
+    """
     import subprocess
     from dataclasses import replace as dc_replace
+
+    # --no-dashboard is an alias for --background (backward compat)
+    if no_dashboard:
+        background = True
 
     config = load_config()
     if role:
@@ -62,7 +92,7 @@ def start(seeds: str | None, no_dashboard: bool, role: str | None) -> None:
     click.echo(f"  Peer ID: {keys.peer_id}")
     click.echo(f"  Data dir: {config.node.data_dir}")
 
-    # Preflight checks
+    # ── Preflight checks ──────────────────────────────────────────
     from infomesh.resources.preflight import IssueSeverity, run_preflight_checks
 
     issues = run_preflight_checks(config.node.data_dir)
@@ -77,6 +107,12 @@ def start(seeds: str | None, no_dashboard: bool, role: str | None) -> None:
         click.secho("\nCannot start: fix the errors above first.", fg="red", bold=True)
         raise SystemExit(1)
 
+    # ── Port accessibility check ──────────────────────────────────
+    from infomesh.resources.port_check import check_port_and_offer_fix
+
+    check_port_and_offer_fix(config.node.listen_port)
+
+    # ── Launch node process ───────────────────────────────────────
     serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
     if seeds:
         serve_cmd.extend(["--seeds", seeds])
@@ -96,13 +132,30 @@ def start(seeds: str | None, no_dashboard: bool, role: str | None) -> None:
         click.echo(f"  Node process started (PID {proc.pid})")
         click.echo(f"  Log: {log_path}")
 
-        if no_dashboard:
-            click.echo("  Node running in background. Use 'infomesh stop' to stop.")
+        if background:
+            # ── Background mode ───────────────────────────────
+            click.echo()
+            click.echo("  Node running in background (no live log).")
+            click.echo(f"  View logs:   tail -f {log_path}")
+            click.echo("  Stop node:   infomesh stop")
             return
 
+        # ── Foreground mode: crawl → dashboard ────────────────
+        click.echo()
+        click.echo("  Running initial crawl pass...")
+        seed_cat = seeds or "tech-docs"
+        _run_foreground_crawl(config, seed_cat)
+
+        # Launch dashboard with BGM OFF for foreground mode
+        config = dc_replace(
+            config,
+            dashboard=dc_replace(config.dashboard, bgm_auto_start=False),
+        )
+
+        click.echo()
+        click.echo("  Launching dashboard (BGM off)...")
         from infomesh.dashboard.app import run_dashboard
 
-        click.echo("  Launching dashboard...")
         exit_action = run_dashboard(config=config, node_pid=proc.pid)
     finally:
         log_file.close()
@@ -118,6 +171,50 @@ def start(seeds: str | None, no_dashboard: bool, role: str | None) -> None:
     else:
         click.echo(f"\nDashboard closed. Node still running (PID {proc.pid}).")
         click.echo("  Use 'infomesh stop' to stop the node.")
+
+
+def _run_foreground_crawl(config: "Config", seed_category: str) -> None:
+    """Run a quick initial crawl pass before launching the dashboard."""
+    import time
+
+    from infomesh.crawler.seeds import load_seeds
+    from infomesh.services import AppContext, index_document
+
+    seed_urls = load_seeds(category=seed_category)
+    if not seed_urls:
+        click.echo(f"    No seeds found for category '{seed_category}'.")
+        return
+
+    # Crawl a small batch to warm up the index
+    batch_size = min(5, len(seed_urls))
+    click.echo(f"    Seeds: {seed_category} ({len(seed_urls)} URLs, crawling first {batch_size})\n")
+
+    ctx = AppContext(config)
+    crawled = 0
+    start_time = time.monotonic()
+
+    async def _crawl_batch() -> int:
+        nonlocal crawled
+        for i, url in enumerate(seed_urls[:batch_size], 1):
+            try:
+                result = await ctx.worker.crawl_url(url, depth=0)  # type: ignore[union-attr]
+                if result.success and result.page:
+                    index_document(result.page, ctx.store, ctx.vector_store)
+                    crawled += 1
+                    title = result.page.title[:55] if result.page.title else "(no title)"
+                    click.echo(
+                        f"    [{i}/{batch_size}] ✓ {title}\n"
+                        f"              {url}"
+                    )
+                else:
+                    click.echo(f"    [{i}/{batch_size}] ✗ {url} — {result.error}")
+            except Exception as exc:  # noqa: BLE001
+                click.echo(f"    [{i}/{batch_size}] ✗ {url} — {exc}")
+        return crawled
+
+    asyncio.run(_crawl_batch())
+    elapsed = time.monotonic() - start_time
+    click.echo(f"\n    Initial crawl: {crawled} pages indexed in {elapsed:.1f}s")
 
 
 # ---------------------------------------------------------------------------
