@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import httpx
 import structlog
 
-from infomesh.crawler import MAX_RESPONSE_BYTES
+from infomesh.crawler import MAX_RESPONSE_BYTES, create_ssl_context
 from infomesh.hashing import content_hash
 from infomesh.security import SSRFError, validate_url
 
@@ -155,6 +155,7 @@ async def recrawl_url(
             headers={"User-Agent": user_agent},
             follow_redirects=True,
             timeout=30.0,
+            verify=create_ssl_context(),
         )
 
     try:

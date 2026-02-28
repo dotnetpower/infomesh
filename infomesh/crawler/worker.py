@@ -10,7 +10,7 @@ import httpx
 import structlog
 
 from infomesh.config import CrawlConfig
-from infomesh.crawler import MAX_RESPONSE_BYTES
+from infomesh.crawler import MAX_RESPONSE_BYTES, create_ssl_context
 from infomesh.crawler.dedup import DeduplicatorDB
 from infomesh.crawler.parser import ParsedPage, extract_content, extract_links
 from infomesh.crawler.robots import RobotsChecker
@@ -67,6 +67,7 @@ class CrawlWorker:
                 headers={"User-Agent": self._config.user_agent},
                 follow_redirects=True,
                 timeout=30.0,
+                verify=create_ssl_context(),
                 limits=httpx.Limits(
                     max_connections=self._config.max_concurrent,
                     max_keepalive_connections=self._config.max_concurrent,

@@ -49,8 +49,11 @@ class RobotsChecker:
                     "robots_not_found", url=robots_url, status=resp.status_code
                 )
         except (httpx.HTTPError, OSError, ValueError) as exc:
-            # On error, be conservative — deny everything
-            parser.parse(["User-agent: *", "Disallow: /"])
+            # On fetch error (network, SSL, timeout, etc.) be permissive —
+            # RFC 9309 §2.4: if robots.txt is unreachable, assume allowed.
+            # Only an explicit Disallow in a successfully-fetched robots.txt
+            # should block crawling.
+            parser.parse([])
             logger.warning("robots_fetch_error", url=robots_url, error=str(exc))
 
         return parser
