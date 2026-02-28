@@ -346,6 +346,12 @@ class LocalStore:
         """Close the database connection."""
         self._conn.close()
 
+    def __enter__(self) -> LocalStore:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     # ── Recrawl support ─────────────────────────────────────────────────
 
     def update_document(

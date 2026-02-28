@@ -250,6 +250,12 @@ class TimezoneConsistencyTracker:
             (ts, tz) for ts, tz in self._claims[peer_id] if ts >= cutoff
         ]
 
+        # Clean up empty peer entries to prevent unbounded dict growth
+        if not self._claims[peer_id]:
+            del self._claims[peer_id]
+            # Re-add current claim
+            self._claims[peer_id] = [(now, timezone)]
+
         claims = self._claims[peer_id]
 
         # Count unique timezones

@@ -22,6 +22,12 @@ class DomainState:
     error_count: int = 0
 
 
+# Maximum tracked domains before stale eviction triggers
+_MAX_TRACKED_DOMAINS = 50_000
+# Domains not accessed for this many seconds are evictable
+_DOMAIN_STALE_SECONDS = 3600.0
+
+
 class Scheduler:
     """URL scheduler with politeness delays and rate limiting.
 
@@ -139,6 +145,23 @@ class Scheduler:
         if now - self._hour_start >= 3600:
             self._hourly_count = 0
             self._hour_start = now
+            # Prune stale domains on hour boundary
+            self._prune_stale_domains()
+
+    def _prune_stale_domains(self) -> None:
+        """Remove domains not accessed within ``_DOMAIN_STALE_SECONDS``."""
+        if len(self._domains) <= _MAX_TRACKED_DOMAINS:
+            return
+        cutoff = time.monotonic() - _DOMAIN_STALE_SECONDS
+        stale = [
+            d
+            for d, s in self._domains.items()
+            if s.last_request_at < cutoff and s.pending_count == 0
+        ]
+        for d in stale:
+            del self._domains[d]
+        if stale:
+            logger.debug("scheduler_domains_pruned", count=len(stale))
 
     @property
     def pending_count(self) -> int:

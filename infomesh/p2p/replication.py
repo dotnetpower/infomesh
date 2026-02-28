@@ -16,6 +16,7 @@ Replication flow:
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import msgpack
@@ -48,7 +49,9 @@ class ReplicationStats:
     replicas_received: int = 0
     replicas_failed: int = 0
     avg_replicate_ms: float = 0.0
-    _times: list[float] = field(default_factory=list, repr=False)
+    _times: deque[float] = field(
+        default_factory=lambda: deque(maxlen=10_000), repr=False
+    )
 
     def record_time(self, ms: float) -> None:
         """Record a replication time."""

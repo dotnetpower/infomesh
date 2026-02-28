@@ -346,7 +346,11 @@ class InfoMeshDHT:
         times = self._publish_times.get(keyword, [])
         # Remove entries older than 1 hour
         times = [t for t in times if now - t < 3600]
-        self._publish_times[keyword] = times
+        if times:
+            self._publish_times[keyword] = times
+        elif keyword in self._publish_times:
+            # Clean up empty keys to prevent unbounded dict growth
+            del self._publish_times[keyword]
         return len(times) < MAX_PUBLISHES_PER_KEYWORD_HR
 
     def _record_publish(self, keyword: str) -> None:

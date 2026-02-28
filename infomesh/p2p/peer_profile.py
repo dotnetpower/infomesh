@@ -84,8 +84,10 @@ class PeerProfileTracker:
     if used from multiple threads (unlikely given trio usage).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_peers: int = 10_000) -> None:
         self._profiles: dict[str, PeerProfile] = {}
+        self._max_peers = max_peers
+        self._record_count: int = 0
 
     # ── Recording ───────────────────────────────────────────────────
 
@@ -108,6 +110,10 @@ class PeerProfileTracker:
         """
         profile = self._profiles.get(peer_id)
         if profile is None:
+            # Auto-prune stale peers every 500 records or when at capacity
+            self._record_count += 1
+            if len(self._profiles) >= self._max_peers or self._record_count % 500 == 0:
+                self.prune_stale()
             profile = PeerProfile(peer_id=peer_id)
             self._profiles[peer_id] = profile
 

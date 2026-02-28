@@ -17,6 +17,7 @@ The routing flow:
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import msgpack
@@ -58,7 +59,9 @@ class RoutingStats:
     peers_responded: int = 0
     peers_timed_out: int = 0
     avg_response_ms: float = 0.0
-    _response_times: list[float] = field(default_factory=list, repr=False)
+    _response_times: deque[float] = field(
+        default_factory=lambda: deque(maxlen=10_000), repr=False
+    )
 
     def record_response(self, elapsed_ms: float) -> None:
         """Record a peer response time."""

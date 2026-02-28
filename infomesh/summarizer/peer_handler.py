@@ -122,6 +122,8 @@ class PeerSummarizationHandler:
         self._active_count: int = 0
         self._peer_last_request: dict[str, float] = {}
         self._peer_pending: dict[str, int] = {}
+        self._last_cleanup: float = time.time()
+        self._cleanup_interval: float = 3600.0  # prune stale peers hourly
 
         # Stats
         self._total_served: int = 0
@@ -143,6 +145,11 @@ class PeerSummarizationHandler:
             SummarizeResponse with the result or rejection.
         """
         now = time.time()
+
+        # Periodically prune stale peer tracking entries
+        if now - self._last_cleanup > self._cleanup_interval:
+            self._prune_stale_peers(now)
+            self._last_cleanup = now
 
         # Pre-checks
         rejection = self._check_rejection(
@@ -210,6 +217,16 @@ class PeerSummarizationHandler:
             self._active_count -= 1
             pending = self._peer_pending.get(request.requester_peer_id, 1)
             self._peer_pending[request.requester_peer_id] = max(0, pending - 1)
+
+    def _prune_stale_peers(self, now: float) -> None:
+        """Remove peer tracking entries not seen within the cleanup interval."""
+        cutoff = now - self._cleanup_interval
+        stale = [
+            pid for pid, ts in self._peer_last_request.items() if ts < cutoff
+        ]
+        for pid in stale:
+            del self._peer_last_request[pid]
+            self._peer_pending.pop(pid, None)
 
     def _check_rejection(
         self,

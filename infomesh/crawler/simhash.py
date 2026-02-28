@@ -137,12 +137,18 @@ class SimHashIndex:
 
     For small-to-medium indexes (< 1M docs), linear scan is fast enough.
     Phase 2+ can add bit-permutation tables for O(1) lookup.
+
+    The index is capped at ``max_entries`` unique fingerprints to prevent
+    unbounded memory growth on long-running nodes.  When the cap is reached,
+    the oldest entries (by insertion order) are evicted.
     """
 
     _entries: dict[int, list[int]]  # fingerprint → [doc_id, ...]
+    _max_entries: int
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_entries: int = 500_000) -> None:
         self._entries: dict[int, list[int]] = {}
+        self._max_entries = max_entries
 
     @property
     def size(self) -> int:
@@ -156,6 +162,11 @@ class SimHashIndex:
             doc_id: Unique document identifier.
             fingerprint: SimHash 64-bit fingerprint.
         """
+        # Evict oldest entries if at capacity
+        while len(self._entries) >= self._max_entries:
+            oldest_key = next(iter(self._entries))
+            del self._entries[oldest_key]
+
         self._entries.setdefault(fingerprint, []).append(doc_id)
 
     def remove(self, doc_id: int, fingerprint: int) -> None:

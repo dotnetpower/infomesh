@@ -272,6 +272,11 @@ class SubnetLimiter:
         """
         subnet = self._get_subnet(ip)
         self._buckets[bucket_id][subnet].discard(peer_id)
+        # Clean up empty entries to prevent unbounded dict growth
+        if not self._buckets[bucket_id][subnet]:
+            del self._buckets[bucket_id][subnet]
+        if not self._buckets[bucket_id]:
+            del self._buckets[bucket_id]
 
     def get_subnet_counts(self, bucket_id: int) -> dict[str, int]:
         """Get current node counts per subnet in a bucket.

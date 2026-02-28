@@ -296,3 +296,9 @@ class LinkGraph:
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()
+
+    def __enter__(self) -> LinkGraph:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()

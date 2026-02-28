@@ -217,58 +217,56 @@ def status() -> None:
     from infomesh.services import AppContext
 
     config = load_config()
-    ctx = AppContext(config)
-    stats = ctx.store.get_stats()
+    with AppContext(config) as ctx:
+        stats = ctx.store.get_stats()
 
-    pid_file = _pid_path(config.node.data_dir)
-    running = pid_file.exists()
+        pid_file = _pid_path(config.node.data_dir)
+        running = pid_file.exists()
 
-    click.echo(f"InfoMesh v{__version__}")
-    click.echo(f"{'=' * 30}")
-    click.echo("Phase:           0 (MVP)")
-    click.echo(f"Running:         {'yes' if running else 'no'}")
-    click.echo(f"Data dir:        {config.node.data_dir}")
-    click.echo(f"Index DB:        {config.index.db_path}")
-    click.echo(f"Documents:       {stats['document_count']}")
-    comp_on = "on" if config.storage.compression_enabled else "off"
-    comp_lvl = config.storage.compression_level
-    click.echo(f"Compression:     {comp_on} (zstd level {comp_lvl})")
-    click.echo(f"Vector search:   {'on' if config.index.vector_search else 'off'}")
-    if config.index.vector_search:
-        click.echo(f"Embedding model: {config.index.embedding_model}")
-        if ctx.vector_store is not None:
-            vec_stats = ctx.vector_store.get_stats()
-            click.echo(f"Vector docs:     {vec_stats['document_count']}")
+        click.echo(f"InfoMesh v{__version__}")
+        click.echo(f"{'=' * 30}")
+        click.echo("Phase:           0 (MVP)")
+        click.echo(f"Running:         {'yes' if running else 'no'}")
+        click.echo(f"Data dir:        {config.node.data_dir}")
+        click.echo(f"Index DB:        {config.index.db_path}")
+        click.echo(f"Documents:       {stats['document_count']}")
+        comp_on = "on" if config.storage.compression_enabled else "off"
+        comp_lvl = config.storage.compression_level
+        click.echo(f"Compression:     {comp_on} (zstd level {comp_lvl})")
+        click.echo(f"Vector search:   {'on' if config.index.vector_search else 'off'}")
+        if config.index.vector_search:
+            click.echo(f"Embedding model: {config.index.embedding_model}")
+            if ctx.vector_store is not None:
+                vec_stats = ctx.vector_store.get_stats()
+                click.echo(f"Vector docs:     {vec_stats['document_count']}")
+            else:
+                click.echo("Vector docs:     (chromadb not installed)")
+        click.echo(f"LLM:             {'on' if config.llm.enabled else 'off'}")
+        click.echo("P2P peers:       0 (Phase 2)")
+
+        # Credits
+        if ctx.ledger is not None:
+            ls = ctx.ledger.stats()
+            click.echo(
+                f"Credits:         {ls.balance:.1f}"
+                f" (earned {ls.total_earned:.1f}"
+                f" / spent {ls.total_spent:.1f})"
+            )
+            click.echo(
+                f"Tier:            {ls.tier.value}"
+                f" (score {ls.contribution_score:.1f},"
+                f" search cost {ls.search_cost:.3f})"
+            )
+            if ls.credit_state.value != "normal":
+                click.echo(f"Credit state:    {ls.credit_state.value}")
         else:
-            click.echo("Vector docs:     (chromadb not installed)")
-    click.echo(f"LLM:             {'on' if config.llm.enabled else 'off'}")
-    click.echo("P2P peers:       0 (Phase 2)")
+            click.echo("Credits:         N/A (ledger unavailable)")
 
-    # Credits
-    if ctx.ledger is not None:
-        ls = ctx.ledger.stats()
-        click.echo(
-            f"Credits:         {ls.balance:.1f}"
-            f" (earned {ls.total_earned:.1f}"
-            f" / spent {ls.total_spent:.1f})"
-        )
-        click.echo(
-            f"Tier:            {ls.tier.value}"
-            f" (score {ls.contribution_score:.1f},"
-            f" search cost {ls.search_cost:.3f})"
-        )
-        if ls.credit_state.value != "normal":
-            click.echo(f"Credit state:    {ls.credit_state.value}")
-    else:
-        click.echo("Credits:         N/A (ledger unavailable)")
+        keys_dir = config.node.data_dir / "keys"
+        if (keys_dir / "private.pem").exists():
+            from infomesh.p2p.keys import KeyPair
 
-    keys_dir = config.node.data_dir / "keys"
-    if (keys_dir / "private.pem").exists():
-        from infomesh.p2p.keys import KeyPair
-
-        pair = KeyPair.load(keys_dir)
-        click.echo(f"Peer ID:         {pair.peer_id}")
-    else:
-        click.echo("Peer ID:         (not generated yet — run 'infomesh start')")
-
-    ctx.close()
+            pair = KeyPair.load(keys_dir)
+            click.echo(f"Peer ID:         {pair.peer_id}")
+        else:
+            click.echo("Peer ID:         (not generated yet — run 'infomesh start')")
