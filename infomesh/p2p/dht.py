@@ -15,11 +15,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import msgpack
 import structlog
-
-from typing import Any
 
 from infomesh.hashing import content_hash
 from infomesh.p2p.protocol import (

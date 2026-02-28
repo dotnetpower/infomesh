@@ -17,10 +17,9 @@ from __future__ import annotations
 import time
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
+from typing import Any
 
 import msgpack
-
-from typing import Any
 
 from infomesh.hashing import content_hash
 

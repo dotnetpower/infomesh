@@ -490,7 +490,7 @@ class CreditLedger(SQLiteStore):
         row = self._conn.execute(
             "SELECT grace_start FROM credit_grace WHERE id = 1"
         ).fetchone()
-        if row is None:
+        if row is None or row[0] is None:
             return None
         return float(row[0])
 

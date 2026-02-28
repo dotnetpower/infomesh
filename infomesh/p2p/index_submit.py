@@ -21,10 +21,9 @@ from __future__ import annotations
 
 import time
 from dataclasses import asdict
+from typing import Any
 
 import structlog
-
-from typing import Any
 
 from infomesh.config import Config
 from infomesh.crawler.parser import ParsedPage
@@ -106,7 +105,7 @@ class IndexSubmitSender:
             text=page.text,
             raw_html_hash=page.raw_html_hash,
             text_hash=page.text_hash,
-            language=page.language,
+            language=page.language or "",
             crawled_at=time.time(),
             peer_id=peer_id,
             signature=signature,

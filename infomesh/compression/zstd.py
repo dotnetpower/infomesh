@@ -34,7 +34,9 @@ class Compressor:
         self._level = level
 
         if dict_data:
-            self._dict: zstd.ZstdCompressionDict | None = zstd.ZstdCompressionDict(dict_data)
+            self._dict: zstd.ZstdCompressionDict | None = zstd.ZstdCompressionDict(
+                dict_data
+            )
             self._compressor = zstd.ZstdCompressor(level=level, dict_data=self._dict)
             self._decompressor = zstd.ZstdDecompressor(dict_data=self._dict)
         else:

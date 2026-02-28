@@ -258,7 +258,10 @@ class InfoMeshNode:
     async def _trio_main(self) -> None:
         """Main trio async entry point — sets up libp2p and runs until stopped."""
         import trio
-        from libp2p import create_new_ed25519_key_pair, new_host  # type: ignore[attr-defined]
+        from libp2p import (  # type: ignore[attr-defined]
+            create_new_ed25519_key_pair,
+            new_host,
+        )
         from libp2p.kad_dht import KadDHT
         from libp2p.kad_dht.kad_dht import DHTMode
         from libp2p.records.validator import NamespacedValidator, Validator

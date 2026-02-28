@@ -9,6 +9,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
 import structlog
 
 logger = structlog.get_logger()
@@ -237,9 +238,9 @@ def _validate_value(key: str, value: object) -> object:
     return value
 
 
-def _build_section[_T](
-    cls: type[_T], toml_section: dict[str, object], section_name: str
-) -> _T:
+def _build_section[T](
+    cls: type[T], toml_section: dict[str, object], section_name: str
+) -> T:
     """Build a dataclass instance from TOML data + env overrides."""
     kwargs: dict[str, object] = {}
     for f in cls.__dataclass_fields__.values():  # type: ignore[attr-defined]
