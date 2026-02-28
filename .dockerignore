@@ -1,0 +1,38 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# Test / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+.mypy_cache/
+
+# Data directories (user data)
+*.db
+*.db-journal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node data (never ship user data)
+node.log
+serve.pid
+infomesh.pid

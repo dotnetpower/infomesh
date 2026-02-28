@@ -1,0 +1,156 @@
+# Lightweight Seed Pack — Quick Start URLs
+# ~100 curated content-rich pages for immediate indexing.
+# Each URL is a standalone, high-value page that produces useful
+# search results without deep crawling.
+#
+# Usage: infomesh start --seeds quickstart
+# Category: mixed (tech docs, tutorials, references)
+
+# ── Python ───────────────────────────────────────────────────
+https://docs.python.org/3/tutorial/index.html
+https://docs.python.org/3/library/asyncio.html
+https://docs.python.org/3/library/pathlib.html
+https://docs.python.org/3/library/sqlite3.html
+https://docs.python.org/3/library/dataclasses.html
+https://docs.python.org/3/library/typing.html
+https://docs.python.org/3/library/json.html
+https://docs.python.org/3/library/logging.html
+https://docs.python.org/3/library/unittest.html
+https://docs.python.org/3/library/venv.html
+
+# ── JavaScript / TypeScript ──────────────────────────────────
+https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide
+https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise
+https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array
+https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch
+https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
+https://developer.mozilla.org/en-US/docs/Web/HTML/Element
+https://developer.mozilla.org/en-US/docs/Web/CSS/Reference
+https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
+
+# ── Rust ─────────────────────────────────────────────────────
+https://doc.rust-lang.org/book/ch01-00-getting-started.html
+https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html
+https://doc.rust-lang.org/book/ch10-00-generics.html
+https://doc.rust-lang.org/std/option/enum.Option.html
+https://doc.rust-lang.org/std/result/enum.Result.html
+
+# ── Go ───────────────────────────────────────────────────────
+https://go.dev/doc/tutorial/getting-started
+https://go.dev/doc/effective_go
+https://pkg.go.dev/net/http
+https://pkg.go.dev/encoding/json
+https://go.dev/blog/using-go-modules
+
+# ── Node.js ──────────────────────────────────────────────────
+https://nodejs.org/en/learn/getting-started/introduction-to-nodejs
+https://nodejs.org/api/fs.html
+https://nodejs.org/api/http.html
+https://nodejs.org/api/path.html
+https://nodejs.org/api/events.html
+
+# ── Git & GitHub ─────────────────────────────────────────────
+https://docs.github.com/en/get-started/quickstart/hello-world
+https://docs.github.com/en/actions/quickstart
+https://docs.github.com/en/rest/overview
+https://git-scm.com/book/en/v2/Getting-Started-About-Version-Control
+https://git-scm.com/docs/git-rebase
+
+# ── Docker & Containers ─────────────────────────────────────
+https://docs.docker.com/get-started/
+https://docs.docker.com/compose/gettingstarted/
+https://docs.docker.com/engine/reference/builder/
+https://docs.docker.com/develop/develop-images/dockerfile_best-practices/
+
+# ── Databases ───────────────────────────────────────────────
+https://www.sqlite.org/lang.html
+https://www.postgresql.org/docs/current/tutorial.html
+https://redis.io/docs/latest/get-started/
+
+# ── Web Standards & Protocols ────────────────────────────────
+https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview
+https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers
+https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+https://www.rfc-editor.org/rfc/rfc7231
+https://www.rfc-editor.org/rfc/rfc9110
+
+# ── Security ────────────────────────────────────────────────
+https://owasp.org/www-project-top-ten/
+https://developer.mozilla.org/en-US/docs/Web/Security
+https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+
+# ── Linux & System ──────────────────────────────────────────
+https://man7.org/linux/man-pages/man1/grep.1.html
+https://man7.org/linux/man-pages/man1/find.1.html
+https://www.gnu.org/software/bash/manual/bash.html
+
+# ── Cloud & DevOps ──────────────────────────────────────────
+https://learn.microsoft.com/en-us/azure/app-service/overview
+https://learn.microsoft.com/en-us/azure/functions/functions-overview
+https://docs.aws.amazon.com/lambda/latest/dg/welcome.html
+https://cloud.google.com/functions/docs/concepts/overview
+
+# ── AI & ML ─────────────────────────────────────────────────
+https://huggingface.co/docs/transformers/index
+https://pytorch.org/tutorials/beginner/basics/intro.html
+https://scikit-learn.org/stable/getting_started.html
+https://openai.com/api/
+
+# ── Data Formats ────────────────────────────────────────────
+https://www.json.org/json-en.html
+https://yaml.org/spec/1.2.2/
+https://toml.io/en/v1.0.0
+
+# ── Package Managers & Build Tools ──────────────────────────
+https://pip.pypa.io/en/stable/user_guide/
+https://docs.astral.sh/uv/
+https://docs.npmjs.com/cli/v10/commands/npm
+https://docs.gradle.org/current/userguide/userguide.html
+https://maven.apache.org/guides/getting-started/
+
+# ── Testing ─────────────────────────────────────────────────
+https://docs.pytest.org/en/stable/getting-started.html
+https://jestjs.io/docs/getting-started
+https://testing-library.com/docs/
+
+# ── Networking & P2P ────────────────────────────────────────
+https://docs.libp2p.io/concepts/introduction/overview/
+https://en.wikipedia.org/wiki/Kademlia
+https://en.wikipedia.org/wiki/Distributed_hash_table
+https://en.wikipedia.org/wiki/BitTorrent
+
+# ── Algorithms & CS ─────────────────────────────────────────
+https://en.wikipedia.org/wiki/BM25
+https://en.wikipedia.org/wiki/PageRank
+https://en.wikipedia.org/wiki/Bloom_filter
+https://en.wikipedia.org/wiki/Merkle_tree
+https://en.wikipedia.org/wiki/SimHash
+https://en.wikipedia.org/wiki/Inverted_index
+
+# ── Reference: Encyclopedic ─────────────────────────────────
+https://en.wikipedia.org/wiki/HTTP
+https://en.wikipedia.org/wiki/REST
+https://en.wikipedia.org/wiki/SQL
+https://en.wikipedia.org/wiki/Peer-to-peer
+https://en.wikipedia.org/wiki/Search_engine
+https://en.wikipedia.org/wiki/Web_crawler
+https://en.wikipedia.org/wiki/Full-text_search
+https://www.britannica.com/technology/artificial-intelligence
+https://www.britannica.com/technology/Internet
+
+# ── Developer Communities ────────────────────────────────────
+https://stackoverflow.com/questions
+https://github.com/trending
+https://huggingface.co/models
+
+# ── Research Papers ──────────────────────────────────────────
+https://arxiv.org/list/cs.AI/recent
+https://arxiv.org/list/cs.IR/recent
+https://www.semanticscholar.org/
+https://scholar.google.com/
+
+# ── News & Tech Media (recent events) ───────────────────────
+https://www.reuters.com/technology/
+https://www.bbc.com/news/technology
+https://techcrunch.com/
+https://www.theverge.com/

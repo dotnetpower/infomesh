@@ -1,0 +1,44 @@
+# InfoMesh Search Strategy Rules
+# ═══════════════════════════════════════════════════════════════
+# These rules define how InfoMesh prioritizes sources when
+# performing web search for LLMs. They guide both crawl priority
+# and result ranking.
+#
+# This file is not a URL seed list — it is a reference document
+# for the search strategy embedded in InfoMesh's design.
+#
+# ── Source Priority Order ──────────────────────────────────────
+#
+# When performing web search, prioritize authoritative and
+# structured sources in the following order:
+#
+# 1) General knowledge:
+#    - Wikipedia
+#    - Britannica
+#
+# 2) Developer and technical documentation:
+#    - GitHub (official repositories first)
+#    - Stack Overflow
+#    - Microsoft Learn
+#    - MDN Web Docs
+#    - Hugging Face
+#
+# 3) Research papers:
+#    - arXiv
+#    - Google Scholar
+#    - Semantic Scholar
+#
+# 4) News (for recent events only):
+#    - Reuters
+#    - BBC News
+#    - TechCrunch
+#    - The Verge
+#
+# ── Search Strategy Rules ─────────────────────────────────────
+#
+# - Prefer official documentation over blogs.
+# - Prefer primary sources over secondary commentary.
+# - Avoid low-quality SEO content farms.
+# - Cite the original source URL.
+# - If multiple sources conflict, explain the difference.
+# - For technical questions, always check GitHub and official docs first.

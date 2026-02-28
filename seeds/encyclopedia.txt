@@ -1,0 +1,7 @@
+# Encyclopedia Seed URLs
+# One URL per line. Lines starting with # are comments.
+
+# ── General Knowledge ────────────────────────────────────────
+https://en.wikipedia.org/
+https://ko.wikipedia.org/
+https://www.britannica.com/

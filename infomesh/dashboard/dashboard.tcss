@@ -1,0 +1,243 @@
+/* InfoMesh Dashboard — Textual CSS Stylesheet */
+
+/* ─── Global ────────────────────────────────────────── */
+
+Screen {
+    background: $surface;
+}
+
+TabbedContent {
+    height: 1fr;
+}
+
+ContentSwitcher {
+    height: 1fr;
+}
+
+TabPane {
+    height: 1fr;
+    padding: 1;
+}
+
+.panel-title {
+    text-style: bold;
+    margin-bottom: 1;
+    color: $text;
+}
+
+/* ─── Overview Pane ─────────────────────────────────── */
+
+OverviewPane {
+    layout: vertical;
+}
+
+#overview-top {
+    height: auto;
+    max-height: 12;
+}
+
+#node-info {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#resources {
+    width: 1fr;
+}
+
+#activity {
+    height: auto;
+    margin-top: 1;
+    border: round $accent;
+    padding: 1;
+}
+
+#events-log {
+    height: 1fr;
+    margin-top: 1;
+}
+
+.activity-row {
+    height: 1;
+    margin-bottom: 0;
+}
+
+.activity-label {
+    width: 12;
+    text-style: bold;
+}
+
+.activity-value {
+    width: 14;
+    color: $text;
+}
+
+/* ─── Crawl Pane ────────────────────────────────────── */
+
+CrawlPane {
+    layout: vertical;
+}
+
+#crawl-stats {
+    height: auto;
+}
+
+#top-domains {
+    height: auto;
+    margin-top: 1;
+}
+
+#crawl-feed {
+    height: 1fr;
+    margin-top: 1;
+}
+
+/* ─── Search Pane ───────────────────────────────────── */
+
+SearchPane {
+    layout: vertical;
+}
+
+#search-input {
+    margin-bottom: 1;
+}
+
+#search-results {
+    height: 1fr;
+}
+
+/* ─── Network Pane ──────────────────────────────────── */
+
+NetworkPane {
+    layout: vertical;
+}
+
+#network-top {
+    height: auto;
+    max-height: 10;
+}
+
+#p2p-status {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#dht-status {
+    width: 1fr;
+}
+
+#peer-table {
+    height: auto;
+    margin-top: 1;
+}
+
+#bandwidth {
+    height: auto;
+    margin-top: 1;
+}
+
+.bandwidth-row {
+    height: 1;
+}
+
+.bw-label {
+    width: 12;
+    text-style: bold;
+}
+
+.bw-value {
+    width: auto;
+    min-width: 20;
+}
+
+/* ─── Credits Pane ──────────────────────────────────── */
+
+CreditsPane {
+    layout: vertical;
+}
+
+#balance-panel {
+    height: auto;
+}
+
+#earnings-panel {
+    height: auto;
+    margin-top: 1;
+}
+
+#tx-panel {
+    height: 1fr;
+    margin-top: 1;
+}
+
+/* ─── Responsive: Narrow terminals (<60 cols) ───────── */
+
+/* ─── Settings Pane ─────────────────────────────────── */
+
+SettingsPane {
+    layout: vertical;
+}
+
+Collapsible {
+    margin-bottom: 1;
+    border: round $accent;
+    padding: 0 1;
+}
+
+CollapsibleTitle {
+    text-style: bold;
+    padding: 0 1;
+}
+
+.settings-row {
+    height: auto;
+    align: left middle;
+    margin: 0 0 0 2;
+}
+
+.settings-label {
+    width: 24;
+    text-style: bold;
+    content-align: right middle;
+    padding-right: 1;
+}
+
+.settings-hint {
+    width: 1fr;
+    color: $text-muted;
+    padding-left: 1;
+}
+
+.settings-input {
+    width: 20;
+}
+
+.settings-select {
+    width: 28;
+}
+
+#settings-buttons {
+    height: auto;
+    margin-top: 1;
+    padding: 0 2;
+}
+
+#settings-buttons Button {
+    margin-right: 2;
+}
+
+#settings-status {
+    height: auto;
+    margin: 1 2;
+}
+
+/* ─── Responsive: Narrow terminals ──────────────────── */
+
+ResourceBar {
+    height: 1;
+}
+
+SparklineChart {
+    width: 1fr;
+    min-width: 10;
+}

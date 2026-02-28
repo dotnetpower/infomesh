@@ -1,0 +1,28 @@
+# Technology Documentation Seed URLs
+# One URL per line. Lines starting with # are comments.
+#
+# Search strategy:
+# - Prefer official documentation over blogs.
+# - Prefer primary sources over secondary commentary.
+# - Avoid low-quality SEO content farms.
+# - For technical questions, always check GitHub and official docs first.
+
+# ── Official Documentation ───────────────────────────────────
+https://docs.python.org/3/
+https://developer.mozilla.org/en-US/
+https://learn.microsoft.com/
+https://docs.github.com/
+https://go.dev/doc/
+https://doc.rust-lang.org/book/
+https://nodejs.org/en/docs/
+
+# ── Developer Communities & Repositories ─────────────────────
+https://github.com/
+https://stackoverflow.com/
+https://huggingface.co/
+
+# ── News & Tech Media (for recent events) ────────────────────
+https://www.reuters.com/technology/
+https://www.bbc.com/news/technology
+https://techcrunch.com/
+https://www.theverge.com/

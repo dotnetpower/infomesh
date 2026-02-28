@@ -1,0 +1,12 @@
+# Academic Paper Source Seed URLs
+# One URL per line. Lines starting with # are comments.
+#
+# Search strategy:
+# - Prefer primary sources over secondary commentary.
+# - If multiple sources conflict, explain the difference.
+# - Cite the original source URL.
+
+# ── Research Papers ──────────────────────────────────────────
+https://arxiv.org/
+https://scholar.google.com/
+https://www.semanticscholar.org/
