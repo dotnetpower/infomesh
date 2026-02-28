@@ -703,7 +703,7 @@ git clone https://github.com/dotnetpower/infomesh.git
 cd infomesh
 uv sync --dev
 
-# Run the test suite (987+ tests)
+# Run the test suite (1020+ tests)
 uv run pytest
 
 # Run linter + formatter
@@ -721,7 +721,7 @@ uv run mypy infomesh/
 | 🐛 Report a bug | Easy | High — helps everyone |
 | 📝 Improve docs / translations | Easy | High — lowers entry barrier |
 | 🌱 Add seed URLs | Easy | Medium — expands crawl coverage |
-| 🧪 Write tests | Medium | High — currently 987+ tests, always need more |
+| 🧪 Write tests | Medium | High — currently 1020+ tests, always need more |
 | 🔧 Fix an issue | Medium | Direct impact |
 | ✨ Implement a feature | Hard | Moves the project forward |
 | 🔐 Security audit | Hard | Critical for trust |
@@ -776,7 +776,7 @@ Detailed documentation is available in the [docs/](docs/) directory:
 | Test files | 50 |
 | Source lines | ~19,500 |
 | Test lines | ~10,400 |
-| Tests passing | 987+ |
+| Tests passing | 1020+ |
 | Test coverage | Core modules fully tested |
 | Development phases | 9 (Phase 0 → 5D, all complete) |
 | Python version | 3.12+ |
