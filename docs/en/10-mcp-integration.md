@@ -24,25 +24,27 @@ so your AI assistant can search the web through your own decentralized index.
 
 ## Quick Start
 
-### 1. Install InfoMesh
+### 1. Install & Run (One Command)
+
+The fastest way — no clone, no setup:
 
 ```bash
-# Using uv (recommended)
-git clone https://github.com/dotnetpower/infomesh.git
-cd infomesh
-uv sync
+# Install uv (if you don't have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Using pip (after PyPI release)
-pip install infomesh
+# Run MCP server directly (auto-downloads infomesh from PyPI)
+uvx infomesh mcp
 ```
 
-### 2. Start the MCP Server
+### 2. Or Install Permanently
 
 ```bash
-# Stdio mode (used by VS Code, Claude Desktop, etc.)
-uv run infomesh mcp
+# Install as a tool (available system-wide)
+uv tool install infomesh
+infomesh mcp
 
-# Or with pip-installed version
+# Or via pip
+pip install infomesh
 infomesh mcp
 ```
 
@@ -58,20 +60,20 @@ The AI client launches InfoMesh as a subprocess and exchanges JSON-RPC messages 
 Add to your VS Code settings (`.vscode/settings.json` or user settings):
 
 ```jsonc
+// Recommended: uses uvx (no clone/install needed)
 {
   "mcp": {
     "servers": {
       "infomesh": {
-        "command": "uv",
-        "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"],
-        "env": {}
+        "command": "uvx",
+        "args": ["infomesh", "mcp"]
       }
     }
   }
 }
 ```
 
-Or if InfoMesh is installed globally via pip:
+Alternative — if installed via `uv tool install` or `pip install`:
 
 ```jsonc
 {
@@ -80,23 +82,6 @@ Or if InfoMesh is installed globally via pip:
       "infomesh": {
         "command": "infomesh",
         "args": ["mcp"]
-      }
-    }
-  }
-}
-```
-
-**Workspace-level** configuration (`.vscode/settings.json`):
-```jsonc
-{
-  "mcp": {
-    "servers": {
-      "infomesh": {
-        "command": "uv",
-        "args": ["run", "infomesh", "mcp"],
-        "env": {
-          "INFOMESH_DATA_DIR": "${workspaceFolder}/.infomesh"
-        }
       }
     }
   }
@@ -116,8 +101,8 @@ Create `.vscode/mcp.json` in your workspace:
 {
   "servers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -132,21 +117,8 @@ or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 {
   "mcpServers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
-    }
-  }
-}
-```
-
-Or with pip-installed version:
-
-```json
-{
-  "mcpServers": {
-    "infomesh": {
-      "command": "infomesh",
-      "args": ["mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -162,8 +134,8 @@ Cursor supports MCP through its settings. Go to **Cursor Settings → MCP** and 
 {
   "mcpServers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -177,8 +149,8 @@ Add to Windsurf's MCP configuration (`~/.windsurf/mcp_config.json`):
 {
   "mcpServers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -191,8 +163,8 @@ JetBrains IDEs with AI Assistant support MCP. Add to your MCP configuration:
 1. Open **Settings → Tools → AI Assistant → MCP Servers**
 2. Click **Add** (+) and configure:
    - **Name**: `infomesh`
-   - **Command**: `uv`
-   - **Arguments**: `run --directory /path/to/infomesh infomesh mcp`
+   - **Command**: `uvx`
+   - **Arguments**: `infomesh mcp`
 
 Or edit the config file directly (location varies by OS):
 
@@ -200,8 +172,8 @@ Or edit the config file directly (location varies by OS):
 {
   "servers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -216,8 +188,8 @@ Add to your Zed settings (`~/.config/zed/settings.json`):
   "context_servers": {
     "infomesh": {
       "command": {
-        "path": "uv",
-        "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+        "path": "uvx",
+        "args": ["infomesh", "mcp"]
       }
     }
   }
@@ -232,8 +204,8 @@ If you use an MCP-compatible Neovim plugin (e.g., `mcp.nvim`):
 require("mcp").setup({
   servers = {
     infomesh = {
-      command = "uv",
-      args = { "run", "--directory", "/path/to/infomesh", "infomesh", "mcp" },
+      command = "uvx",
+      args = { "infomesh", "mcp" },
     },
   },
 })
@@ -318,12 +290,12 @@ The API binds to `127.0.0.1` only — it is not exposed to the network.
 - Check the Output panel → "MCP" for error logs
 
 ### "No results found"
-- Your index may be empty. Start the node first: `uv run infomesh start`
-- Or crawl some pages: `uv run infomesh crawl https://docs.python.org/3/`
+- Your index may be empty. Crawl some pages first: `uvx infomesh crawl https://docs.python.org/3/`
+- Or start the node: `uvx infomesh start`
 
 ### MCP server exits immediately
-- Run `uv run infomesh mcp` manually to see error output
-- Ensure all dependencies are installed: `uv sync`
+- Run `uvx infomesh mcp` manually to see error output
+- If using from source, ensure dependencies are installed: `uv sync`
 
 ### Permission denied on keys
 - InfoMesh stores keys in `~/.infomesh/keys/`. Ensure the directory is writable.

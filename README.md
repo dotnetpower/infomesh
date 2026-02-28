@@ -165,39 +165,81 @@ Trust = 0.15 × uptime  +  0.25 × contribution  +  0.40 × audit_pass_rate  +  
 
 ---
 
-## �🚀 Quick Start
+## 🚀 Quick Start
 
-Get up and running in under 2 minutes.
+### Install & Run (One Command — No Git Required)
 
-### Prerequisites
-
-- **Python 3.12+**
-- **[uv](https://docs.astral.sh/uv/)** — fast Python package manager (auto-creates virtualenv)
-
-### Install & Run
+All you need is a Linux terminal (Ubuntu, Debian, etc.). No prior Python or developer experience required.
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/dotnetpower/infomesh.git
-cd infomesh
+# 1. Install uv — the fast Python package manager (handles everything for you)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc    # apply PATH changes (or restart your terminal)
 
-# 2. Install all dependencies (creates .venv automatically)
-uv sync
-
-# 3. Start InfoMesh — launches crawler, indexer, MCP server, and TUI dashboard
-uv run infomesh start
+# 2. Run InfoMesh instantly — auto-downloads on first use, nothing to install
+uvx infomesh status
 ```
 
-That's it. InfoMesh will automatically:
-- Generate your Ed25519 key pair (stored in `~/.infomesh/keys/`)
-- Start crawling from curated seed URLs (tech docs, academic sources, encyclopedias)
-- Build a local SQLite FTS5 search index
-- Launch the Textual console dashboard with live stats
-- Expose MCP tools for your AI assistant
+That's it — no `git clone`, no `pip install`, no virtual environments. `uv` handles everything automatically.
 
-### Headless Mode (Servers / CI)
+### Try It Out
 
 ```bash
+# Crawl a webpage and index it
+uvx infomesh crawl https://docs.python.org/3/library/asyncio.html
+
+# Search your local index
+uvx infomesh search "asyncio"
+
+# View the node dashboard (works over SSH too)
+uvx infomesh dashboard --text
+```
+
+### Install Permanently (Optional)
+
+If you use InfoMesh regularly, install it as a persistent tool so you don't need the `uvx` prefix:
+
+```bash
+uv tool install infomesh
+
+# Now run directly:
+infomesh status
+infomesh crawl https://example.com
+infomesh search "example"
+infomesh dashboard --text
+```
+
+### Connect to Your AI Assistant (MCP)
+
+Add InfoMesh as an MCP server in **VS Code (Copilot)**, **Claude Desktop**, **Cursor**, or **Windsurf** — no API key needed:
+
+```json
+{
+  "mcpServers": {
+    "infomesh": {
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
+    }
+  }
+}
+```
+
+Your AI assistant can now search the web for free via MCP.
+
+### From Source (Contributors / Developers)
+
+If you want to contribute code or run from source:
+
+```bash
+# Clone and install with dev dependencies
+git clone https://github.com/dotnetpower/infomesh.git
+cd infomesh
+uv sync
+
+# Start InfoMesh with the TUI dashboard
+uv run infomesh start
+
+# Or run headless (servers / CI)
 uv run infomesh start --no-dashboard
 ```
 
@@ -215,16 +257,16 @@ docker run -d --name infomesh \
 
 ```bash
 # Search your local index
-uv run infomesh search "python asyncio tutorial"
+uvx infomesh search "python asyncio tutorial"
 
 # Check node status
-uv run infomesh status
+uvx infomesh status
 
 # Crawl a specific URL on demand
-uv run infomesh crawl https://docs.python.org/3/
+uvx infomesh crawl https://docs.python.org/3/
 
 # Export your index as a portable snapshot
-uv run infomesh index export backup.zst
+uvx infomesh index export backup.zst
 ```
 
 ### Examples
@@ -276,29 +318,14 @@ InfoMesh exposes **5 MCP tools completely free** — no API key, no billing:
 | `crawl_url(url, depth)` | Submit a URL to be crawled and indexed by the network |
 | `network_stats()` | Network status: peer count, index size, credit balance |
 
-#### Configure in VS Code / Copilot
+#### Configure in VS Code / Copilot / Claude Desktop / Cursor
 
 ```json
 {
   "mcpServers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "infomesh", "mcp"],
-      "cwd": "/path/to/infomesh"
-    }
-  }
-}
-```
-
-#### Configure for Claude Desktop
-
-```json
-{
-  "mcpServers": {
-    "infomesh": {
-      "command": "uv",
-      "args": ["run", "infomesh", "mcp"],
-      "cwd": "/path/to/infomesh"
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -676,7 +703,7 @@ git clone https://github.com/dotnetpower/infomesh.git
 cd infomesh
 uv sync --dev
 
-# Run the test suite (981+ tests)
+# Run the test suite (987+ tests)
 uv run pytest
 
 # Run linter + formatter
@@ -694,7 +721,7 @@ uv run mypy infomesh/
 | 🐛 Report a bug | Easy | High — helps everyone |
 | 📝 Improve docs / translations | Easy | High — lowers entry barrier |
 | 🌱 Add seed URLs | Easy | Medium — expands crawl coverage |
-| 🧪 Write tests | Medium | High — currently 981+ tests, always need more |
+| 🧪 Write tests | Medium | High — currently 987+ tests, always need more |
 | 🔧 Fix an issue | Medium | Direct impact |
 | ✨ Implement a feature | Hard | Moves the project forward |
 | 🔐 Security audit | Hard | Critical for trust |
@@ -749,7 +776,7 @@ Detailed documentation is available in the [docs/](docs/) directory:
 | Test files | 50 |
 | Source lines | ~19,500 |
 | Test lines | ~10,400 |
-| Tests passing | 981+ |
+| Tests passing | 987+ |
 | Test coverage | Core modules fully tested |
 | Development phases | 9 (Phase 0 → 5D, all complete) |
 | Python version | 3.12+ |
@@ -776,8 +803,7 @@ All core phases are **complete**. Current focus is on community growth and produ
 ### What's Next
 
 - 🌍 **Public bootstrap nodes** — volunteer-run seed nodes for easy onboarding
-- 📦 **PyPI release** — `pip install infomesh` / `uv add infomesh`
-- 🔌 **Plugin system** — custom crawlers, parsers, and ranking strategies
+-  **Plugin system** — custom crawlers, parsers, and ranking strategies
 - 🎭 **JS rendering** — Playwright-based SPA crawling for JS-heavy sites
 - 📱 **Web dashboard** — optional browser UI alongside the TUI
 

@@ -109,7 +109,7 @@ infomesh/
 
 ### 3.2 스타일 & 포매팅
 
-- 포매터: **black** (기본 설정, 줄 길이 88).
+- 포매터: **ruff format** (기본 설정, 줄 길이 88).
 - 린터: **ruff** — `select = ["E", "F", "I", "UP", "B", "SIM"]`.
 - 임포트 순서: stdlib → 서드파티 → 로컬 (ruff/isort 적용).
 - `os.path` 대신 `pathlib.Path` 선호.

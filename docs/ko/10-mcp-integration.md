@@ -24,25 +24,27 @@ AI 어시스턴트가 여러분의 분산 인덱스를 통해 웹 검색을 수�
 
 ## 빠른 시작
 
-### 1. InfoMesh 설치
+### 1. 설치 & 실행 (한 줄 명령)
+
+가장 빠른 방법 — 클론, 설정 불필요:
 
 ```bash
-# uv 사용 (권장)
-git clone https://github.com/dotnetpower/infomesh.git
-cd infomesh
-uv sync
+# uv 설치 (없는 경우)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# pip 사용 (PyPI 등록 후)
-pip install infomesh
+# MCP 서버 바로 실행 (PyPI에서 infomesh 자동 다운로드)
+uvx infomesh mcp
 ```
 
-### 2. MCP 서버 시작
+### 2. 또는 영구 설치
 
 ```bash
-# Stdio 모드 (VS Code, Claude Desktop 등에서 사용)
-uv run infomesh mcp
+# 도구로 설치 (시스템 전역 사용 가능)
+uv tool install infomesh
+infomesh mcp
 
-# pip으로 설치한 경우
+# 또는 pip
+pip install infomesh
 infomesh mcp
 ```
 
@@ -58,20 +60,20 @@ AI 클라이언트가 InfoMesh를 서브프로세스로 실행하고 파이프�
 VS Code 설정에 추가 (`.vscode/settings.json` 또는 사용자 설정):
 
 ```jsonc
+// 권장: uvx 사용 (클론/설치 불필요)
 {
   "mcp": {
     "servers": {
       "infomesh": {
-        "command": "uv",
-        "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"],
-        "env": {}
+        "command": "uvx",
+        "args": ["infomesh", "mcp"]
       }
     }
   }
 }
 ```
 
-InfoMesh가 pip으로 전역 설치된 경우:
+`uv tool install` 또는 `pip install`로 설치한 경우:
 
 ```jsonc
 {
@@ -80,23 +82,6 @@ InfoMesh가 pip으로 전역 설치된 경우:
       "infomesh": {
         "command": "infomesh",
         "args": ["mcp"]
-      }
-    }
-  }
-}
-```
-
-**워크스페이스 수준** 설정 (`.vscode/settings.json`):
-```jsonc
-{
-  "mcp": {
-    "servers": {
-      "infomesh": {
-        "command": "uv",
-        "args": ["run", "infomesh", "mcp"],
-        "env": {
-          "INFOMESH_DATA_DIR": "${workspaceFolder}/.infomesh"
-        }
       }
     }
   }
@@ -116,8 +101,8 @@ InfoMesh가 pip으로 전역 설치된 경우:
 {
   "servers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -132,21 +117,8 @@ InfoMesh가 pip으로 전역 설치된 경우:
 {
   "mcpServers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
-    }
-  }
-}
-```
-
-pip으로 설치한 경우:
-
-```json
-{
-  "mcpServers": {
-    "infomesh": {
-      "command": "infomesh",
-      "args": ["mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -162,8 +134,8 @@ pip으로 설치한 경우:
 {
   "mcpServers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -177,8 +149,8 @@ Windsurf MCP 설정 (`~/.windsurf/mcp_config.json`)에 추가:
 {
   "mcpServers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -191,8 +163,8 @@ AI Assistant가 포함된 JetBrains IDE는 MCP를 지원합니다:
 1. **Settings → Tools → AI Assistant → MCP Servers** 열기
 2. **Add** (+) 클릭 후 설정:
    - **Name**: `infomesh`
-   - **Command**: `uv`
-   - **Arguments**: `run --directory /path/to/infomesh infomesh mcp`
+   - **Command**: `uvx`
+   - **Arguments**: `infomesh mcp`
 
 또는 설정 파일을 직접 편집:
 
@@ -200,8 +172,8 @@ AI Assistant가 포함된 JetBrains IDE는 MCP를 지원합니다:
 {
   "servers": {
     "infomesh": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+      "command": "uvx",
+      "args": ["infomesh", "mcp"]
     }
   }
 }
@@ -216,8 +188,8 @@ Zed 설정 (`~/.config/zed/settings.json`)에 추가:
   "context_servers": {
     "infomesh": {
       "command": {
-        "path": "uv",
-        "args": ["run", "--directory", "/path/to/infomesh", "infomesh", "mcp"]
+        "path": "uvx",
+        "args": ["infomesh", "mcp"]
       }
     }
   }
@@ -232,8 +204,8 @@ MCP 호환 Neovim 플러그인 (예: `mcp.nvim`) 사용 시:
 require("mcp").setup({
   servers = {
     infomesh = {
-      command = "uv",
-      args = { "run", "--directory", "/path/to/infomesh", "infomesh", "mcp" },
+      command = "uvx",
+      args = { "infomesh", "mcp" },
     },
   },
 })
@@ -317,12 +289,12 @@ API는 `127.0.0.1`에만 바인딩됩니다 — 외부 네트워크에 노출되
 - 출력 패널 → "MCP"에서 오류 로그 확인
 
 ### "No results found"
-- 인덱스가 비어있을 수 있습니다. 먼저 노드를 시작하세요: `uv run infomesh start`
-- 또는 페이지를 크롤링하세요: `uv run infomesh crawl https://docs.python.org/3/`
+- 인덱스가 비어있을 수 있습니다. 먼저 페이지를 크롤링하세요: `uvx infomesh crawl https://docs.python.org/3/`
+- 또는 노드를 시작하세요: `uvx infomesh start`
 
 ### MCP 서버가 즉시 종료됨
-- `uv run infomesh mcp`를 수동으로 실행하여 오류 출력 확인
-- 모든 의존성이 설치되었는지 확인: `uv sync`
+- `uvx infomesh mcp`를 수동으로 실행하여 오류 출력 확인
+- 소스에서 실행하는 경우 모든 의존성이 설치되었는지 확인: `uv sync`
 
 ### 키 권한 오류
 - InfoMesh는 키를 `~/.infomesh/keys/`에 저장합니다. 디렉토리가 쓰기 가능한지 확인하세요.

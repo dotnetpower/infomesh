@@ -109,7 +109,7 @@ infomesh/
 
 ### 3.2 Style & Formatting
 
-- Formatter: **black** (default settings, line length 88).
+- Formatter: **ruff format** (default settings, line length 88).
 - Linter: **ruff** with `select = ["E", "F", "I", "UP", "B", "SIM"]`.
 - Import order: stdlib → third-party → local (enforced by ruff/isort).
 - Prefer `pathlib.Path` over `os.path`.
