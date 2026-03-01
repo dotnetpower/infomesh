@@ -382,14 +382,17 @@ def serve(seeds: str | None, role: str | None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        if p2p_node is not None:
+        if p2p_node is not None and hasattr(p2p_node, "stop"):
             p2p_node.stop()
             _serve_logger.info("p2p_stopped")
         pid_file.unlink(missing_ok=True)
         _serve_logger.info("serve_stopped")
 
 
-def _try_start_p2p(config: Config, log: object) -> object | None:
+def _try_start_p2p(
+    config: Config,
+    log: structlog.stdlib.BoundLogger,
+) -> object | None:
     """Try to start the P2P node. Returns the node or None on failure.
 
     Failures are logged as warnings — the node continues in local-only mode.
@@ -397,7 +400,7 @@ def _try_start_p2p(config: Config, log: object) -> object | None:
     try:
         from infomesh.p2p.node import InfoMeshNode  # noqa: F811
     except ImportError:
-        log.warning(  # type: ignore[attr-defined]
+        log.warning(
             "p2p_unavailable",
             reason="libp2p or trio not installed",
             hint="pip install 'libp2p[trio]'  OR  uv add libp2p trio",
@@ -407,14 +410,14 @@ def _try_start_p2p(config: Config, log: object) -> object | None:
     try:
         node = InfoMeshNode(config)
         node.start(blocking=False)
-        log.info(  # type: ignore[attr-defined]
+        log.info(
             "p2p_started",
             peer_id=node.peer_id,
             listen_port=config.node.listen_port,
             bootstrap_nodes=len(config.network.bootstrap_nodes),
         )
         if not config.network.bootstrap_nodes:
-            log.warning(  # type: ignore[attr-defined]
+            log.warning(
                 "p2p_no_bootstrap",
                 msg=(
                     "No bootstrap nodes configured. "
@@ -424,7 +427,7 @@ def _try_start_p2p(config: Config, log: object) -> object | None:
             )
         return node
     except Exception as exc:
-        log.warning(  # type: ignore[attr-defined]
+        log.warning(
             "p2p_start_failed",
             error=str(exc),
             msg=(
@@ -478,7 +481,7 @@ def status() -> None:
         if p2p_state == "running":
             click.echo(f"P2P:             running ({p2p_peers} peers)")
             addrs = p2p.get("listen_addrs", [])
-            if addrs:
+            if addrs and isinstance(addrs, list):
                 click.echo(f"P2P addrs:       {', '.join(str(a) for a in addrs)}")
         elif p2p_state == "error":
             click.echo("P2P:             " + click.style("error", fg="red"))

@@ -45,7 +45,8 @@ class P2PStatusPanel(Static):
         bootstrap = len(self._config.network.bootstrap_nodes)
 
         raw_state = str(data.get("state", "stopped"))
-        peers = int(data.get("peers", 0))
+        raw_peers = data.get("peers", 0)
+        peers = int(raw_peers) if isinstance(raw_peers, (int, float, str)) else 0
         peer_id = str(data.get("peer_id", ""))
 
         match raw_state:

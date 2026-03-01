@@ -271,19 +271,25 @@ class Replicator:
                 }
             except (ValueError, Exception):
                 unpacked = safe_unpackb(data)
-            msg_type = unpacked.get("type", -1)
-            payload = unpacked.get("payload", {})
+            unpacked_dict: dict[str, object] = (
+                unpacked if isinstance(unpacked, dict) else {}
+            )
+            msg_type = unpacked_dict.get("type", -1)
+            payload_raw = unpacked_dict.get("payload", {})
+            payload: dict[str, object] = (
+                payload_raw if isinstance(payload_raw, dict) else {}
+            )
 
             if msg_type != int(MessageType.REPLICATE_REQUEST):
                 return
 
             # Store locally
             ok = await store_fn(  # type: ignore[operator]
-                url=payload.get("url", ""),
-                title=payload.get("title", ""),
-                text=payload.get("text", ""),
-                text_hash=payload.get("text_hash", ""),
-                language=payload.get("language", ""),
+                url=str(payload.get("url", "")),
+                title=str(payload.get("title", "")),
+                text=str(payload.get("text", "")),
+                text_hash=str(payload.get("text_hash", "")),
+                language=str(payload.get("language", "")),
             )
 
             self._stats.replicas_received += 1

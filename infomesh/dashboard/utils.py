@@ -77,8 +77,9 @@ def read_p2p_status(config: Config) -> dict[str, object]:
     status_path = config.node.data_dir / "p2p_status.json"
     try:
         if status_path.exists():
-            data = json.loads(status_path.read_text())
-            age = time.time() - float(data.get("timestamp", 0))
+            data: dict[str, object] = json.loads(status_path.read_text())
+            ts = data.get("timestamp", 0)
+            age = time.time() - float(ts if isinstance(ts, (int, float, str)) else 0)
             if age < _P2P_STATUS_TTL_SECONDS:
                 return data
     except (OSError, json.JSONDecodeError, ValueError):

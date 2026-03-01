@@ -53,7 +53,7 @@ class DashboardCommandProvider(Provider):
         for name, help_text, action in self._COMMANDS:
             yield DiscoveryHit(
                 display=name,
-                command=self.app.run_action(action),
+                command=lambda a=action: self.app.run_action(a),
                 help=help_text,
             )
 
@@ -66,7 +66,7 @@ class DashboardCommandProvider(Provider):
                 yield Hit(
                     score=score,
                     match_display=matcher.highlight(name),
-                    command=self.app.run_action(action),
+                    command=lambda a=action: self.app.run_action(a),
                     help=help_text,
                 )
 

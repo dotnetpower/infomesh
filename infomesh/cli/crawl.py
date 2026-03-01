@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING
 
 import click
 
 from infomesh.config import load_config
+
+if TYPE_CHECKING:
+    from infomesh.services import AppContext
 
 
 @click.command()
@@ -56,7 +60,10 @@ def crawl(url: str, depth: int, force: bool) -> None:
             if max_depth == 0:
                 # Single URL — simple output
                 # Pass depth=max_depth so worker won't schedule child links
-                crawl_depth = config_adj.crawl.max_depth  # type: ignore[union-attr]
+                crawl_depth = config_adj.crawl.max_depth
+                if ctx.worker is None:
+                    click.echo("✗ Crawler not available")
+                    return
                 result = await ctx.worker.crawl_url(url, depth=crawl_depth, force=force)
                 if result.success and result.page:
                     index_document(result.page, ctx.store, ctx.vector_store)
@@ -79,7 +86,7 @@ def crawl(url: str, depth: int, force: bool) -> None:
 
 
 async def _crawl_with_progress(
-    ctx: object,
+    ctx: AppContext,
     url: str,
     max_depth: int,
     index_document: object,
@@ -96,8 +103,10 @@ async def _crawl_with_progress(
     click.echo(f"\n🕷️  Crawling {url} (depth: {max_depth})\n")
 
     # Phase 1: Crawl the initial URL (depth=0 so links are discovered)
-    result = await ctx.worker.crawl_url(url, depth=0, force=force)  # type: ignore[union-attr]
-    pending = ctx.scheduler.pending_count  # type: ignore[union-attr]
+    assert ctx.worker is not None
+    assert ctx.scheduler is not None
+    result = await ctx.worker.crawl_url(url, depth=0, force=force)
+    pending = ctx.scheduler.pending_count
 
     if result.success and result.page:
         index_document(result.page, ctx.store, ctx.vector_store)  # type: ignore[operator]
@@ -115,15 +124,15 @@ async def _crawl_with_progress(
         click.echo(f"  [1] ✗ {url} — {result.error}")
 
     # Phase 2: Process queued child URLs
-    while ctx.scheduler.pending_count > 0:  # type: ignore[union-attr]
-        child_url, child_depth = await ctx.scheduler.get_url()  # type: ignore[union-attr]
-        child_result = await ctx.worker.crawl_url(child_url, depth=child_depth)  # type: ignore[union-attr]
+    while ctx.scheduler.pending_count > 0:
+        child_url, child_depth = await ctx.scheduler.get_url()
+        child_result = await ctx.worker.crawl_url(child_url, depth=child_depth)
 
         page_num = crawled + failed + skipped + 1
-        remaining = ctx.scheduler.pending_count  # type: ignore[union-attr]
+        remaining = ctx.scheduler.pending_count
 
         if child_result.success and child_result.page:
-            index_document(child_result.page, ctx.store, ctx.vector_store)  # type: ignore[operator]
+            index_document(child_result.page, ctx.store, ctx.vector_store)  # type: ignore[operator]  # noqa: E501
             crawled += 1
             total_chars += len(child_result.page.text)
             click.echo(

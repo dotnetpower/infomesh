@@ -163,7 +163,7 @@ def extract_canonical(html: str, page_url: str) -> str | None:
     if parsed.scheme not in ("http", "https"):
         return None
 
-    return canonical
+    return str(canonical)
 
 
 def extract_links(html: str, base_url: str) -> list[str]:

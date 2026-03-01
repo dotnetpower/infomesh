@@ -88,7 +88,8 @@ def _http_get(
     req = urllib.request.Request(url, headers=headers or {})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+            result: str = resp.read().decode("utf-8", errors="replace")
+            return result
     except Exception:  # noqa: BLE001
         return None
 
@@ -249,7 +250,7 @@ def _check_iptables_allows(port: int) -> bool:
 # ── Cloud-specific metadata helpers ──────────────────────────────────
 
 
-def _get_azure_metadata() -> dict | None:
+def _get_azure_metadata() -> dict[str, object] | None:
     """Fetch Azure VM instance metadata."""
     body = _http_get(
         "http://169.254.169.254/metadata/instance?api-version=2021-02-01",
@@ -257,7 +258,8 @@ def _get_azure_metadata() -> dict | None:
     )
     if body:
         try:
-            return json.loads(body)
+            result: dict[str, object] = json.loads(body)
+            return result
         except json.JSONDecodeError:
             return None
     return None
@@ -449,10 +451,11 @@ def _auto_open_azure(port: int) -> tuple[bool, str]:
         return False, "Could not retrieve Azure VM metadata (IMDS unavailable)."
 
     try:
-        compute = meta.get("compute", {})
-        rg = compute.get("resourceGroupName", "")
-        vm_name = compute.get("name", "")
-        subscription_id = compute.get("subscriptionId", "")
+        raw_compute = meta.get("compute", {})
+        compute = raw_compute if isinstance(raw_compute, dict) else {}
+        rg = str(compute.get("resourceGroupName", ""))
+        vm_name = str(compute.get("name", ""))
+        subscription_id = str(compute.get("subscriptionId", ""))
         if not rg or not vm_name:
             return False, "Could not determine VM resource group or name from IMDS."
 
@@ -1076,7 +1079,7 @@ def _check_port_wsl(port: int) -> bool:
         click.echo(
             f"    Port proxy target is stale ({proxy_target} → {wsl_ip}), updating..."
         )
-        if _wsl_update_portproxy(port, wsl_ip):
+        if wsl_ip is not None and _wsl_update_portproxy(port, wsl_ip):
             click.secho(
                 f"  ✓ Port proxy updated: 0.0.0.0:{port} → {wsl_ip}:{port}",
                 fg="green",

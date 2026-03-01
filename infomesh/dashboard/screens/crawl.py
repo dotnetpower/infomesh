@@ -232,8 +232,8 @@ class CrawlPane(Widget):
                         compression_enabled=self._config.storage.compression_enabled,
                         compression_level=self._config.storage.compression_level,
                     )
-                    stats = store.get_stats()
-                    total = stats["document_count"]
+                    db_stats = store.get_stats()
+                    total = db_stats["document_count"]
                     panel.update_stats(
                         total_pages=total,
                         countdown=int(self._REFRESH_INTERVAL),

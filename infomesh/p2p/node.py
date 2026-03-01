@@ -325,9 +325,7 @@ class InfoMeshNode:
     async def _trio_main(self) -> None:
         """Main trio async entry point — sets up libp2p and runs until stopped."""
         import trio
-        from libp2p import (  # type: ignore[attr-defined]
-            new_host,
-        )
+        from libp2p import new_host
         from libp2p.kad_dht import KadDHT
         from libp2p.kad_dht.kad_dht import DHTMode
         from libp2p.records.validator import NamespacedValidator, Validator
@@ -340,7 +338,7 @@ class InfoMeshNode:
         key_pair = self._load_or_create_libp2p_key()
 
         # ── Sybil PoW: generate proof-of-work for node identity ──
-        pub_key_bytes = key_pair.public_key.to_bytes()
+        pub_key_bytes = key_pair.public_key.to_bytes()  # type: ignore[attr-defined]
         logger.info("pow_generating", difficulty=20)
         pow_result = generate_pow(pub_key_bytes, difficulty_bits=20)
         self._pow_nonce = pow_result.nonce
@@ -356,7 +354,7 @@ class InfoMeshNode:
         listen_addr = Multiaddr(
             f"/ip4/{self._config.node.listen_address}/tcp/{self._config.node.listen_port}"
         )
-        self._host = new_host(key_pair=key_pair)
+        self._host = new_host(key_pair=key_pair)  # type: ignore[arg-type]
 
         async with self._host.run([listen_addr]):
             self._peer_id = str(self._host.get_id())
@@ -611,7 +609,9 @@ class InfoMeshNode:
         Returns:
             A libp2p ``Ed25519KeyPair`` (or compatible key pair object).
         """
-        from libp2p import create_new_ed25519_key_pair  # type: ignore[attr-defined]
+        from libp2p import (  # type: ignore[attr-defined]
+            create_new_ed25519_key_pair,
+        )
 
         keys_dir = self._config.node.data_dir / "keys"
         key_path = keys_dir / "libp2p_key.bin"
@@ -619,10 +619,10 @@ class InfoMeshNode:
         if key_path.exists():
             try:
                 raw = key_path.read_bytes()
-                from libp2p.crypto.ed25519 import (  # type: ignore[attr-defined]
+                from libp2p.crypto.ed25519 import (
                     Ed25519PrivateKey,
                 )
-                from libp2p.crypto.keys import KeyPair  # type: ignore[attr-defined]
+                from libp2p.crypto.keys import KeyPair
 
                 priv = Ed25519PrivateKey.from_bytes(raw)
                 logger.info("libp2p_key_loaded", path=str(key_path))

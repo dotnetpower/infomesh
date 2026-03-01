@@ -281,7 +281,7 @@ def _create_app(
                 fp = await fetch_page_async(
                     url,
                     store=store,
-                    worker=worker,  # type: ignore[arg-type]
+                    worker=worker,
                     vector_store=vector_store,
                     max_size_bytes=max_size,
                     cache_ttl_seconds=cache_ttl,
@@ -359,7 +359,7 @@ def _create_app(
 
                 ci = await crawl_and_index(
                     url,
-                    worker=worker,  # type: ignore[arg-type]
+                    worker=worker,
                     store=store,
                     vector_store=vector_store,
                     link_graph=link_graph,
