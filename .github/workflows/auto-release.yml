@@ -72,8 +72,11 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          # Get latest tag, default to v0.1.0 if none exist
-          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          # Get the highest semver tag across ALL tags (not just reachable from HEAD)
+          latest_tag=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ -z "$latest_tag" ]; then
+            latest_tag="v0.1.0"
+          fi
           echo "Latest tag: $latest_tag"
 
           # Parse major.minor.patch
@@ -83,32 +86,47 @@ jobs:
           # Bump patch
           patch=$((patch + 1))
           new_version="${major}.${minor}.${patch}"
+          new_tag="v${new_version}"
+
+          # Check if tag already exists (e.g. from a previous failed run)
+          if git rev-parse "$new_tag" >/dev/null 2>&1; then
+            echo "⚠️ Tag $new_tag already exists — skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
           echo "version=${new_version}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${new_version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${new_tag}" >> "$GITHUB_OUTPUT"
           echo "Next version: ${new_version}"
 
       - name: Update version in pyproject.toml
+        if: steps.version.outputs.skip != 'true'
         run: |
           sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.version }}"/' pyproject.toml
           echo "Updated pyproject.toml:"
           head -5 pyproject.toml
 
       - name: Update version in __init__.py
+        if: steps.version.outputs.skip != 'true'
         run: |
           sed -i 's/^__version__ = ".*"/__version__ = "${{ steps.version.outputs.version }}"/' infomesh/__init__.py
           echo "Updated __init__.py:"
           grep __version__ infomesh/__init__.py
 
       - name: Build package
+        if: steps.version.outputs.skip != 'true'
         run: uv build
 
       - name: Verify package
+        if: steps.version.outputs.skip != 'true'
         run: |
           ls -la dist/
           # Ensure the built package has correct version
           ls dist/ | grep "${{ steps.version.outputs.version }}"
 
       - name: Commit version bump & create tag
+        if: steps.version.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -118,6 +136,7 @@ jobs:
           git push origin main --follow-tags
 
       - name: Generate release notes from commits
+        if: steps.version.outputs.skip != 'true'
         id: notes
         run: |
           # Get previous tag
@@ -180,6 +199,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
+        if: steps.version.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -196,4 +216,5 @@ jobs:
           fi
 
       - name: Publish to PyPI
+        if: steps.version.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
