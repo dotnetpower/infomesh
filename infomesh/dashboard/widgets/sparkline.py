@@ -49,7 +49,7 @@ class SparklineChart(Widget):
 
     def render(self) -> RenderResult:
         if not self.data:
-            return Text("no data", style="dim")
+            return Text("—", style="dim")
 
         values = self.data
         max_val = max(values) if values else 1

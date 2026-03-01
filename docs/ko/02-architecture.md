@@ -101,11 +101,16 @@ URL도 DHT로 관리:
 크롤링 규칙:
 - `robots.txt` 항상 엄격 준수
 - 기본 정중함: 도메인당 초당 1회 이하 요청
+- **Crawl-Delay**: robots.txt의 `Crawl-delay` 지시자를 준수합니다. 도메인별 지연이 자동 적용되며, 남용 방지를 위해 최대 60초로 제한됩니다.
+- **사이트맵 발견**: robots.txt에서 `Sitemap:` URL을 추출하여 발견된 URL을 자동으로 크롤링 큐에 추가합니다.
+- **Canonical 태그**: HTML의 `<link rel="canonical">`을 인식합니다. 페이지가 다른 canonical URL을 선언하면, 현재 페이지의 인덱싱을 건너뛰고 canonical URL을 스케줄링하여 인덱스 내 중복 콘텐츠를 방지합니다.
+- **지수 백오프 재시도**: 일시적 HTTP 오류(5xx)와 네트워크 장애 시 자동 재시도(최대 2회, 지수 백오프: 1초, 2초). SSRF 차단 URL은 재시도하지 않습니다.
 - 컨텐츠 추출: `trafilatura` 사용, 필요시 `BeautifulSoup` 폴백
 - 저장: 원문 텍스트 + 메타데이터 (제목, URL, 크롤링 시각, 언어)
 - **크롤링 락**: 크롤링 전 `hash(url) = CRAWLING`을 DHT에 발행하여 여러 노드가 같은 URL을 크롤링하는 것을 방지. 락 타임아웃: 5분.
 - **SPA/JS 렌더링**: 대부분의 콘텐츠는 정적 HTML에서 추출 가능. JavaScript 중심 페이지는 `js_required` DHT 태그로 Playwright/헤드리스 브라우저 가능 노드에 위임. Phase 0 (MVP)는 정적 HTML에 집중.
 - **대역폭 제한**: 기본값 P2P 업로드 ≤5 Mbps / 다운로드 10 Mbps. `~/.infomesh/config.toml`로 설정 가능. 크롤링 동시 연결: 노드당 최대 5개 (조정 가능).
+- **강제 재크롤**: `crawl_url(url, force=True)`로 이미 방문한 URL을 다시 크롤링할 수 있습니다. 오래된 콘텐츠 갱신이나 depth 제한 변경 후 새로운 자식 링크 발견에 유용합니다.
 
 ---
 
@@ -288,7 +293,7 @@ log_level = "info"                  # debug, info, warning, error
 [crawl]
 max_concurrent = 5                  # 동시 HTTP 연결 수
 politeness_delay = 1.0              # 같은 도메인 요청 간 초
-max_depth = 3                       # 링크 팔로잉 깊이 제한
+max_depth = 0                       # 0 = 무제한 (rate limit과 중복 제거로 제어)
 
 [network]
 upload_limit_mbps = 5               # P2P 업로드 대역폭 상한
@@ -331,7 +336,7 @@ infomesh search --local "쿼리"      # 로컬 전용 검색
 
 # 관리
 infomesh config show                # 현재 설정 표시
-infomesh config set crawl.max_depth 5
+infomesh config set crawl.max_depth 10  # 깊이 제한 설정 (0=무제한)
 infomesh keys export                # 백업용 키 내보내기
 infomesh keys rotate                # 노드 ID 키 교체
 

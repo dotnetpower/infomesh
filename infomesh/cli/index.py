@@ -26,23 +26,24 @@ def index_stats() -> None:
         compression_enabled=config.storage.compression_enabled,
         compression_level=config.storage.compression_level,
     )
-    stats = store.get_stats()
+    try:
+        stats = store.get_stats()
 
-    click.echo("Index Statistics")
-    click.echo(f"{'=' * 30}")
-    click.echo(f"Database:        {config.index.db_path}")
-    click.echo(f"Documents:       {stats['document_count']}")
-    click.echo(f"Tokenizer:       {config.index.fts_tokenizer}")
-    click.echo(
-        f"Compression:     {'on' if config.storage.compression_enabled else 'off'}"
-    )
+        click.echo("Index Statistics")
+        click.echo(f"{'=' * 30}")
+        click.echo(f"Database:        {config.index.db_path}")
+        click.echo(f"Documents:       {stats['document_count']}")
+        click.echo(f"Tokenizer:       {config.index.fts_tokenizer}")
+        click.echo(
+            f"Compression:     {'on' if config.storage.compression_enabled else 'off'}"
+        )
 
-    db_file = Path(config.index.db_path)
-    if db_file.exists():
-        size_mb = db_file.stat().st_size / (1024 * 1024)
-        click.echo(f"DB size:         {size_mb:.2f} MB")
-
-    store.close()
+        db_file = Path(config.index.db_path)
+        if db_file.exists():
+            size_mb = db_file.stat().st_size / (1024 * 1024)
+            click.echo(f"DB size:         {size_mb:.2f} MB")
+    finally:
+        store.close()
 
 
 @index_group.command("export")
@@ -58,8 +59,10 @@ def index_export(output: str) -> None:
         compression_enabled=config.storage.compression_enabled,
         compression_level=config.storage.compression_level,
     )
-    stats = export_snapshot(store, output)
-    store.close()
+    try:
+        stats = export_snapshot(store, output)
+    finally:
+        store.close()
 
     size_mb = stats.file_size_bytes / (1024 * 1024)
     click.echo(f"Exported {stats.total_documents} documents to {output}")
@@ -82,7 +85,8 @@ def index_import(input_path: str, info: bool) -> None:
 
         ts = meta.get("created_at", 0)
         click.echo(
-            f"  Created:        {datetime.datetime.fromtimestamp(ts).isoformat()}"
+            f"  Created:        "
+            f"{datetime.datetime.fromtimestamp(ts, tz=datetime.UTC).isoformat()}"
         )
         return
 
@@ -90,8 +94,10 @@ def index_import(input_path: str, info: bool) -> None:
 
     config = load_config()
     ctx = AppContext(config)
-    stats = import_snapshot(ctx.store, input_path, vector_store=ctx.vector_store)
-    ctx.close()
+    try:
+        stats = import_snapshot(ctx.store, input_path, vector_store=ctx.vector_store)
+    finally:
+        ctx.close()
 
     click.echo(f"Imported {stats.exported} documents from {input_path}")
     click.echo(f"  Skipped (duplicate): {stats.skipped}")
@@ -113,8 +119,10 @@ def index_import_wet(path_or_url: str) -> None:
         importer = CommonCrawlImporter(
             ctx.store, ctx.dedup, vector_store=ctx.vector_store
         )
-        stats = await importer.import_wet_file(path_or_url)
-        ctx.close()
+        try:
+            stats = await importer.import_wet_file(path_or_url)
+        finally:
+            ctx.close()
 
         click.echo(f"Imported {stats.imported} documents from WET file")
         click.echo(f"  Total records:    {stats.total_records}")
@@ -141,8 +149,10 @@ def index_import_urls(url_file: str, max_urls: int) -> None:
         importer = CommonCrawlImporter(
             ctx.store, ctx.dedup, vector_store=ctx.vector_store
         )
-        stats = await importer.import_url_list(url_file, max_urls=max_urls)
-        ctx.close()
+        try:
+            stats = await importer.import_url_list(url_file, max_urls=max_urls)
+        finally:
+            ctx.close()
 
         click.echo(f"Registered {stats.imported} URLs from {url_file}")
         click.echo(f"  Skipped (already seen): {stats.skipped_duplicate}")

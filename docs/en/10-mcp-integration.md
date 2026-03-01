@@ -17,7 +17,7 @@ so your AI assistant can search the web through your own decentralized index.
 | `search` | Search the P2P network (local + distributed) | `query` (string), `limit` (int, default 10) |
 | `search_local` | Search local index only (works offline) | `query` (string), `limit` (int, default 10) |
 | `fetch_page` | Fetch full text of a URL (cached or live) | `url` (string) |
-| `crawl_url` | Crawl a URL and add to the index | `url` (string), `depth` (int, default 0, max 3) |
+| `crawl_url` | Crawl a URL and add to the index | `url` (string), `depth` (int, default 0), `force` (bool, default false) |
 | `network_stats` | Node status: index size, peers, credits | *(none)* |
 
 ---

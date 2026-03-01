@@ -346,6 +346,7 @@ def compute_trust_score(
     audit_total: int,
     audit_passed: int,
     summary_avg: float,
+    has_summary_data: bool | None = None,
 ) -> float:
     """Pure function to compute a unified trust score.
 
@@ -355,6 +356,9 @@ def compute_trust_score(
         audit_total: Total audits received.
         audit_passed: Audits that passed.
         summary_avg: Average summary quality ``[0, 1]``.
+        has_summary_data: Whether the peer has any summary ratings.
+            When ``False`` or ``None`` with ``summary_avg <= 0``,
+            a neutral default (0.5) is used.
 
     Returns:
         Trust score in ``[0, 1]``.
@@ -362,7 +366,15 @@ def compute_trust_score(
     uptime_norm = min(1.0, uptime_hours / MAX_UPTIME_HOURS)
     contrib_norm = min(1.0, contribution_raw / MAX_CONTRIBUTION_SCORE)
     audit_rate = (audit_passed / audit_total) if audit_total > 0 else 0.5
-    summary_norm = summary_avg if summary_avg > 0 else 0.5
+    # Use neutral default when there is no summary data.
+    # has_summary_data=True forces using the actual value (even 0.0).
+    if has_summary_data is True:
+        summary_norm = summary_avg
+    elif has_summary_data is False:
+        summary_norm = 0.5
+    else:
+        # Legacy: infer from value (summary_avg <= 0 → no data)
+        summary_norm = summary_avg if summary_avg > 0 else 0.5
 
     return (
         W_UPTIME * uptime_norm
@@ -397,7 +409,12 @@ def _compute_trust(row: tuple[Any, ...]) -> PeerTrust:
 
     summary_avg = (summary_sum / summary_count) if summary_count > 0 else 0.0
     score = compute_trust_score(
-        uptime_hours, contribution_raw, audit_total, audit_passed, summary_avg
+        uptime_hours,
+        contribution_raw,
+        audit_total,
+        audit_passed,
+        summary_avg,
+        has_summary_data=summary_count > 0,
     )
     tier = trust_tier(score)
 

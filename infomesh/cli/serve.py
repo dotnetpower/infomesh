@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 import structlog
@@ -106,7 +107,12 @@ def start(
     # ── Preflight checks ──────────────────────────────────────────
     from infomesh.resources.preflight import IssueSeverity, run_preflight_checks
 
+    click.echo("  ⏳ Running preflight checks...", nl=False)
     issues = run_preflight_checks(config.node.data_dir)
+    if not any(i.severity == IssueSeverity.ERROR for i in issues):
+        click.echo(" ✔")
+    else:
+        click.echo(" ✖")
     has_error = False
     for issue in issues:
         icon = "✖" if issue.severity == IssueSeverity.ERROR else "⚠"
@@ -115,15 +121,33 @@ def start(
         if issue.severity == IssueSeverity.ERROR:
             has_error = True
     if has_error:
-        click.secho("\nCannot start: fix the errors above first.", fg="red", bold=True)
+        click.secho(
+            "\nCannot start: fix the errors above first.",
+            fg="red",
+            bold=True,
+        )
         raise SystemExit(1)
 
     # ── Port accessibility check ──────────────────────────────────
     from infomesh.resources.port_check import check_port_and_offer_fix
 
-    check_port_and_offer_fix(config.node.listen_port)
+    port = config.node.listen_port
+    click.echo(f"  ⏳ Checking port {port}...", nl=False)
+    port_ok = check_port_and_offer_fix(port)
+    click.echo(" ✔" if port_ok else " ⚠")
+    if (
+        not port_ok
+        and sys.stdin.isatty()
+        and not click.confirm(
+            "  Continue without P2P port access? "
+            "(local crawl & search will work, but peering won't)",
+            default=False,
+        )
+    ):
+        raise SystemExit(1)
 
     # ── Launch node process ───────────────────────────────────────
+    click.echo("  ⏳ Launching node process...", nl=False)
     serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
     if seeds:
         serve_cmd.extend(["--seeds", seeds])
@@ -131,8 +155,9 @@ def start(
         serve_cmd.extend(["--role", role])
 
     log_path = config.node.data_dir / "node.log"
-    log_file = open(log_path, "a")  # noqa: SIM115
+    log_file: Any = None
     try:
+        log_file = open(log_path, "a")  # noqa: SIM115
         proc = subprocess.Popen(
             serve_cmd,
             stdout=log_file,
@@ -140,7 +165,7 @@ def start(
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
-        click.echo(f"  Node process started (PID {proc.pid})")
+        click.echo(f" ✔ (PID {proc.pid})")
         click.echo(f"  Log: {log_path}")
 
         if background:
@@ -157,19 +182,14 @@ def start(
         seed_cat = seeds or "tech-docs"
         _run_foreground_crawl(config, seed_cat)
 
-        # Launch dashboard with BGM OFF for foreground mode
-        config = dc_replace(
-            config,
-            dashboard=dc_replace(config.dashboard, bgm_auto_start=False),
-        )
-
         click.echo()
-        click.echo("  Launching dashboard (BGM off)...")
+        click.echo("  Launching dashboard...")
         from infomesh.dashboard.app import run_dashboard
 
         exit_action = run_dashboard(config=config, node_pid=proc.pid)
     finally:
-        log_file.close()
+        if log_file is not None:
+            log_file.close()
 
     if exit_action == "stop_all":
         try:
@@ -185,32 +205,64 @@ def start(
 
 
 def _run_foreground_crawl(config: Config, seed_category: str) -> None:
-    """Run a quick initial crawl pass before launching the dashboard."""
+    """Run a quick initial crawl pass before launching the dashboard.
+
+    Smart crawl strategy:
+    1. Load seeds from requested category, skip already-indexed URLs.
+    2. If all seeds in that category are indexed, try other categories.
+    3. If everything is indexed, skip with a friendly message.
+    """
     import time
 
-    from infomesh.crawler.seeds import load_seeds
+    from infomesh.crawler.seeds import CATEGORIES, load_seeds
     from infomesh.services import AppContext, index_document
 
+    ctx = AppContext(config)
+    dedup = ctx.dedup
+
+    # ── Collect unseen URLs across categories ──────────────────
+    unseen_urls: list[str] = []
+    active_category = seed_category
+
+    # Try requested category first
     seed_urls = load_seeds(category=seed_category)
-    if not seed_urls:
-        click.echo(f"    No seeds found for category '{seed_category}'.")
+    if seed_urls and dedup is not None:
+        unseen_urls = [u for u in seed_urls if not dedup.is_url_seen(u)]
+
+    # If all seeds in requested category are seen, try others
+    if not unseen_urls and dedup is not None:
+        for cat in CATEGORIES:
+            if cat == seed_category:
+                continue
+            cat_urls = load_seeds(category=cat)
+            cat_unseen = [u for u in cat_urls if not dedup.is_url_seen(u)]
+            if cat_unseen:
+                unseen_urls = cat_unseen
+                active_category = cat
+                break
+
+    if not unseen_urls:
+        total = len(seed_urls) if seed_urls else 0
+        click.echo(
+            f"    All {total} seed URLs already indexed."
+            f" Background crawler will discover new links."
+        )
         return
 
-    # Crawl a small batch to warm up the index
-    batch_size = min(5, len(seed_urls))
+    # Crawl a small batch of unseen URLs
+    batch_size = min(5, len(unseen_urls))
     click.echo(
-        f"    Seeds: {seed_category}"
-        f" ({len(seed_urls)} URLs,"
-        f" crawling first {batch_size})\n"
+        f"    Seeds: {active_category}"
+        f" ({len(unseen_urls)} new URLs,"
+        f" crawling {batch_size})\n"
     )
 
-    ctx = AppContext(config)
     crawled = 0
     start_time = time.monotonic()
 
     async def _crawl_batch() -> int:
         nonlocal crawled
-        for i, url in enumerate(seed_urls[:batch_size], 1):
+        for i, url in enumerate(unseen_urls[:batch_size], 1):
             try:
                 result = await ctx.worker.crawl_url(url, depth=0)  # type: ignore[union-attr]
                 if result.success and result.page:
@@ -236,25 +288,37 @@ def _run_foreground_crawl(config: Config, seed_category: str) -> None:
 # ---------------------------------------------------------------------------
 @click.command()
 def stop() -> None:
-    """Stop the running InfoMesh node."""
+    """Stop the running InfoMesh node and related processes."""
     config = load_config()
     pid_file = _pid_path(config.node.data_dir)
 
-    if not pid_file.exists():
-        click.echo("No running InfoMesh node found.")
-        return
+    stopped_any = False
 
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-        click.echo(f"Sent SIGTERM to InfoMesh node (PID {pid}).")
+    # ── Stop node process via PID file ────────────────────────
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            click.echo(f"Sent SIGTERM to InfoMesh node (PID {pid}).")
+            stopped_any = True
+        except ProcessLookupError:
+            click.echo("Node process not found (stale PID file). Cleaning up.")
+        except ValueError:
+            click.echo("Invalid PID file. Cleaning up.")
         pid_file.unlink(missing_ok=True)
-    except ProcessLookupError:
-        click.echo("Node process not found (stale PID file). Cleaning up.")
-        pid_file.unlink(missing_ok=True)
-    except ValueError:
-        click.echo("Invalid PID file. Cleaning up.")
-        pid_file.unlink(missing_ok=True)
+
+    # ── Kill orphaned BGM player processes ────────────────────
+    _kill_bgm_processes()
+
+    if not stopped_any:
+        click.echo("No running InfoMesh node found.")
+
+
+def _kill_bgm_processes() -> None:
+    """Find and kill BGM player processes spawned by infomesh."""
+    from infomesh.dashboard.bgm import _kill_orphaned_bgm
+
+    _kill_orphaned_bgm()
 
 
 # ---------------------------------------------------------------------------
@@ -371,29 +435,6 @@ def _try_start_p2p(config: Config, log: object) -> object | None:
         return None
 
 
-def _get_p2p_status(config: Config) -> dict[str, object]:
-    """Probe the running P2P node status without starting one.
-
-    Reads a small status file written by the _serve process.
-    Returns a dict with 'state', 'peer_id', 'peers', 'listen_addrs'.
-    """
-    status_file = config.node.data_dir / "p2p_status.json"
-    if status_file.exists():
-        import json
-
-        try:
-            data = json.loads(status_file.read_text())
-            # Check freshness (stale after 30s means node probably dead)
-            import time
-
-            age = time.time() - data.get("timestamp", 0)
-            if age < 30:
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"state": "stopped", "peers": 0, "listen_addrs": []}
-
-
 # ---------------------------------------------------------------------------
 # infomesh status
 # ---------------------------------------------------------------------------
@@ -429,7 +470,9 @@ def status() -> None:
         click.echo(f"LLM:             {'on' if config.llm.enabled else 'off'}")
 
         # ── P2P status ─────────────────────────────────────────
-        p2p = _get_p2p_status(config)
+        from infomesh.dashboard.utils import read_p2p_status
+
+        p2p = read_p2p_status(config)
         p2p_state = p2p.get("state", "stopped")
         p2p_peers = p2p.get("peers", 0)
         if p2p_state == "running":

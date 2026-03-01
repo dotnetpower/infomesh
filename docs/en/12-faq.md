@@ -336,18 +336,26 @@ TCP port **4001** for P2P communication. The local admin API uses port **8080**.
 ### I am running on WSL2 — peers cannot connect
 
 WSL2 runs inside a NAT'd virtual network. You need both a Windows Firewall
-rule and port forwarding:
+rule and port proxy forwarding.
 
 **Automatic (recommended):**
-InfoMesh detects WSL2 automatically on `infomesh start` and offers to
-configure the firewall and port proxy. You need to run a PowerShell with
-Administrator privileges for this step.
+InfoMesh detects WSL2 automatically on `infomesh start` and performs
+smart configuration checks:
 
-**Manual steps:**
+1. **Already configured** — If the firewall rule and port proxy both exist
+   with the correct WSL2 IP, startup proceeds silently:
+   `✓ Firewall rule + port proxy already configured (→ <WSL_IP>:4001)`
+2. **Stale IP** — If the port proxy exists but points to an old WSL2 IP
+   (common after reboot), InfoMesh auto-updates it without prompting.
+3. **Missing** — If either the firewall rule or port proxy is missing,
+   InfoMesh offers to configure them. You need a PowerShell with
+   Administrator privileges for this step.
+
+**Manual steps (if auto-setup fails):**
 1. Open PowerShell as Administrator on Windows:
    ```powershell
    # Allow port 4001 through Windows Firewall
-   New-NetFirewallRule -DisplayName "InfoMesh P2P" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4001
+   New-NetFirewallRule -DisplayName "InfoMesh-P2P-4001" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4001
 
    # Get WSL IP address
    wsl hostname -I
@@ -355,8 +363,9 @@ Administrator privileges for this step.
    # Set up port forwarding (replace <WSL_IP> with the IP from above)
    netsh interface portproxy add v4tov4 listenport=4001 listenaddress=0.0.0.0 connectport=4001 connectaddress=<WSL_IP>
    ```
-2. Note: The WSL IP changes on reboot, so you will need to update the
-   `netsh portproxy` rule after each restart.
+2. Note: The WSL IP changes on reboot. InfoMesh detects stale IPs and
+   auto-updates the port proxy rule on subsequent starts, so manual
+   updates are normally not needed.
 
 ### How do I open port 4001 on a cloud VM?
 

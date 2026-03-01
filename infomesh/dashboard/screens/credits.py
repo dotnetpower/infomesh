@@ -14,6 +14,36 @@ from textual.widgets import DataTable, Static
 from infomesh.config import Config
 from infomesh.dashboard.widgets.bar_chart import BarChart, BarItem
 
+# Shared action-to-label mapping (used by EarningsBreakdownPanel & TransactionTable)
+_ACTION_LABELS: dict[str, str] = {
+    "crawl": "Crawling",
+    "query_process": "Query Processing",
+    "doc_hosting": "Document Hosting",
+    "network_uptime": "Network Uptime",
+    "llm_own": "LLM (own)",
+    "llm_peer": "LLM (for peers)",
+    "git_contrib": "Git Contribution",
+    "git_docs": "Git PR (docs)",
+    "git_fix": "Git PR (fix)",
+    "git_feature": "Git PR (feature)",
+    "git_major": "Git PR (major)",
+}
+
+# Short labels for transaction table
+_ACTION_SHORT_LABELS: dict[str, str] = {
+    "crawl": "crawl",
+    "query_process": "query",
+    "doc_hosting": "hosting",
+    "network_uptime": "uptime",
+    "llm_own": "llm",
+    "llm_peer": "llm(peer)",
+    "git_contrib": "git",
+    "git_docs": "git(docs)",
+    "git_fix": "git(fix)",
+    "git_feature": "git(feat)",
+    "git_major": "git(major)",
+}
+
 
 class BalancePanel(Static):
     """Credit balance summary with tier info."""
@@ -28,7 +58,7 @@ class BalancePanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__("", **kwargs)  # type: ignore[arg-type]
         self._config = config
 
     def on_mount(self) -> None:
@@ -37,7 +67,7 @@ class BalancePanel(Static):
     def _update(self) -> None:
         """Load balance from credit ledger."""
         try:
-            from infomesh.credits.ledger import ContributionTier, CreditLedger
+            from infomesh.credits.ledger import CreditLedger
 
             db_path = self._config.node.data_dir / "credits.db"
             if not db_path.exists():
@@ -52,23 +82,33 @@ class BalancePanel(Static):
             stats = ledger.stats()
             ledger.close()
 
-            # Tier stars
-            tier_map = {
-                ContributionTier.TIER_1: "⭐ Tier 1",
-                ContributionTier.TIER_2: "⭐⭐ Tier 2",
-                ContributionTier.TIER_3: "⭐⭐⭐ Tier 3",
-            }
-            tier_str = tier_map.get(stats.tier, "Unknown")
+            from infomesh.dashboard.utils import tier_label
 
+            tier_str = tier_label(stats.tier)
+
+            def _fmt_credit(v: float) -> str:
+                """Format credit: integer if whole, else up to 2 decimals."""
+                if v == int(v):
+                    return f"{int(v):,}"
+                return f"{v:,.2f}".rstrip("0")
+
+            bal_str = _fmt_credit(stats.balance)
+            earn_str = _fmt_credit(stats.total_earned)
+            spent_str = _fmt_credit(stats.total_spent)
+            score_str = f"{int(stats.contribution_score):,}"
+
+            # V = fixed value column width (right-aligned).
+            # Keeps right-side labels (Tier/Search cost/Score) aligned
+            # regardless of how large the left-side numbers grow.
+            V = 15  # noqa: N806
             text = (
-                f"[bold]Balance[/bold]\n\n"
-                f"  Balance:     [bold green]{stats.balance:,.2f}"
-                f"[/bold green] credits    "
-                f"Tier: {tier_str}\n"
-                f"  Earned:      {stats.total_earned:,.2f}            "
-                f"Search cost: {stats.search_cost:.3f}\n"
-                f"  Spent:       {stats.total_spent:,.2f}            "
-                f"Score: {stats.contribution_score:,.2f}"
+                "[bold]Balance[/bold]\n\n"
+                f"  Balance:   [bold green]{bal_str:>{V}}[/bold green]"
+                f" credits    Tier:        {tier_str}\n"
+                f"  Earned:    {earn_str:>{V}}"
+                f"            Search cost: {stats.search_cost:.3f}\n"
+                f"  Spent:     {spent_str:>{V}}"
+                f"            Score:       {score_str}"
             )
             self.update(text)
         except Exception:  # noqa: BLE001
@@ -86,9 +126,9 @@ class EarningsBreakdownPanel(Widget):
     DEFAULT_CSS = """
     EarningsBreakdownPanel {
         border: round $accent;
-        padding: 1;
+        padding: 0 1;
         height: auto;
-        min-height: 8;
+        min-height: 5;
     }
     """
 
@@ -110,41 +150,24 @@ class EarningsBreakdownPanel(Widget):
 
             db_path = self._config.node.data_dir / "credits.db"
             if not db_path.exists():
+                self.query_one("#earnings-chart", BarChart).set_items([])
                 return
 
             ledger = CreditLedger(db_path)
-
-            # Query earnings grouped by action type
-            rows = ledger._conn.execute(
-                """SELECT action, COALESCE(SUM(credits), 0)
-                   FROM credit_entries
-                   GROUP BY action
-                   ORDER BY SUM(credits) DESC"""
-            ).fetchall()
-            ledger.close()
+            try:
+                rows = ledger.earnings_by_action()
+            finally:
+                ledger.close()
 
             if not rows:
                 return
 
             # Map action names to human-readable labels
-            label_map = {
-                "crawl": "Crawling",
-                "query_process": "Query Processing",
-                "doc_hosting": "Document Hosting",
-                "network_uptime": "Network Uptime",
-                "llm_own": "LLM (own)",
-                "llm_peer": "LLM (for peers)",
-                "git_contrib": "Git Contribution",
-                "git_docs": "Git PR (docs)",
-                "git_fix": "Git PR (fix)",
-                "git_feature": "Git PR (feature)",
-                "git_major": "Git PR (major)",
-            }
             colors = ["cyan", "green", "yellow", "blue", "magenta", "red", "white"]
 
             items = [
                 BarItem(
-                    label=label_map.get(row[0], row[0]),
+                    label=_ACTION_LABELS.get(row[0], row[0]),
                     value=float(row[1]),
                     color=colors[i % len(colors)],
                 )
@@ -201,26 +224,22 @@ class TransactionTable(Widget):
             table.clear()
 
             for entry in entries:
-                ts = time.strftime("%H:%M:%S", time.localtime(entry.timestamp))
+                ts = time.strftime("%m-%d %H:%M", time.localtime(entry.timestamp))
                 sign = "+" if entry.credits > 0 else ""
                 amount = f"{sign}{entry.credits:.3f}"
-                note = entry.note[:40] if entry.note else ""
+                note = entry.note or ""
+                # Truncate with "..." only if it exceeds available width
+                # Other columns: Time(8) + Amount(~8) + Type(~10) + padding(~8) ≈ 34
+                try:
+                    avail = self.app.size.width - 34
+                    avail = max(avail, 20)  # minimum 20 chars
+                except Exception:  # noqa: BLE001
+                    avail = 60
+                if len(note) > avail:
+                    note = note[: avail - 3] + "..."
 
                 # Map action to readable label
-                label_map = {
-                    "crawl": "crawl",
-                    "query_process": "query",
-                    "doc_hosting": "hosting",
-                    "network_uptime": "uptime",
-                    "llm_own": "llm",
-                    "llm_peer": "llm(peer)",
-                    "git_contrib": "git",
-                    "git_docs": "git(docs)",
-                    "git_fix": "git(fix)",
-                    "git_feature": "git(feat)",
-                    "git_major": "git(major)",
-                }
-                action = label_map.get(entry.action, entry.action)
+                action = _ACTION_SHORT_LABELS.get(entry.action, entry.action)
 
                 table.add_row(ts, amount, action, note)
 
@@ -259,11 +278,15 @@ class CreditsPane(Widget):
             yield EarningsBreakdownPanel(self._config, id="earnings-panel")
             yield TransactionTable(self._config, id="tx-panel")
 
+    _REFRESH_INTERVAL = 5.0
+
     def on_mount(self) -> None:
-        self._refresh_timer = self.set_interval(5.0, self._tick)
+        self._refresh_timer = self.set_interval(self._REFRESH_INTERVAL, self._tick)
 
     def _tick(self) -> None:
-        """Periodic refresh."""
+        """Periodic refresh (skip if pane is not visible)."""
+        if not self.display:
+            return
         try:
             # Check for balance increase before refreshing panels
             self._check_credit_change()

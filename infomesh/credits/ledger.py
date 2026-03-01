@@ -453,7 +453,12 @@ class CreditLedger(SQLiteStore):
 
     def balance(self) -> float:
         """Current credit balance (earned − spent).  Can be negative (debt)."""
-        return self.total_earned() - self.total_spent()
+        row = self._conn.execute(
+            "SELECT"
+            " (SELECT COALESCE(SUM(credits), 0) FROM credit_entries)"
+            " - (SELECT COALESCE(SUM(amount), 0) FROM credit_spending)"
+        ).fetchone()
+        return float(row[0])
 
     def debt_amount(self) -> float:
         """Amount of credit debt (always ≥ 0).  Zero when balance is positive."""
@@ -673,6 +678,19 @@ class CreditLedger(SQLiteStore):
         ]
 
     # close() inherited from SQLiteStore
+
+    def earnings_by_action(self) -> list[tuple[str, float]]:
+        """Return total credits earned grouped by action type.
+
+        Returns:
+            List of (action, total_credits) tuples, ordered by total desc.
+        """
+        rows = self._conn.execute(
+            "SELECT action, COALESCE(SUM(credits), 0) AS total "
+            "FROM credit_entries WHERE credits > 0 "
+            "GROUP BY action ORDER BY total DESC",
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
 
 
 # --- Helpers ---------------------------------------------------------------

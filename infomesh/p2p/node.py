@@ -143,23 +143,55 @@ class InfoMeshNode:
 
         status_path = self._config.node.data_dir / "p2p_status.json"
         try:
-            peers = len(self.get_connected_peers()) if self._host else 0
+            peer_ids: list[str] = []
+            if self._host and self._state == NodeState.RUNNING:
+                try:
+                    peer_ids = self.get_connected_peers()
+                except Exception:
+                    logger.debug("status_peers_failed")
+
+            peers = len(peer_ids)
             addrs: list[str] = []
             if self._host and self._state == NodeState.RUNNING:
-                import contextlib
-
-                with contextlib.suppress(Exception):
+                try:
                     addrs = [
                         str(a)
                         for a in self._host.get_addrs()  # type: ignore[attr-defined]
                     ]
+                except Exception:
+                    logger.debug("status_addrs_failed")
+
+            # DHT stats
+            dht_data: dict[str, int] = {}
+            if self._dht is not None:
+                ds = self._dht.stats
+                dht_data = {
+                    "keys_stored": ds.keys_stored,
+                    "keys_published": ds.keys_published,
+                    "gets_performed": ds.gets_performed,
+                    "puts_performed": ds.puts_performed,
+                }
+
+            # Bandwidth stats
+            bw_data: dict[str, int] = {}
+            ts = self._throttle.stats
+            bw_data = {
+                "upload_bytes": ts.upload_bytes,
+                "download_bytes": ts.download_bytes,
+                "upload_waits": ts.upload_waits,
+                "download_waits": ts.download_waits,
+            }
+
             data = {
                 "state": state or str(self._state),
                 "peer_id": self._peer_id,
                 "peers": peers,
+                "peer_ids": peer_ids,
                 "listen_addrs": addrs,
                 "timestamp": time.time(),
                 "error": error,
+                "dht": dht_data,
+                "bandwidth": bw_data,
             }
             status_path.write_text(json.dumps(data))
         except OSError:
@@ -294,7 +326,6 @@ class InfoMeshNode:
         """Main trio async entry point — sets up libp2p and runs until stopped."""
         import trio
         from libp2p import (  # type: ignore[attr-defined]
-            create_new_ed25519_key_pair,
             new_host,
         )
         from libp2p.kad_dht import KadDHT
@@ -303,8 +334,10 @@ class InfoMeshNode:
         from libp2p.tools.async_service.trio_service import background_trio_service
         from multiaddr import Multiaddr
 
-        # Create Ed25519 key pair for libp2p
-        key_pair = create_new_ed25519_key_pair()
+        # Load or create Ed25519 key pair for libp2p identity.
+        # Persisting the key ensures the peer ID is stable across restarts,
+        # which is critical for DHT continuity and peer trust.
+        key_pair = self._load_or_create_libp2p_key()
 
         # ── Sybil PoW: generate proof-of-work for node identity ──
         pub_key_bytes = key_pair.public_key.to_bytes()
@@ -442,7 +475,7 @@ class InfoMeshNode:
                 pong = encode_message(MessageType.PONG, {"peer_id": self._peer_id})
                 await stream.write(pong)  # type: ignore[attr-defined]
             except Exception:
-                pass
+                logger.debug("ping_handler_error")
             finally:
                 await stream.close()  # type: ignore[attr-defined]
 
@@ -480,7 +513,16 @@ class InfoMeshNode:
 
             async def _handle_index_submit(stream: object) -> None:
                 try:
-                    data = await stream.read(1024 * 1024)  # type: ignore[attr-defined]  # max 1MB
+                    chunks: list[bytes] = []
+                    total = 0
+                    max_size = 1024 * 1024  # 1 MB
+                    while total < max_size:
+                        chunk = await stream.read(max_size - total)  # type: ignore[attr-defined]
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                        total += len(chunk)
+                    data = b"".join(chunks)
                     from infomesh.p2p.protocol import decode_message
 
                     msg_type, payload = decode_message(data)
@@ -559,6 +601,59 @@ class InfoMeshNode:
         return self._subnet_limiter.add(ip, peer_id, bucket_id)
 
     # ─── Internal helpers ──────────────────────────────────
+
+    def _load_or_create_libp2p_key(self) -> object:
+        """Load or create the libp2p Ed25519 key pair.
+
+        The key is persisted to ``<data_dir>/keys/libp2p_key.bin`` so
+        that the node's peer ID stays stable across restarts.
+
+        Returns:
+            A libp2p ``Ed25519KeyPair`` (or compatible key pair object).
+        """
+        from libp2p import create_new_ed25519_key_pair  # type: ignore[attr-defined]
+
+        keys_dir = self._config.node.data_dir / "keys"
+        key_path = keys_dir / "libp2p_key.bin"
+
+        if key_path.exists():
+            try:
+                raw = key_path.read_bytes()
+                from libp2p.crypto.ed25519 import (  # type: ignore[attr-defined]
+                    Ed25519PrivateKey,
+                )
+                from libp2p.crypto.keys import KeyPair  # type: ignore[attr-defined]
+
+                priv = Ed25519PrivateKey.from_bytes(raw)
+                logger.info("libp2p_key_loaded", path=str(key_path))
+                return KeyPair(priv, priv.get_public_key())
+            except Exception:
+                logger.warning(
+                    "libp2p_key_load_failed",
+                    path=str(key_path),
+                    msg="generating new key pair",
+                )
+
+        key_pair = create_new_ed25519_key_pair()
+
+        # Persist for next restart
+        try:
+            keys_dir.mkdir(parents=True, exist_ok=True)
+            raw_priv = key_pair.private_key.to_bytes()
+            key_path.write_bytes(raw_priv)
+            import os
+            import stat
+
+            os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR)
+            logger.info("libp2p_key_saved", path=str(key_path))
+        except Exception:
+            logger.warning(
+                "libp2p_key_save_failed",
+                path=str(key_path),
+                msg="peer ID will change on restart",
+            )
+
+        return key_pair
 
     async def _refresh_routing_table(self) -> None:
         """Periodic routing table refresh — re-bootstraps to discover new peers."""

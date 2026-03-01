@@ -16,9 +16,23 @@ from infomesh.config import load_config
     "--depth",
     "-d",
     default=0,
-    help="Link follow depth (0=single page, 1-3=follow links)",
+    help=(
+        "Link follow depth (0=single page only, "
+        "N=follow links N levels deep). "
+        "Default config: unlimited (controlled by rate limits & dedup)."
+    ),
 )
-def crawl(url: str, depth: int) -> None:
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    default=False,
+    help=(
+        "Force re-crawl even if the URL was previously crawled. "
+        "Useful for refreshing content or discovering new child links."
+    ),
+)
+def crawl(url: str, depth: int, force: bool) -> None:
     """Crawl a URL and add it to the local index."""
 
     async def _crawl() -> None:
@@ -38,24 +52,28 @@ def crawl(url: str, depth: int) -> None:
 
         ctx = AppContext(config_adj)
 
-        if max_depth == 0:
-            # Single URL — simple output
-            # Pass depth=max_depth so worker won't schedule child links
-            result = await ctx.worker.crawl_url(url, depth=config_adj.crawl.max_depth)  # type: ignore[union-attr]
-            if result.success and result.page:
-                index_document(result.page, ctx.store, ctx.vector_store)
-                click.echo(f"✓ Crawled: {url}")
-                click.echo(f"  Title: {result.page.title}")
-                click.echo(f"  Text: {len(result.page.text)} chars")
-                click.echo(f"  Links discovered: {len(result.discovered_links)}")
-                click.echo(f"  Time: {result.elapsed_ms:.0f}ms")
+        try:
+            if max_depth == 0:
+                # Single URL — simple output
+                # Pass depth=max_depth so worker won't schedule child links
+                crawl_depth = config_adj.crawl.max_depth  # type: ignore[union-attr]
+                result = await ctx.worker.crawl_url(url, depth=crawl_depth, force=force)
+                if result.success and result.page:
+                    index_document(result.page, ctx.store, ctx.vector_store)
+                    click.echo(f"✓ Crawled: {url}")
+                    click.echo(f"  Title: {result.page.title}")
+                    click.echo(f"  Text: {len(result.page.text)} chars")
+                    click.echo(f"  Links discovered: {len(result.discovered_links)}")
+                    click.echo(f"  Time: {result.elapsed_ms:.0f}ms")
+                else:
+                    click.echo(f"✗ Failed: {url} — {result.error}")
             else:
-                click.echo(f"✗ Failed: {url} — {result.error}")
-        else:
-            # Multi-page mode with progress output
-            await _crawl_with_progress(ctx, url, max_depth, index_document)
-
-        await ctx.close_async()
+                # Multi-page mode with progress output
+                await _crawl_with_progress(
+                    ctx, url, max_depth, index_document, force=force
+                )
+        finally:
+            await ctx.close_async()
 
     asyncio.run(_crawl())
 
@@ -65,6 +83,8 @@ async def _crawl_with_progress(
     url: str,
     max_depth: int,
     index_document: object,
+    *,
+    force: bool = False,
 ) -> None:
     """Crawl with link following and real-time progress output."""
     start_time = time.monotonic()
@@ -76,7 +96,7 @@ async def _crawl_with_progress(
     click.echo(f"\n🕷️  Crawling {url} (depth: {max_depth})\n")
 
     # Phase 1: Crawl the initial URL (depth=0 so links are discovered)
-    result = await ctx.worker.crawl_url(url, depth=0)  # type: ignore[union-attr]
+    result = await ctx.worker.crawl_url(url, depth=0, force=force)  # type: ignore[union-attr]
     pending = ctx.scheduler.pending_count  # type: ignore[union-attr]
 
     if result.success and result.page:
@@ -100,7 +120,6 @@ async def _crawl_with_progress(
         child_result = await ctx.worker.crawl_url(child_url, depth=child_depth)  # type: ignore[union-attr]
 
         page_num = crawled + failed + skipped + 1
-        time.monotonic() - start_time
         remaining = ctx.scheduler.pending_count  # type: ignore[union-attr]
 
         if child_result.success and child_result.page:

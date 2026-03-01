@@ -17,6 +17,17 @@ from infomesh.config import Config
 
 logger = structlog.get_logger()
 
+# Shared SQL expression for extracting domain from URL
+_DOMAIN_EXPR = """SUBSTR(
+    url,
+    INSTR(url, '://') + 3,
+    CASE
+        WHEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') > 0
+        THEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') - 1
+        ELSE LENGTH(url)
+    END
+)"""
+
 
 @dataclass
 class CachedStats:
@@ -25,6 +36,10 @@ class CachedStats:
     document_count: int = 0
     top_domains: list[tuple[str, int]] = field(default_factory=list)
     updated_at: float = 0.0
+    # Crawl stats derived from DB timestamps
+    pages_last_hour: int = 0
+    domain_count: int = 0
+    last_crawl_at: float = 0.0
 
 
 class DashboardDataCache:
@@ -87,20 +102,8 @@ class DashboardDataCache:
 
             # Top domains (GROUP BY)
             domain_rows = conn.execute(
-                """SELECT
-                       SUBSTR(
-                           url,
-                           INSTR(url, '://') + 3,
-                           CASE
-                               WHEN INSTR(
-                                   SUBSTR(url, INSTR(url, '://') + 3), '/'
-                               ) > 0
-                               THEN INSTR(
-                                   SUBSTR(url, INSTR(url, '://') + 3), '/'
-                               ) - 1
-                               ELSE LENGTH(url)
-                           END
-                       ) AS domain,
+                f"""SELECT
+                       {_DOMAIN_EXPR} AS domain,
                        COUNT(*) AS cnt
                    FROM documents
                    GROUP BY domain
@@ -108,16 +111,45 @@ class DashboardDataCache:
                    LIMIT 7""",
             ).fetchall()
 
+            # Pages crawled in last hour
+            one_hour_ago = time.time() - 3600
+            row_hr = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM documents WHERE crawled_at > ?",
+                (one_hour_ago,),
+            ).fetchone()
+            pages_last_hour = row_hr["cnt"] if row_hr else 0
+
+            # Distinct domain count
+            row_dc = conn.execute(
+                f"SELECT COUNT(DISTINCT {_DOMAIN_EXPR}) AS cnt FROM documents",
+            ).fetchone()
+            domain_count = row_dc["cnt"] if row_dc else 0
+
+            # Most recent crawl timestamp
+            row_last = conn.execute(
+                "SELECT MAX(crawled_at) AS ts FROM documents",
+            ).fetchone()
+            last_crawl_at = (
+                float(row_last["ts"]) if row_last and row_last["ts"] else 0.0
+            )
+
             self._cache = CachedStats(
                 document_count=doc_count,
                 top_domains=[(r["domain"], r["cnt"]) for r in domain_rows],
                 updated_at=now,
+                pages_last_hour=pages_last_hour,
+                domain_count=domain_count,
+                last_crawl_at=last_crawl_at,
             )
         except Exception:  # noqa: BLE001
             # DB not ready yet (e.g. node hasn't started) — return stale cache
             logger.debug("data_cache_refresh_failed")
 
         return self._cache
+
+    def set_ttl(self, ttl: float) -> None:
+        """Update the cache TTL (seconds between DB reads)."""
+        self._ttl = ttl
 
     def close(self) -> None:
         """Close the read-only connection."""

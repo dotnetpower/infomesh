@@ -9,6 +9,7 @@ Prevents overload on small networks by:
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -62,22 +63,27 @@ class NodeLoadGuard:
         self._concurrent = 0
         self._timestamps: deque[float] = deque()
         self._stats = LoadGuardStats()
-        # Per-peer tracking for fairness
+        self._lock = threading.RLock()
+        # Per-peer tracking for fairness (bounded to prevent memory leak)
         self._peer_counts: dict[str, int] = {}
+        _MAX_TRACKED_PEERS = 10_000
+        self._max_tracked_peers = _MAX_TRACKED_PEERS
 
     @property
     def stats(self) -> LoadGuardStats:
-        self._update_stats()
-        return self._stats
+        with self._lock:
+            self._update_stats()
+            return self._stats
 
     @property
     def is_overloaded(self) -> bool:
         """Return ``True`` if the node is currently overloaded."""
-        self._prune_old_timestamps()
-        return (
-            self._concurrent >= self._max_concurrent
-            or len(self._timestamps) >= self._max_qpm
-        )
+        with self._lock:
+            self._prune_old_timestamps()
+            return (
+                self._concurrent >= self._max_concurrent
+                or len(self._timestamps) >= self._max_qpm
+            )
 
     def try_acquire(self, peer_id: str = "") -> bool:
         """Try to accept a new query from *peer_id*.
@@ -88,35 +94,41 @@ class NodeLoadGuard:
         Returns:
             ``True`` if accepted; ``False`` if overloaded.
         """
-        self._prune_old_timestamps()
+        with self._lock:
+            self._prune_old_timestamps()
 
-        # Check rate limit
-        if len(self._timestamps) >= self._max_qpm:
-            self._stats.rejected += 1
-            logger.info("loadguard_rate_limited", peer=peer_id[:12])
-            return False
+            # Check rate limit
+            if len(self._timestamps) >= self._max_qpm:
+                self._stats.rejected += 1
+                logger.info("loadguard_rate_limited", peer=peer_id[:12])
+                return False
 
-        # Check concurrency limit
-        if self._concurrent >= self._max_concurrent:
-            self._stats.rejected += 1
-            logger.info("loadguard_concurrent_limited", peer=peer_id[:12])
-            return False
+            # Check concurrency limit
+            if self._concurrent >= self._max_concurrent:
+                self._stats.rejected += 1
+                logger.info(
+                    "loadguard_concurrent_limited",
+                    peer=peer_id[:12],
+                )
+                return False
 
-        # Accept
-        now = time.monotonic()
-        self._timestamps.append(now)
-        self._concurrent += 1
-        self._stats.accepted += 1
-        self._peer_counts[peer_id] = self._peer_counts.get(peer_id, 0) + 1
-        return True
+            # Accept
+            now = time.monotonic()
+            self._timestamps.append(now)
+            self._concurrent += 1
+            self._stats.accepted += 1
+            if len(self._peer_counts) < self._max_tracked_peers:
+                self._peer_counts[peer_id] = self._peer_counts.get(peer_id, 0) + 1
+            return True
 
     def release(self, peer_id: str = "") -> None:
         """Release a previously acquired query slot.
 
         Must be called after :meth:`try_acquire` returns ``True``.
         """
-        if self._concurrent > 0:
-            self._concurrent -= 1
+        with self._lock:
+            if self._concurrent > 0:
+                self._concurrent -= 1
 
     def _prune_old_timestamps(self) -> None:
         """Remove timestamps older than 60 seconds."""
@@ -141,20 +153,23 @@ class NodeLoadGuard:
         Returns:
             Dict suitable for serialization as an OVERLOADED response.
         """
-        return {
-            "status": "OVERLOADED",
-            "retry_after_ms": OVERLOAD_RETRY_MS,
-            "concurrent": self._concurrent,
-            "qpm": len(self._timestamps),
-        }
+        with self._lock:
+            return {
+                "status": "OVERLOADED",
+                "retry_after_ms": OVERLOAD_RETRY_MS,
+                "concurrent": self._concurrent,
+                "qpm": len(self._timestamps),
+            }
 
     def peer_query_count(self, peer_id: str) -> int:
         """Return total queries from a specific peer."""
-        return self._peer_counts.get(peer_id, 0)
+        with self._lock:
+            return self._peer_counts.get(peer_id, 0)
 
     def reset(self) -> None:
         """Reset all counters (for testing)."""
-        self._concurrent = 0
-        self._timestamps.clear()
-        self._peer_counts.clear()
-        self._stats = LoadGuardStats()
+        with self._lock:
+            self._concurrent = 0
+            self._timestamps.clear()
+            self._peer_counts.clear()
+            self._stats = LoadGuardStats()

@@ -103,7 +103,7 @@ SearchPane {
 }
 
 #search-results {
-    height: 1fr;
+    height: auto;
 }
 
 /* ─── Network Pane ──────────────────────────────────── */

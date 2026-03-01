@@ -166,6 +166,10 @@ def cross_validate_results(
                 verdict = VERDICT_SUSPICIOUS
                 detail = f"score deviation={score_dev:.2f}"
                 suspicious_count += 1
+            elif _has_snippet_mismatch(agg.snippets):
+                verdict = VERDICT_SUSPICIOUS
+                detail = "snippet similarity below threshold"
+                suspicious_count += 1
             else:
                 verdict = VERDICT_TRUSTED
                 detail = "ok"
@@ -264,3 +268,20 @@ def _score_deviation(scores: list[float]) -> float:
 
     max_dev = max(abs(s - median) for s in scores)
     return max_dev / median
+
+
+def _has_snippet_mismatch(snippets: list[str]) -> bool:
+    """Check if any pair of snippets falls below the similarity threshold.
+
+    Only flags a mismatch when there are at least 2 non-empty snippets and
+    any pairwise Jaccard similarity is below ``SNIPPET_SIMILARITY_THRESHOLD``.
+    """
+    non_empty = [s for s in snippets if s.strip()]
+    if len(non_empty) < 2:
+        return False
+    for i in range(len(non_empty)):
+        for j in range(i + 1, len(non_empty)):
+            sim = snippet_similarity(non_empty[i], non_empty[j])
+            if sim < SNIPPET_SIMILARITY_THRESHOLD:
+                return True
+    return False

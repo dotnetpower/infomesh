@@ -174,6 +174,25 @@ class FarmingDetector(SQLiteStore):
         )
         self._conn.commit()
 
+    def prune_old_actions(self, *, max_age_seconds: float = 7 * 24 * 3600.0) -> int:
+        """Delete action_log entries older than *max_age_seconds*.
+
+        Should be called periodically (e.g. daily) to prevent unbounded
+        table growth.  The default retention is 7 days.
+
+        Returns:
+            Number of rows deleted.
+        """
+        cutoff = time.time() - max_age_seconds
+        cursor = self._conn.execute(
+            "DELETE FROM action_log WHERE timestamp < ?", (cutoff,)
+        )
+        self._conn.commit()
+        deleted = cursor.rowcount
+        if deleted:
+            logger.info("action_log_pruned", deleted=deleted)
+        return deleted
+
     # --- Rate limiting -----------------------------------------------------
 
     def actions_in_last_hour(

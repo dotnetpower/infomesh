@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+import httpx
 import structlog
 
 from infomesh.config import Config, NodeRole, load_config
@@ -239,6 +240,7 @@ async def crawl_and_index(
     vector_store: VectorStoreLike | None = None,
     link_graph: LinkGraph | None = None,
     depth: int = 0,
+    force: bool = False,
 ) -> CrawlAndIndexResult:
     """Crawl a URL, update link graph, and index the page.
 
@@ -247,7 +249,7 @@ async def crawl_and_index(
     """
     from infomesh.crawler.worker import CrawlResult  # avoid circular
 
-    result: CrawlResult = await worker.crawl_url(url, depth=depth)
+    result: CrawlResult = await worker.crawl_url(url, depth=depth, force=force)
 
     if result.success and result.page:
         if link_graph and result.discovered_links:
@@ -316,7 +318,7 @@ async def seed_and_crawl_loop(
                                 link
                             ) and await ctx.scheduler.add_url(link, depth=1):
                                 rediscovered += 1
-                except Exception:  # noqa: BLE001
+                except (httpx.HTTPError, OSError):  # noqa: BLE001
                     _logger.debug("seed_rediscovery_failed", url=url)
             elif await ctx.scheduler.add_url(url, depth=0):
                 queued += 1

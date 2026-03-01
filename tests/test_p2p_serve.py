@@ -20,22 +20,21 @@ from infomesh.config import Config, NetworkConfig
 
 
 class TestGetP2PStatus:
-    """Tests for _get_p2p_status helper."""
+    """Tests for read_p2p_status helper (dashboard.utils)."""
 
     def test_no_status_file(self, tmp_path: Path) -> None:
-        """Returns stopped when no status file exists."""
-        from infomesh.cli.serve import _get_p2p_status
+        """Returns empty dict when no status file exists."""
         from infomesh.config import NodeConfig
+        from infomesh.dashboard.utils import read_p2p_status
 
         config = Config(node=NodeConfig(data_dir=tmp_path))
-        result = _get_p2p_status(config)
-        assert result["state"] == "stopped"
-        assert result["peers"] == 0
+        result = read_p2p_status(config)
+        assert result == {}
 
     def test_valid_status_file(self, tmp_path: Path) -> None:
         """Reads fresh status file correctly."""
-        from infomesh.cli.serve import _get_p2p_status
         from infomesh.config import NodeConfig
+        from infomesh.dashboard.utils import read_p2p_status
 
         status_data = {
             "state": "running",
@@ -49,15 +48,15 @@ class TestGetP2PStatus:
         status_file.write_text(json.dumps(status_data))
 
         config = Config(node=NodeConfig(data_dir=tmp_path))
-        result = _get_p2p_status(config)
+        result = read_p2p_status(config)
         assert result["state"] == "running"
         assert result["peers"] == 3
         assert len(result["listen_addrs"]) == 1
 
     def test_stale_status_file(self, tmp_path: Path) -> None:
-        """Returns stopped when status file is stale (>30s old)."""
-        from infomesh.cli.serve import _get_p2p_status
+        """Returns empty dict when status file is stale (>30s old)."""
         from infomesh.config import NodeConfig
+        from infomesh.dashboard.utils import read_p2p_status
 
         status_data = {
             "state": "running",
@@ -71,25 +70,25 @@ class TestGetP2PStatus:
         status_file.write_text(json.dumps(status_data))
 
         config = Config(node=NodeConfig(data_dir=tmp_path))
-        result = _get_p2p_status(config)
-        assert result["state"] == "stopped"
+        result = read_p2p_status(config)
+        assert result == {}
 
     def test_corrupt_status_file(self, tmp_path: Path) -> None:
-        """Returns stopped when status file is corrupt."""
-        from infomesh.cli.serve import _get_p2p_status
+        """Returns empty dict when status file is corrupt."""
         from infomesh.config import NodeConfig
+        from infomesh.dashboard.utils import read_p2p_status
 
         status_file = tmp_path / "p2p_status.json"
         status_file.write_text("not valid json {{{")
 
         config = Config(node=NodeConfig(data_dir=tmp_path))
-        result = _get_p2p_status(config)
-        assert result["state"] == "stopped"
+        result = read_p2p_status(config)
+        assert result == {}
 
     def test_error_state(self, tmp_path: Path) -> None:
         """Reads error state and message."""
-        from infomesh.cli.serve import _get_p2p_status
         from infomesh.config import NodeConfig
+        from infomesh.dashboard.utils import read_p2p_status
 
         status_data = {
             "state": "error",
@@ -103,7 +102,7 @@ class TestGetP2PStatus:
         status_file.write_text(json.dumps(status_data))
 
         config = Config(node=NodeConfig(data_dir=tmp_path))
-        result = _get_p2p_status(config)
+        result = read_p2p_status(config)
         assert result["state"] == "error"
         assert result["error"] == "trio not installed"
 

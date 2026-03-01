@@ -158,7 +158,8 @@ class TestSparklineChart:
 
         chart = SparklineChart()
         result = chart.render()
-        assert "no data" in str(result)
+        text = str(result)
+        assert "—" in text or "no data" in text
 
     def test_render_with_data(self) -> None:
         from infomesh.dashboard.widgets.sparkline import SparklineChart
@@ -268,46 +269,46 @@ class TestOverviewHelpers:
     """Tests for overview helper functions."""
 
     def test_format_uptime_zero(self) -> None:
-        from infomesh.dashboard.screens.overview import _format_uptime
+        from infomesh.dashboard.utils import format_uptime
 
-        assert _format_uptime(0) == "—"
+        assert format_uptime(0) == "—"
 
     def test_format_uptime_minutes(self) -> None:
-        from infomesh.dashboard.screens.overview import _format_uptime
+        from infomesh.dashboard.utils import format_uptime
 
-        result = _format_uptime(300)  # 5 minutes
+        result = format_uptime(300)  # 5 minutes
         assert "5m" in result
 
     def test_format_uptime_hours(self) -> None:
-        from infomesh.dashboard.screens.overview import _format_uptime
+        from infomesh.dashboard.utils import format_uptime
 
-        result = _format_uptime(7200)  # 2 hours
+        result = format_uptime(7200)  # 2 hours
         assert "2h" in result
 
     def test_format_uptime_days(self) -> None:
-        from infomesh.dashboard.screens.overview import _format_uptime
+        from infomesh.dashboard.utils import format_uptime
 
-        result = _format_uptime(3 * 86400 + 14 * 3600 + 22 * 60)
+        result = format_uptime(3 * 86400 + 14 * 3600 + 22 * 60)
         assert "3d" in result
         assert "14h" in result
         assert "22m" in result
 
     def test_is_node_running_no_pid(self, tmp_config: Config) -> None:
-        from infomesh.dashboard.screens.overview import _is_node_running
+        from infomesh.dashboard.utils import is_node_running
 
-        assert _is_node_running(tmp_config) is False
+        assert is_node_running(tmp_config) is False
 
     def test_is_node_running_stale_pid(self, tmp_config: Config) -> None:
-        from infomesh.dashboard.screens.overview import _is_node_running
+        from infomesh.dashboard.utils import is_node_running
 
         pid_file = tmp_config.node.data_dir / "infomesh.pid"
         pid_file.write_text("999999999")  # Non-existent PID
-        assert _is_node_running(tmp_config) is False
+        assert is_node_running(tmp_config) is False
 
     def test_get_peer_id_no_keys(self, tmp_config: Config) -> None:
-        from infomesh.dashboard.screens.overview import _get_peer_id
+        from infomesh.dashboard.utils import get_peer_id
 
-        assert _get_peer_id(tmp_config) == "(not generated)"
+        assert get_peer_id(tmp_config) == "(not generated)"
 
 
 # ─── Search Pane Tests ─────────────────────────────────
@@ -372,14 +373,34 @@ class TestCreditsHelpers:
 class TestNetworkPanels:
     """Tests for network pane components."""
 
-    def test_dht_panel_update(self) -> None:
+    def test_dht_panel_render(self) -> None:
         from infomesh.dashboard.screens.network import DHTPanel
 
         panel = DHTPanel()
-        panel.update_stats(keys_stored=100, lookups_hr=50, publications=25)
-        assert panel._keys_stored == 100
-        assert panel._lookups_hr == 50
-        assert panel._publications == 25
+        dht_data = {
+            "keys_stored": 100,
+            "keys_published": 25,
+            "gets_performed": 50,
+            "puts_performed": 30,
+        }
+        panel._refresh_content(dht_data)
+        # The panel should accept any dict without error
+
+    def test_peer_table_set_peers(self, tmp_config: Config) -> None:
+        from infomesh.dashboard.screens.network import PeerTable
+
+        table = PeerTable()
+        # set_peers with empty list should not raise
+        table.set_peers([])
+
+    def test_bandwidth_panel_update(self, tmp_config: Config) -> None:
+        from infomesh.dashboard.screens.network import BandwidthPanel
+
+        panel = BandwidthPanel(tmp_config)
+        # update_from_status should initialise counters without error
+        panel.update_from_status({"upload_bytes": 1000, "download_bytes": 2000})
+        assert panel._prev_up == 1000
+        assert panel._prev_dn == 2000
 
 
 # ─── Bar Chart Data Tests ─────────────────────────────
@@ -459,13 +480,16 @@ class TestCrawlStatsPanel:
 
         panel = CrawlStatsPanel(tmp_config)
         panel.update_stats(
-            active_workers=3,
-            queue_size=42,
+            total_pages=42,
             pages_per_hour=100,
-            error_rate=2.5,
+            domain_count=5,
+            last_crawl_at=1700000000.0,
+            countdown=3,
         )
-        assert panel._active_workers == 3
-        assert panel._queue_size == 42
+        assert panel._total_pages == 42
+        assert panel._pages_per_hour == 100
+        assert panel._domain_count == 5
+        assert panel._countdown == 3
 
     def test_top_domains_with_data(self, tmp_config: Config, store_with_docs) -> None:
         """TopDomainsPanel should load domain stats from index."""
@@ -660,18 +684,18 @@ class TestTextReport:
         assert "Tier" in output
 
     def test_format_uptime(self) -> None:
-        from infomesh.dashboard.text_report import _format_uptime
+        from infomesh.dashboard.utils import format_uptime
 
-        assert _format_uptime(0) == "—"
-        assert _format_uptime(3660) == "1h 1m"
-        assert _format_uptime(90000) == "1d 1h 0m"
+        assert format_uptime(0) == "—"
+        assert format_uptime(3660) == "1h 1m"
+        assert format_uptime(90000) == "1d 1h 0m"
 
     def test_format_bytes(self) -> None:
-        from infomesh.dashboard.text_report import _format_bytes
+        from infomesh.dashboard.utils import format_bytes
 
-        assert "KB" in _format_bytes(1024)
-        assert "MB" in _format_bytes(1024 * 1024)
-        assert "GB" in _format_bytes(1024**3)
+        assert "KB" in format_bytes(1024)
+        assert "MB" in format_bytes(1024 * 1024)
+        assert "GB" in format_bytes(1024**3)
 
     def test_make_bar(self) -> None:
         from infomesh.dashboard.text_report import _make_bar

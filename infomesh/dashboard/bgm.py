@@ -13,7 +13,9 @@ Usage::
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -28,6 +30,9 @@ _PLAYERS: list[tuple[str, list[str]]] = [
     # mpv: no video, loop
     ("mpv", ["--no-video", "--really-quiet", "--loop"]),
 ]
+
+# BGM assets directory (infomesh/assets/bgm — inside the package)
+_BGM_ASSET_DIR = Path(__file__).parent.parent / "assets" / "bgm"
 
 
 def _build_volume_args(player_cmd: str, volume: int) -> list[str]:
@@ -50,6 +55,35 @@ def _find_player() -> tuple[str, list[str]] | None:
         if shutil.which(cmd):
             return cmd, args
     return None
+
+
+def _kill_orphaned_bgm() -> None:
+    """Kill any orphaned BGM player processes from previous runs.
+
+    Uses ``pgrep`` to find ffplay/mpv processes whose command line
+    contains the infomesh BGM asset directory, then terminates them.
+    This prevents duplicate BGM playback across dashboard restarts.
+    """
+    # Match both relative ("assets/bgm/…") and absolute paths
+    # by using just the directory basename pattern.
+    for player in ("ffplay", "mpv"):
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", f"{player}.*assets/bgm"],
+                capture_output=True,
+                text=True,
+            )
+            for line in result.stdout.strip().splitlines():
+                pid = int(line.strip())
+                if pid == os.getpid():
+                    continue
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    logger.info("bgm_orphan_killed", pid=pid, player=player)
+                except (ProcessLookupError, PermissionError):
+                    pass
+        except (FileNotFoundError, ValueError):
+            pass
 
 
 class BGMPlayer:
@@ -104,13 +138,16 @@ class BGMPlayer:
             )
             return False
 
-        path = Path(path)
+        path = Path(path).resolve()
         if not path.exists():
             logger.warning("bgm_file_not_found", path=str(path))
             return False
 
-        # Stop any current playback
+        # Stop any current playback (this instance)
         self.stop()
+
+        # Kill orphaned BGM processes from previous runs
+        _kill_orphaned_bgm()
 
         self._volume = max(0, min(100, volume))
 

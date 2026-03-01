@@ -93,6 +93,12 @@ jobs:
           echo "Updated pyproject.toml:"
           head -5 pyproject.toml
 
+      - name: Update version in __init__.py
+        run: |
+          sed -i 's/^__version__ = ".*"/__version__ = "${{ steps.version.outputs.version }}"/' infomesh/__init__.py
+          echo "Updated __init__.py:"
+          grep __version__ infomesh/__init__.py
+
       - name: Build package
         run: uv build
 
@@ -106,19 +112,88 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml
+          git add pyproject.toml infomesh/__init__.py
           git commit -m "chore: release v${{ steps.version.outputs.version }} [auto-release]"
           git tag "${{ steps.version.outputs.tag }}"
           git push origin main --follow-tags
+
+      - name: Generate release notes from commits
+        id: notes
+        run: |
+          # Get previous tag
+          prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -z "$prev_tag" ]; then
+            range="HEAD"
+          else
+            range="${prev_tag}..HEAD"
+          fi
+
+          # Categorize commits by conventional-commit prefix
+          features=""
+          fixes=""
+          docs=""
+          others=""
+
+          while IFS= read -r line; do
+            # Skip auto-release commits and empty lines
+            if [ -z "$line" ] || echo "$line" | grep -q '\[auto-release\]'; then
+              continue
+            fi
+            # Strip conventional-commit prefix: feat(scope): msg → msg
+            if echo "$line" | grep -qi '^feat'; then
+              msg=$(echo "$line" | sed -E 's/^feat([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              features="${features}- ${msg}\n"
+            elif echo "$line" | grep -qi '^fix'; then
+              msg=$(echo "$line" | sed -E 's/^fix([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              fixes="${fixes}- ${msg}\n"
+            elif echo "$line" | grep -qi '^docs'; then
+              msg=$(echo "$line" | sed -E 's/^docs([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              docs="${docs}- ${msg}\n"
+            else
+              others="${others}- ${line}\n"
+            fi
+          done <<< "$(git log "${range}" --pretty=format:'%s' --no-merges)"
+
+          # Build release body
+          body=""
+          if [ -n "$features" ]; then
+            body="${body}## 🚀 New Features\n${features}\n"
+          fi
+          if [ -n "$fixes" ]; then
+            body="${body}## 🐛 Bug Fixes\n${fixes}\n"
+          fi
+          if [ -n "$docs" ]; then
+            body="${body}## 📖 Documentation\n${docs}\n"
+          fi
+          if [ -n "$others" ]; then
+            body="${body}## 🔄 Other Changes\n${others}\n"
+          fi
+
+          # If no categorized commits, fall back to auto-generated
+          if [ -z "$body" ]; then
+            echo "use_generate=true" >> "$GITHUB_OUTPUT"
+          else
+            # Write to file (handles multiline safely)
+            printf '%b' "$body" > /tmp/release-notes.md
+            echo "use_generate=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            dist/* \
-            --title "v${{ steps.version.outputs.version }}" \
-            --generate-notes
+          if [ "${{ steps.notes.outputs.use_generate }}" = "true" ]; then
+            gh release create "${{ steps.version.outputs.tag }}" \
+              dist/* \
+              --title "v${{ steps.version.outputs.version }}" \
+              --generate-notes
+          else
+            gh release create "${{ steps.version.outputs.tag }}" \
+              dist/* \
+              --title "v${{ steps.version.outputs.version }}" \
+              --notes-file /tmp/release-notes.md
+          fi
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

@@ -130,7 +130,9 @@ def validate_url_post_redirect(final_url: str) -> str:
     """Validate a URL after HTTP redirect resolution.
 
     Should be called on the final URL after following redirects to ensure
-    the redirect didn't land on an internal resource.
+    the redirect didn't land on an internal resource.  DNS resolution is
+    enabled to catch DNS-rebinding attacks where the redirect target
+    resolves to a private/internal IP.
 
     Args:
         final_url: The URL after redirect resolution.
@@ -141,7 +143,7 @@ def validate_url_post_redirect(final_url: str) -> str:
     Raises:
         SSRFError: If the redirected URL targets a private resource.
     """
-    return validate_url(final_url, resolve_dns=False)
+    return validate_url(final_url, resolve_dns=True)
 
 
 def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:

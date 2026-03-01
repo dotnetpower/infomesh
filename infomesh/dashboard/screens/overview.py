@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 
 from textual.app import ComposeResult
@@ -13,53 +12,16 @@ from textual.widgets import Static
 
 from infomesh import __version__
 from infomesh.config import Config
+from infomesh.credits.github_identity import resolve_github_email
 from infomesh.dashboard.data_cache import DashboardDataCache
+from infomesh.dashboard.utils import (
+    format_uptime,
+    get_peer_id,
+    is_node_running,
+)
 from infomesh.dashboard.widgets.live_log import LiveLog
 from infomesh.dashboard.widgets.resource_bar import ResourceBar
 from infomesh.dashboard.widgets.sparkline import SparklineChart
-
-
-def _format_uptime(seconds: float) -> str:
-    """Format seconds into human-readable uptime string."""
-    if seconds <= 0:
-        return "—"
-    days = int(seconds // 86400)
-    hours = int((seconds % 86400) // 3600)
-    minutes = int((seconds % 3600) // 60)
-    parts: list[str] = []
-    if days > 0:
-        parts.append(f"{days}d")
-    if hours > 0:
-        parts.append(f"{hours}h")
-    parts.append(f"{minutes}m")
-    return " ".join(parts)
-
-
-def _get_peer_id(config: Config) -> str:
-    """Load peer ID from key file if available."""
-    keys_dir = config.node.data_dir / "keys"
-    if (keys_dir / "private.pem").exists():
-        try:
-            from infomesh.p2p.keys import KeyPair
-
-            pair = KeyPair.load(keys_dir)
-            return pair.peer_id
-        except Exception:  # noqa: BLE001
-            pass
-    return "(not generated)"
-
-
-def _is_node_running(config: Config) -> bool:
-    """Check if the InfoMesh node process is running."""
-    pid_file = config.node.data_dir / "infomesh.pid"
-    if not pid_file.exists():
-        return False
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)
-        return True
-    except (ValueError, ProcessLookupError, PermissionError):
-        return False
 
 
 class NodeInfoPanel(Static):
@@ -74,15 +36,17 @@ class NodeInfoPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__("", **kwargs)  # type: ignore[arg-type]
         self._config = config
+        # Resolve GitHub email once (avoids subprocess spawn on every tick)
+        self._github_email: str | None = resolve_github_email(self._config)
 
     def on_mount(self) -> None:
         self._update()
 
     def _update(self) -> None:
-        peer_id = _get_peer_id(self._config)
-        running = _is_node_running(self._config)
+        peer_id = get_peer_id(self._config)
+        running = is_node_running(self._config)
         state_icon = "🟢 Running" if running else "🔴 Stopped"
 
         # Calculate uptime from PID file modification time
@@ -92,12 +56,20 @@ class NodeInfoPanel(Static):
             uptime = time.time() - pid_file.stat().st_mtime
 
         short_id = peer_id[:16] + "..." if len(peer_id) > 16 else peer_id
+
+        # GitHub identity (cached from __init__)
+        if self._github_email:
+            github_line = f"  GitHub:   [green]{self._github_email}[/green]"
+        else:
+            github_line = "  GitHub:   [dim]not connected[/dim]"
+
         text = (
             f"[bold]Node[/bold]\n"
             f"  Peer ID:  {short_id}\n"
             f"  State:    {state_icon}\n"
-            f"  Uptime:   {_format_uptime(uptime)}\n"
+            f"  Uptime:   {format_uptime(uptime)}\n"
             f"  Version:  {__version__}\n"
+            f"{github_line}\n"
             f"  Data dir: {self._config.node.data_dir}"
         )
         self.update(text)
@@ -156,14 +128,46 @@ class ResourcePanel(Widget):
         except Exception:  # noqa: BLE001
             pass
 
-        # CPU and RAM require psutil (optional)
+        # CPU, RAM, and Network require psutil (optional)
         try:
             import psutil
 
-            cpu = psutil.cpu_percent(interval=0)
+            # --- CPU & RAM (infomesh process, not system-wide) ---
+            proc = psutil.Process()
+            cpu = proc.cpu_percent(interval=None)
+            mem_info = proc.memory_info()
+            total_mem = psutil.virtual_memory().total
+            mem_pct = (mem_info.rss / total_mem) * 100 if total_mem > 0 else 0
             self.query_one("#res-cpu", ResourceBar).update_value(cpu, 100)
-            mem = psutil.virtual_memory()
-            self.query_one("#res-ram", ResourceBar).update_value(mem.percent, 100)
+            self.query_one("#res-ram", ResourceBar).update_value(mem_pct, 100)
+
+            # --- Network usage (system-wide, Mbps) ---
+            now = time.monotonic()
+            counters = psutil.net_io_counters()
+            # Store previous values on the widget instance
+            prev_sent = getattr(self, "_net_bytes_sent", 0)
+            prev_recv = getattr(self, "_net_bytes_recv", 0)
+            prev_time = getattr(self, "_net_last_time", 0.0)
+
+            if prev_time > 0:
+                elapsed = now - prev_time
+                if elapsed > 0.1:
+                    up_mbps = ((counters.bytes_sent - prev_sent) * 8) / (
+                        elapsed * 1_000_000
+                    )
+                    dn_mbps = ((counters.bytes_recv - prev_recv) * 8) / (
+                        elapsed * 1_000_000
+                    )
+                    self.query_one("#res-net-up", ResourceBar).update_value(
+                        round(up_mbps, 2)
+                    )
+                    self.query_one("#res-net-down", ResourceBar).update_value(
+                        round(dn_mbps, 2)
+                    )
+
+            self._net_bytes_sent = counters.bytes_sent
+            self._net_bytes_recv = counters.bytes_recv
+            self._net_last_time = now
         except ImportError:
             # psutil not available — show N/A
             pass
@@ -313,7 +317,7 @@ class OverviewPane(Widget):
                 stats = self._data_cache.get_stats()
                 act_panel = self.query_one("#activity", ActivityPanel)
                 act_panel.update_index(stats.document_count)
-                act_panel.update_crawl(stats.document_count)
+                act_panel.update_crawl(stats.pages_last_hour)
             else:
                 from infomesh.index.local_store import LocalStore
 
@@ -325,7 +329,7 @@ class OverviewPane(Widget):
                 raw = store.get_stats()
                 act_panel = self.query_one("#activity", ActivityPanel)
                 act_panel.update_index(raw["document_count"])
-                act_panel.update_crawl(raw["document_count"])
+                act_panel.update_crawl(0)
                 store.close()
         except Exception:  # noqa: BLE001
             pass

@@ -81,7 +81,7 @@ infomesh/
 │   │   ├── worker.py        #   Async crawl workers
 │   │   ├── scheduler.py     #   URL assignment (DHT-based)
 │   │   ├── parser.py        #   HTML → text extraction
-│   │   ├── robots.py        #   robots.txt compliance
+│   │   ├── robots.py        #   robots.txt compliance + sitemap + crawl-delay
 │   │   ├── dedup.py         #   Deduplication pipeline (URL, SHA-256, SimHash)
 │   │   ├── simhash.py       #   SimHash near-duplicate detection
 │   │   ├── seeds.py         #   Seed URL management & category selection
@@ -184,6 +184,7 @@ Every module, class, and function must have **one clear responsibility**.
   - Extract repeated patterns (e.g., "crawl → index → optionally vector-index") into named helper functions.
 - **CLI commands**: Thin wrappers that delegate to library code. No business logic in Click handlers — they should only parse arguments, call library functions, and format output.
 - **MCP tool handlers**: Same as CLI — dispatch to service-layer functions, don't inline business logic.
+- **Dashboard panels**: Read data from caches or public APIs. Never access private attributes (`_conn`, `_db`) of library classes.
 
 When reviewing code, ask: _"If I change X, what else breaks?"_ If the answer includes unrelated concerns, the code violates SRP and should be refactored.
 
@@ -193,6 +194,36 @@ When reviewing code, ask: _"If I change X, what else breaks?"_ If the answer inc
 - Linter: **ruff check** with `select = ["E", "F", "I", "UP", "B", "SIM"]`.
 - Import order: stdlib → third-party → local (enforced by ruff/isort).
 - Prefer `pathlib.Path` over `os.path`.
+
+### CI Failure Prevention (Lessons Learned)
+
+The following errors have caused CI failures. **Always check for these before committing:**
+
+| Error Code | Description | Prevention |
+|------------|-------------|------------|
+| **E501** | Line too long (>88 chars) | Run `ruff format .` before commit. For Click `help=` strings, use multi-line concatenation: `help=("line1 " "line2")`. For long f-strings, break into variables first. |
+| **I001** | Import block unsorted | Always group imports: stdlib → third-party → local, alphabetically within each group. Run `ruff check --fix` to auto-sort. Never add `import time` below `from dataclasses import dataclass`. |
+| **F541** | f-string without placeholders | Don't write `f"plain string"` — remove the `f` prefix if there are no `{…}` expressions. |
+| **F841** | Local variable assigned but never used | Remove unused variables or prefix with `_` if intentionally unused (e.g., `_unused = func()`). |
+| **F401** | Module imported but unused | Remove unused imports. If imported for side effects or re-export, add `# noqa: F401`. |
+| **F821** | Undefined name used | Ensure all referenced names are imported or defined. Check spelling of variable names. |
+
+**Common pitfalls:**
+- Adding a new `import` at the end of an import block instead of in alphabetical order → **I001**.
+- Writing Click `help="..."` strings that exceed 88 chars → **E501**. Split into `help=("part1 " "part2")`.
+- Copy-pasting code with f-strings but removing the interpolated variables → **F541**.
+- Forgetting to remove debug `import subprocess` or `import pdb` → **F401**.
+
+### No Private API Access in Consumers
+
+Library classes (`LocalStore`, `CreditLedger`, etc.) expose public methods for data access. **Never** access private attributes like `store._conn` or `ledger._conn` in CLI, MCP, or dashboard code. If a needed query doesn't have a public API, add one to the library class first.
+
+### Shared Utilities — No Duplication
+
+Utility functions must exist in exactly one place:
+- **Dashboard utilities** (`_format_uptime`, `_get_peer_id`, `_is_node_running`, `_read_p2p_status`): use `infomesh/dashboard/utils.py`.
+- **Domain-extraction SQL**: use `LocalStore.get_top_domains()` — don't inline raw SQL in dashboard code.
+- **Node status assembly** (store stats + P2P status + credit stats): use `services.py` orchestration — don't duplicate across CLI, MCP, and dashboard.
 
 ### Pre-commit Checks (Required)
 
@@ -259,6 +290,27 @@ If lint errors are found, fix them before committing:
   - `uv run pytest` — run tests.
   - `uv run infomesh start` — run the application.
 
+### Documentation Sync (Required)
+
+Every code change that affects **user-facing behavior, API surface, or configuration** must be accompanied by corresponding documentation updates. Do not consider a task complete until all relevant docs are updated.
+
+**Mandatory update targets:**
+
+| Change Type | Docs to Update |
+|-------------|----------------|
+| New feature / behavior change | `docs/en/` + `docs/ko/` (relevant section), `.github/copilot-instructions.md` |
+| MCP tool schema change (params, output) | `docs/en/10-mcp-integration.md` + `docs/ko/10-mcp-integration.md`, copilot-instructions MCP Tools table |
+| CLI flag / command change | `docs/en/` + `docs/ko/` (relevant section), `README.md` if applicable |
+| Config option change | `docs/en/` + `docs/ko/` (relevant section), copilot-instructions |
+| Credit system / trust change | `docs/en/03-credit-system.md` + `docs/ko/03-credit-system.md`, copilot-instructions |
+| Architecture / protocol change | `docs/en/02-architecture.md` + `docs/ko/02-architecture.md`, copilot-instructions |
+
+**Rules:**
+- **Bilingual**: All documentation exists in both English (`docs/en/`) and Korean (`docs/ko/`). Both must be updated simultaneously.
+- **copilot-instructions.md**: This file is the single source of truth for AI assistants. Keep it synchronized with the actual codebase behavior.
+- **Commit message**: Use the `docs:` prefix for documentation-only changes. When a feature commit includes doc updates, use `feat:` (the docs update is part of the feature).
+- **Checklist**: Before marking a task complete, verify: (1) EN docs updated, (2) KO docs updated, (3) copilot-instructions updated if applicable.
+
 ## Architecture Guidelines
 
 ### P2P / DHT
@@ -273,6 +325,10 @@ If lint errors are found, fix them before committing:
 
 - Always respect `robots.txt` — implement strict opt-out compliance.
 - Default politeness: ≤1 request/second per domain.
+- **Crawl-Delay**: Honors the `Crawl-delay` directive in robots.txt. Per-domain delay is applied automatically and capped at 60 seconds.
+- **Sitemap discovery**: Extracts `Sitemap:` URLs from robots.txt and automatically schedules discovered URLs for crawling.
+- **Canonical tag**: Recognizes `<link rel="canonical">`. If a page declares a different canonical URL, the crawler skips indexing and schedules the canonical URL instead.
+- **Retry with backoff**: Transient HTTP 5xx errors and network failures trigger up to 2 retries with exponential backoff (1s, 2s). SSRF-blocked URLs are never retried.
 - Use `trafilatura` for content extraction. If trafilatura returns `None`, skip the page.
 - Store raw text + metadata (title, URL, crawl timestamp, language).
 - **Seed strategy**: Bundled curated seed lists by category (tech docs, academic, encyclopedia, etc.) + Common Crawl URL import + DHT-assigned URLs + user `crawl_url()` submissions + link following.
@@ -280,7 +336,8 @@ If lint errors are found, fix them before committing:
 - **Crawl lock**: Before crawling, publish `hash(url) = CRAWLING` to DHT to prevent race conditions. Timeout after 5 minutes.
 - **SPA/JS rendering**: Phase 0 focuses on static HTML. For JS-heavy pages, use `js_required` DHT tag to delegate to Playwright-capable nodes (Phase 4).
 - **Bandwidth limits**: Default ≤5 Mbps upload / 10 Mbps download for P2P. Configurable via `~/.infomesh/config.toml`. Max 5 concurrent crawl connections per node.
-- **`crawl_url()` rate limiting**: 60 URLs/hr per node, 10 pending URLs/domain, max depth=3.
+- **`crawl_url()` rate limiting**: 60 URLs/hr per node, 10 pending URLs/domain, depth unlimited by default (0=unlimited, configurable).
+- **Force re-crawl**: `crawl_url(url, force=True)` bypasses URL dedup to re-crawl previously visited pages. Useful for refreshing stale content or discovering new child links after depth limits were changed.
 
 ### Indexing
 
@@ -306,7 +363,7 @@ The MCP server exposes these tools:
 | `search(query, limit)` | Full network search, merges local + remote results |
 | `search_local(query, limit)` | Local-only search (works offline) |
 | `fetch_page(url)` | Return full text for a URL (from index or live crawl) |
-| `crawl_url(url, depth)` | Add a URL to the network and crawl it |
+| `crawl_url(url, depth, force)` | Add a URL to the network and crawl it. `force=True` bypasses dedup. |
 | `network_stats()` | Network status: peer count, index size, credits |
 
 ### Local LLM Summarization

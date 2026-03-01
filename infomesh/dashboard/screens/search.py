@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC
-
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widget import Widget
@@ -23,8 +21,13 @@ class SearchResultsPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__("", **kwargs)  # type: ignore[arg-type]
         self._config = config
+
+    def on_mount(self) -> None:
+        self.update(
+            "[dim]Type a query above and press Enter to search your local index[/dim]"
+        )
 
     def display_results(
         self,
@@ -103,6 +106,19 @@ class SearchPane(Widget):
     SearchPane {
         height: 1fr;
     }
+    SearchPane > #search-input {
+        border: solid $accent;
+        padding: 0 1;
+        margin: 0 1;
+        height: 3;
+    }
+    SearchPane > #search-input:focus {
+        border: double $accent-lighten-2;
+    }
+    SearchPane > VerticalScroll {
+        height: 1fr;
+        scrollbar-gutter: stable;
+    }
     """
 
     BINDINGS = [
@@ -117,10 +133,10 @@ class SearchPane(Widget):
     def compose(self) -> ComposeResult:
         yield Static("[bold]🔍 Search[/bold]", classes="panel-title")
         yield Input(
-            placeholder="Enter search query...",
+            placeholder="Press Tab or click here to search  |  Enter to submit",
             id="search-input",
         )
-        with VerticalScroll():
+        with VerticalScroll(id="search-scroll"):
             yield SearchResultsPanel(self._config, id="search-results")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -159,33 +175,35 @@ class SearchPane(Widget):
                 compression_level=self._config.storage.compression_level,
             )
 
-            start = time.perf_counter()
-            search_results = store.search(query, limit=10)
-            elapsed_ms = (time.perf_counter() - start) * 1000
+            try:
+                start = time.perf_counter()
+                search_results = store.search(query, limit=10)
+                elapsed_ms = (time.perf_counter() - start) * 1000
 
-            from datetime import datetime
+                from datetime import UTC, datetime
 
-            result_dicts = [
-                {
-                    "title": r.title,
-                    "url": r.url,
-                    "score": r.score,
-                    "snippet": r.snippet,
-                    "bm25": r.score,
-                    "crawled_at": datetime.fromtimestamp(
-                        r.crawled_at,
-                        tz=UTC,
-                    ).strftime("%Y-%m-%d %H:%M")
-                    if r.crawled_at
-                    else "",
-                }
-                for r in search_results
-            ]
+                result_dicts = [
+                    {
+                        "title": r.title,
+                        "url": r.url,
+                        "score": r.score,
+                        "snippet": r.snippet,
+                        "bm25": r.score,
+                        "crawled_at": datetime.fromtimestamp(
+                            r.crawled_at,
+                            tz=UTC,
+                        ).strftime("%Y-%m-%d %H:%M")
+                        if r.crawled_at
+                        else "",
+                    }
+                    for r in search_results
+                ]
 
-            results_panel.display_results(
-                query, result_dicts, elapsed_ms, source="local"
-            )
-            store.close()
+                results_panel.display_results(
+                    query, result_dicts, elapsed_ms, source="local"
+                )
+            finally:
+                store.close()
         except Exception as exc:  # noqa: BLE001
             results_panel.display_error(str(exc))
 

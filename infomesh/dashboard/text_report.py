@@ -10,9 +10,7 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import shutil
-import time
 
 from rich.console import Console
 from rich.panel import Panel
@@ -21,59 +19,12 @@ from rich.text import Text
 
 from infomesh import __version__
 from infomesh.config import Config, load_config
-
-
-def _get_peer_id(config: Config) -> str:
-    """Load peer ID from key file if available."""
-    keys_dir = config.node.data_dir / "keys"
-    if (keys_dir / "private.pem").exists():
-        try:
-            from infomesh.p2p.keys import KeyPair
-
-            pair = KeyPair.load(keys_dir)
-            return pair.peer_id
-        except Exception:  # noqa: BLE001
-            pass
-    return "(not generated)"
-
-
-def _is_node_running(config: Config) -> tuple[bool, float]:
-    """Check if InfoMesh node process is running. Returns (running, uptime_secs)."""
-    pid_file = config.node.data_dir / "infomesh.pid"
-    if not pid_file.exists():
-        return False, 0.0
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)
-        uptime = time.time() - pid_file.stat().st_mtime
-        return True, uptime
-    except (ValueError, ProcessLookupError, PermissionError):
-        return False, 0.0
-
-
-def _format_uptime(seconds: float) -> str:
-    """Format seconds into human-readable uptime string."""
-    if seconds <= 0:
-        return "—"
-    days = int(seconds // 86400)
-    hours = int((seconds % 86400) // 3600)
-    minutes = int((seconds % 3600) // 60)
-    parts: list[str] = []
-    if days > 0:
-        parts.append(f"{days}d")
-    if hours > 0:
-        parts.append(f"{hours}h")
-    parts.append(f"{minutes}m")
-    return " ".join(parts)
-
-
-def _format_bytes(n: int) -> str:
-    """Format byte count to human readable."""
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(n) < 1024:
-            return f"{n:.1f} {unit}"
-        n /= 1024  # type: ignore[assignment]
-    return f"{n:.1f} PB"
+from infomesh.dashboard.utils import (
+    format_bytes,
+    format_uptime,
+    get_peer_id,
+    is_node_running_with_uptime,
+)
 
 
 def _make_bar(ratio: float, width: int = 20, color: str = "green") -> Text:
@@ -98,18 +49,18 @@ def _make_bar(ratio: float, width: int = 20, color: str = "green") -> Text:
 
 def _node_section(config: Config) -> Panel:
     """Build the Node Info panel."""
-    peer_id = _get_peer_id(config)
-    running, uptime = _is_node_running(config)
+    peer_id = get_peer_id(config)
+    running, uptime = is_node_running_with_uptime(config)
     state = "[bold green]🟢 Running[/]" if running else "[bold red]🔴 Stopped[/]"
 
     table = Table.grid(padding=(0, 2))
     table.add_column("key", style="bold", min_width=12)
     table.add_column("value")
 
-    short_id = peer_id[:20] + "..." if len(peer_id) > 20 else peer_id
+    short_id = peer_id[:16] + "..." if len(peer_id) > 16 else peer_id
     table.add_row("Peer ID", short_id)
     table.add_row("State", state)
-    table.add_row("Uptime", _format_uptime(uptime))
+    table.add_row("Uptime", format_uptime(uptime))
     table.add_row("Version", __version__)
     table.add_row("Data dir", str(config.node.data_dir))
     table.add_row("Port", str(config.node.listen_port))
@@ -128,7 +79,7 @@ def _resource_section(config: Config) -> Panel:
         disk = shutil.disk_usage(str(config.node.data_dir))
         disk_ratio = disk.used / disk.total if disk.total > 0 else 0
         bar = _make_bar(disk_ratio, color="yellow")
-        label = f"  {_format_bytes(disk.used)} / {_format_bytes(disk.total)}"
+        label = f"  {format_bytes(disk.used)} / {format_bytes(disk.total)}"
         bar.append(label, style="dim")
         table.add_row("Disk", bar)
     except Exception:  # noqa: BLE001
@@ -144,7 +95,7 @@ def _resource_section(config: Config) -> Panel:
 
         mem = psutil.virtual_memory()
         bar = _make_bar(mem.percent / 100, color="green")
-        label = f"  {_format_bytes(mem.used)} / {_format_bytes(mem.total)}"
+        label = f"  {format_bytes(mem.used)} / {format_bytes(mem.total)}"
         bar.append(label, style="dim")
         table.add_row("RAM", bar)
     except ImportError:
@@ -168,43 +119,23 @@ def _index_section(config: Config) -> Panel:
             compression_enabled=config.storage.compression_enabled,
             compression_level=config.storage.compression_level,
         )
-        stats = store.get_stats()
+        try:
+            stats = store.get_stats()
 
-        table.add_row("Documents", f"{stats['document_count']:,}")
+            table.add_row("Documents", f"{stats['document_count']:,}")
 
-        # DB file size
-        db_path = config.index.db_path
-        if db_path.exists():
-            table.add_row("DB size", _format_bytes(db_path.stat().st_size))
+            # DB file size
+            db_path = config.index.db_path
+            if db_path.exists():
+                table.add_row("DB size", format_bytes(db_path.stat().st_size))
 
-        # Top domains
-        rows = store._conn.execute(
-            """SELECT
-                   SUBSTR(
-                       url,
-                       INSTR(url, '://') + 3,
-                       CASE
-                           WHEN INSTR(
-                               SUBSTR(url, INSTR(url, '://') + 3), '/'
-                           ) > 0
-                           THEN INSTR(
-                               SUBSTR(url, INSTR(url, '://') + 3), '/'
-                           ) - 1
-                           ELSE LENGTH(url)
-                       END
-                   ) AS domain,
-                   COUNT(*) as cnt
-               FROM documents
-               GROUP BY domain
-               ORDER BY cnt DESC
-               LIMIT 5"""
-        ).fetchall()
-
-        if rows:
-            domains = ", ".join(f"{r[0]} ({r[1]})" for r in rows)
-            table.add_row("Top domains", domains)
-
-        store.close()
+            # Top domains
+            top_domains = store.get_top_domains(limit=5)
+            if top_domains:
+                domains = ", ".join(f"{d} ({c})" for d, c in top_domains)
+                table.add_row("Top domains", domains)
+        finally:
+            store.close()
     except Exception as exc:  # noqa: BLE001
         table.add_row("Error", str(exc))
 
@@ -248,18 +179,17 @@ def _credits_section(config: Config) -> Panel:
         return Panel(table, title="[bold]Credits[/]", border_style="cyan")
 
     try:
-        from infomesh.credits.ledger import ContributionTier, CreditLedger
+        from infomesh.credits.ledger import CreditLedger
 
         ledger = CreditLedger(db_path)
-        stats = ledger.stats()
-        ledger.close()
+        try:
+            stats = ledger.stats()
+        finally:
+            ledger.close()
 
-        tier_map = {
-            ContributionTier.TIER_1: "⭐ Tier 1",
-            ContributionTier.TIER_2: "⭐⭐ Tier 2",
-            ContributionTier.TIER_3: "⭐⭐⭐ Tier 3",
-        }
-        tier_str = tier_map.get(stats.tier, "Unknown")
+        from infomesh.dashboard.utils import tier_label
+
+        tier_str = tier_label(stats.tier)
 
         table.add_row("Balance", f"[bold green]{stats.balance:,.2f}[/] credits")
         table.add_row("Tier", tier_str)

@@ -24,7 +24,8 @@ InfoMesh의 노드 상태를 모니터링하기 위한 **콘솔 앱 UI (Textual 
 │  │ State:  🟢 Running   │  │ RAM:  ██████░░░░  62%    │  │
 │  │ Uptime: 3d 14h 22m  │  │ Disk: ████████░░  81%    │  │
 │  │ Version: 0.1.0      │  │ Net↑: 2.1/5.0 Mbps       │  │
-│  │ Data dir: ~/.info... │  │ Net↓: 4.3/10.0 Mbps      │  │
+│  │ GitHub:  user@e...   │  │ Net↓: 4.3/10.0 Mbps      │  │
+│  │ Data dir: ~/.info... │  │                           │  │
 │  └──────────────────────┘  └──────────────────────────┘  │
 │                                                          │
 │  ┌─ Activity (last 1h) ──────────────────────────────┐  │
@@ -44,6 +45,8 @@ InfoMesh의 노드 상태를 모니터링하기 위한 **콘솔 앱 UI (Textual 
 ```
 
 > **구현 노트**: NodeInfoPanel에 Peers 대신 Data dir 표시.
+> GitHub 이메일은 `git config user.email`에서 자동 감지되어 표시됨;
+> 미연결 시 `not connected`으로 표시. 값은 대시보드 시작 시 한 번만 조회하여 캐시됨.
 > ResourcePanel은 `psutil` 설치 시 CPU/RAM 표시, 미설치 시 N/A.
 > 리소스 바 색상은 사용률에 따라 자동 전환 (≥90% 빨강, ≥70% 노랑).
 

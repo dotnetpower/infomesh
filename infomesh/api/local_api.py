@@ -182,7 +182,11 @@ def _get_index_stats(config: Config) -> dict[str, Any]:
     try:
         from infomesh.index.local_store import LocalStore
 
-        store = LocalStore(db_path)
+        store = LocalStore(
+            db_path,
+            compression_enabled=config.storage.compression_enabled,
+            compression_level=config.storage.compression_level,
+        )
         try:
             stats = store.get_stats()
         finally:

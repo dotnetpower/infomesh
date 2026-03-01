@@ -20,6 +20,7 @@ class DomainState:
     last_request_at: float = 0.0
     pending_count: int = 0
     error_count: int = 0
+    crawl_delay: float | None = None  # robots.txt Crawl-delay override
 
 
 # Maximum tracked domains before stale eviction triggers
@@ -44,12 +45,12 @@ class Scheduler:
         politeness_delay: float = 1.0,
         urls_per_hour: int = 60,
         pending_per_domain: int = 10,
-        max_depth: int = 3,
+        max_depth: int = 0,
     ) -> None:
         self._politeness_delay = politeness_delay
         self._urls_per_hour = urls_per_hour
         self._pending_per_domain = pending_per_domain
-        self._max_depth = max_depth
+        self._max_depth = max_depth  # 0 = unlimited
 
         self._domains: dict[str, DomainState] = defaultdict(DomainState)
         self._queue: asyncio.Queue[tuple[str, int]] = asyncio.Queue(maxsize=10_000)
@@ -66,7 +67,7 @@ class Scheduler:
         Returns:
             True if URL was added, False if rejected (rate limit, depth, etc.).
         """
-        if depth > self._max_depth:
+        if self._max_depth > 0 and depth > self._max_depth:
             logger.debug("scheduler_depth_exceeded", url=url, depth=depth)
             return False
 
@@ -89,8 +90,27 @@ class Scheduler:
         """
         self._urls_per_hour = limit
 
+    def set_crawl_delay(self, domain: str, delay: float) -> None:
+        """Set a per-domain crawl delay from robots.txt.
+
+        Args:
+            domain: Domain netloc (e.g. "example.com").
+            delay: Crawl delay in seconds.  Capped at 60s to prevent abuse.
+        """
+        capped = min(delay, 60.0)
+        state = self._domains[domain]
+        state.crawl_delay = capped
+        logger.debug(
+            "scheduler_crawl_delay_set",
+            domain=domain,
+            delay=capped,
+        )
+
     async def get_url(self) -> tuple[str, int]:
         """Get the next URL to crawl, respecting politeness delays.
+
+        Uses per-domain Crawl-delay from robots.txt when available,
+        otherwise falls back to the configured ``politeness_delay``.
 
         Returns:
             Tuple of (url, depth).
@@ -100,10 +120,17 @@ class Scheduler:
             domain = urlparse(url).netloc
             state = self._domains[domain]
 
+            # Use robots.txt Crawl-delay if available, else default
+            delay = (
+                state.crawl_delay
+                if state.crawl_delay is not None
+                else self._politeness_delay
+            )
+
             # Enforce politeness delay
             elapsed = time.monotonic() - state.last_request_at
-            if elapsed < self._politeness_delay:
-                wait = self._politeness_delay - elapsed
+            if elapsed < delay:
+                wait = delay - elapsed
                 await asyncio.sleep(wait)
 
             # Check hourly rate limit (0 = unlimited)

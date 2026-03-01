@@ -24,7 +24,8 @@ mobile terminal apps (Termux, Blink, etc.), and low-spec server environments.
 │  │ State:  🟢 Running   │  │ RAM:  ██████░░░░  62%    │  │
 │  │ Uptime: 3d 14h 22m  │  │ Disk: ████████░░  81%    │  │
 │  │ Version: 0.1.0      │  │ Net↑: 2.1/5.0 Mbps       │  │
-│  │ Data dir: ~/.info... │  │ Net↓: 4.3/10.0 Mbps      │  │
+│  │ GitHub:  user@e...   │  │ Net↓: 4.3/10.0 Mbps      │  │
+│  │ Data dir: ~/.info... │  │                           │  │
 │  └──────────────────────┘  └──────────────────────────┘  │
 │                                                          │
 │  ┌─ Activity (last 1h) ──────────────────────────────┐  │
@@ -44,6 +45,8 @@ mobile terminal apps (Termux, Blink, etc.), and low-spec server environments.
 ```
 
 > **Implementation Notes**: NodeInfoPanel shows Data dir instead of Peers.
+> GitHub email is auto-detected from `git config user.email` and shown if available;
+> displayed as `not connected` otherwise. The value is resolved once and cached.
 > ResourcePanel displays CPU/RAM when `psutil` is installed, N/A otherwise.
 > Resource bar colors auto-switch based on usage (≥90% red, ≥70% yellow).
 

@@ -319,6 +319,35 @@ class LocalStore:
         row = self._conn.execute("SELECT COUNT(*) as count FROM documents").fetchone()
         return {"document_count": row["count"] if row else 0}
 
+    # SQL expression to extract domain from a URL column.
+    _DOMAIN_SQL = """SUBSTR(
+        url, INSTR(url, '://') + 3,
+        CASE WHEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') > 0
+             THEN INSTR(SUBSTR(url, INSTR(url, '://') + 3), '/') - 1
+             ELSE LENGTH(url)
+        END
+    )"""
+
+    def get_top_domains(self, limit: int = 7) -> list[tuple[str, int]]:
+        """Return top domains by document count.
+
+        Returns:
+            List of (domain, count) tuples, ordered by count descending.
+        """
+        rows = self._conn.execute(
+            f"SELECT {self._DOMAIN_SQL} AS domain, COUNT(*) AS cnt "
+            "FROM documents GROUP BY domain ORDER BY cnt DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [(r["domain"], r["cnt"]) for r in rows]
+
+    def get_domain_count(self) -> int:
+        """Return the number of distinct domains in the index."""
+        row = self._conn.execute(
+            f"SELECT COUNT(DISTINCT {self._DOMAIN_SQL}) AS cnt FROM documents",
+        ).fetchone()
+        return row["cnt"] if row else 0
+
     def export_documents(self) -> list[dict[str, object]]:
         """Export all documents as a list of dicts (for snapshot/backup).
 

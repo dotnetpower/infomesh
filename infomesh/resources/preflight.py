@@ -40,7 +40,7 @@ CONNECTIVITY_TARGETS: list[tuple[str, int]] = [
     ("1.1.1.1", 443),
 ]
 # Socket connect timeout (seconds)
-CONNECT_TIMEOUT = 5.0
+CONNECT_TIMEOUT = 3.0
 
 
 class IssueSeverity(StrEnum):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.timer import Timer
@@ -12,6 +14,22 @@ from infomesh.config import Config
 from infomesh.dashboard.data_cache import DashboardDataCache
 from infomesh.dashboard.widgets.bar_chart import BarChart, BarItem
 from infomesh.dashboard.widgets.live_log import LiveLog
+
+
+def _fmt_elapsed(epoch: float) -> str:
+    """Format time elapsed since *epoch* as a human-readable string."""
+    if epoch <= 0:
+        return "never"
+    delta = time.time() - epoch
+    if delta < 0:
+        return "just now"
+    if delta < 60:
+        return f"{int(delta)}s ago"
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    return f"{int(delta // 86400)}d ago"
 
 
 class CrawlStatsPanel(Static):
@@ -27,37 +45,43 @@ class CrawlStatsPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__("", **kwargs)  # type: ignore[arg-type]
         self._config = config
-        self._active_workers = 0
-        self._queue_size = 0
+        self._total_pages = 0
         self._pages_per_hour = 0
-        self._error_rate = 0.0
+        self._domain_count = 0
+        self._last_crawl_at = 0.0
+        self._countdown = 0
 
     def on_mount(self) -> None:
-        self._update()
+        self._refresh_content()
 
     def update_stats(
         self,
-        active_workers: int = 0,
-        queue_size: int = 0,
+        total_pages: int = 0,
         pages_per_hour: int = 0,
-        error_rate: float = 0.0,
+        domain_count: int = 0,
+        last_crawl_at: float = 0.0,
+        countdown: int = 0,
     ) -> None:
-        self._active_workers = active_workers
-        self._queue_size = queue_size
+        self._total_pages = total_pages
         self._pages_per_hour = pages_per_hour
-        self._error_rate = error_rate
-        self._update()
+        self._domain_count = domain_count
+        self._last_crawl_at = last_crawl_at
+        self._countdown = countdown
+        self._refresh_content()
 
-    def _update(self) -> None:
-        max_workers = self._config.crawl.max_concurrent
+    def _refresh_content(self) -> None:
+        last_str = _fmt_elapsed(self._last_crawl_at)
+        refresh_str = (
+            f"  [dim]↻ {self._countdown}s[/dim]" if self._countdown > 0 else ""
+        )
         text = (
-            f"[bold]Crawl Workers[/bold]\n"
-            f"  Workers: {self._active_workers}/{max_workers} active    "
-            f"Rate: {self._pages_per_hour} pages/hr\n"
-            f"  Queue:   {self._queue_size} pending     "
-            f"Errors: {self._error_rate:.1f}%"
+            f"[bold]Crawl Stats[/bold]{refresh_str}\n"
+            f"  Pages: {self._total_pages:,}    "
+            f"Rate: {self._pages_per_hour:,} pages/hr\n"
+            f"  Domains: {self._domain_count:,}    "
+            f"Last crawl: {last_str}"
         )
         self.update(text)
 
@@ -107,37 +131,15 @@ class TopDomainsPanel(Widget):
                     compression_enabled=self._config.storage.compression_enabled,
                     compression_level=self._config.storage.compression_level,
                 )
-                rows = store._conn.execute(
-                    """SELECT
-                           SUBSTR(
-                               url,
-                               INSTR(url, '://') + 3,
-                               CASE
-                                   WHEN INSTR(
-                                       SUBSTR(url, INSTR(url, '://') + 3),
-                                       '/'
-                                   ) > 0
-                                   THEN INSTR(
-                                       SUBSTR(url, INSTR(url, '://') + 3),
-                                       '/'
-                                   ) - 1
-                                   ELSE LENGTH(url)
-                               END
-                           ) AS domain,
-                           COUNT(*) as cnt
-                       FROM documents
-                       GROUP BY domain
-                       ORDER BY cnt DESC
-                       LIMIT 7"""
-                ).fetchall()
+                top_domains = store.get_top_domains(limit=7)
                 items = [
                     BarItem(
-                        label=row[0][:20],
-                        value=float(row[1]),
+                        label=d[:20],
+                        value=float(c),
                         color=colors[i % len(colors)],
                         suffix=" pages",
                     )
-                    for i, row in enumerate(rows)
+                    for i, (d, c) in enumerate(top_domains)
                 ]
                 store.close()
 
@@ -155,6 +157,10 @@ class CrawlPane(Widget):
     }
     """
 
+    # Interval for DB refresh (seconds). Tick runs faster for countdown.
+    _REFRESH_INTERVAL = 5.0
+    _TICK_INTERVAL = 1.0
+
     def __init__(
         self,
         config: Config,
@@ -166,6 +172,7 @@ class CrawlPane(Widget):
         self._config = config
         self._data_cache = data_cache
         self._refresh_timer: Timer | None = None
+        self._last_refresh: float = 0.0
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -177,7 +184,7 @@ class CrawlPane(Widget):
             yield LiveLog(id="crawl-feed")
 
     def on_mount(self) -> None:
-        self._refresh_timer = self.set_interval(0.5, self._tick)
+        self._refresh_timer = self.set_interval(self._TICK_INTERVAL, self._tick)
         self._load_initial()
 
     def _load_initial(self) -> None:
@@ -187,19 +194,70 @@ class CrawlPane(Widget):
         with contextlib.suppress(Exception):
             self.query_one("#top-domains", TopDomainsPanel).refresh_data()
 
+        self._refresh_from_db()
+
         try:
             log = self.query_one("#crawl-feed", LiveLog)
             log.log_event("Crawl feed started", style="bold cyan")
         except Exception:  # noqa: BLE001
             pass
 
-    def _tick(self) -> None:
-        """Periodic refresh."""
+    def _refresh_from_db(self) -> None:
+        """Refresh crawl stats from the data cache / DB."""
         import contextlib
+
+        self._last_refresh = time.monotonic()
 
         with contextlib.suppress(Exception):
             self.query_one("#top-domains", TopDomainsPanel).refresh_data()
 
+        try:
+            panel = self.query_one("#crawl-stats", CrawlStatsPanel)
+            if self._data_cache is not None:
+                stats = self._data_cache.get_stats()
+                panel.update_stats(
+                    total_pages=stats.document_count,
+                    pages_per_hour=stats.pages_last_hour,
+                    domain_count=stats.domain_count,
+                    last_crawl_at=stats.last_crawl_at,
+                    countdown=int(self._REFRESH_INTERVAL),
+                )
+            else:
+                # Fallback: direct DB query
+                with contextlib.suppress(Exception):
+                    from infomesh.index.local_store import LocalStore
+
+                    store = LocalStore(
+                        db_path=self._config.index.db_path,
+                        compression_enabled=self._config.storage.compression_enabled,
+                        compression_level=self._config.storage.compression_level,
+                    )
+                    stats = store.get_stats()
+                    total = stats["document_count"]
+                    panel.update_stats(
+                        total_pages=total,
+                        countdown=int(self._REFRESH_INTERVAL),
+                    )
+                    store.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _tick(self) -> None:
+        """Periodic tick — refreshes DB data on interval, updates countdown."""
+        import contextlib
+
+        elapsed = time.monotonic() - self._last_refresh
+        remaining = max(0, int(self._REFRESH_INTERVAL - elapsed))
+
+        if elapsed >= self._REFRESH_INTERVAL:
+            self._refresh_from_db()
+        else:
+            # Just update countdown on CrawlStatsPanel
+            with contextlib.suppress(Exception):
+                self.query_one("#crawl-stats", CrawlStatsPanel).update_stats(
+                    countdown=remaining
+                )
+
     def refresh_data(self) -> None:
         """Manual refresh."""
-        self._tick()
+        self._refresh_from_db()

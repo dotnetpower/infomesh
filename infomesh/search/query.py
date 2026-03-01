@@ -250,7 +250,7 @@ async def search_distributed(
     start = time.monotonic()
 
     # 1. Local search
-    _sanitize_fts_query(query)
+    query = _sanitize_fts_query(query)
     local_results = search_local(
         store,
         query,

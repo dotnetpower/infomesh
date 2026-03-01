@@ -66,12 +66,16 @@ def _create_app(
 
     # Initialize all components via service layer
     ctx = AppContext(config)
-    store = ctx.store
-    vector_store = ctx.vector_store
-    worker = ctx.worker
-    scheduler = ctx.scheduler
-    link_graph = ctx.link_graph
-    ledger = ctx.ledger
+    try:
+        store = ctx.store
+        vector_store = ctx.vector_store
+        worker = ctx.worker
+        scheduler = ctx.scheduler
+        link_graph = ctx.link_graph
+        ledger = ctx.ledger
+    except Exception:
+        ctx.close()
+        raise
 
     @app.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
     async def list_tools() -> list[Tool]:
@@ -161,6 +165,16 @@ def _create_app(
                             ),
                             "default": 0,
                         },
+                        "force": {
+                            "type": "boolean",
+                            "description": (
+                                "Force re-crawl even if the URL "
+                                "was previously crawled. Useful "
+                                "for refreshing content or "
+                                "discovering new child links."
+                            ),
+                            "default": False,
+                        },
                     },
                     "required": ["url"],
                 },
@@ -237,6 +251,19 @@ def _create_app(
             case "fetch_page":
                 url = arguments["url"]
 
+                if worker is None:
+                    return [
+                        TextContent(
+                            type="text",
+                            text=(
+                                "Error: fetch_page requires"
+                                " a crawler worker."
+                                " This node is not configured"
+                                " for crawling."
+                            ),
+                        )
+                    ]
+
                 # SSRF protection
                 try:
                     validate_url(url)
@@ -304,6 +331,20 @@ def _create_app(
             case "crawl_url":
                 url = arguments["url"]
                 depth = min(arguments.get("depth", 0), config.crawl.max_depth)
+                force = bool(arguments.get("force", False))
+
+                if worker is None:
+                    return [
+                        TextContent(
+                            type="text",
+                            text=(
+                                "Error: crawl_url requires"
+                                " a crawler worker."
+                                " This node is not configured"
+                                " for crawling."
+                            ),
+                        )
+                    ]
 
                 # SSRF protection
                 try:
@@ -323,6 +364,7 @@ def _create_app(
                     vector_store=vector_store,
                     link_graph=link_graph,
                     depth=depth,
+                    force=force,
                 )
                 if ci.success:
                     return [
@@ -415,7 +457,8 @@ def _create_app(
                             f"{vec_info}"
                             f"{link_info}"
                             f"{credit_info}"
-                            f"Pending crawl URLs: {scheduler.pending_count}\n"  # type: ignore[union-attr]
+                            f"Pending crawl URLs: "
+                            f"{scheduler.pending_count if scheduler else 0}\n"
                             f"Ranking: BM25 + freshness + trust + authority\n"
                             f"{p2p_info}"
                         ),

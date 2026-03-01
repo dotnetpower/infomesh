@@ -788,6 +788,8 @@ def _auto_open_wsl(port: int) -> tuple[bool, str]:
         [ps, "-NoProfile", "-Command", fw_cmd],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     fw_ok = False
@@ -815,6 +817,8 @@ def _auto_open_wsl(port: int) -> tuple[bool, str]:
         [ps, "-NoProfile", "-Command", proxy_cmd],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=15,
     )
     proxy_ok = False
@@ -960,8 +964,91 @@ def _get_wsl_manual_instructions(port: int) -> str:
     )
 
 
+def _wsl_firewall_exists(port: int) -> bool:
+    """Check if a Windows Firewall rule for *port* already exists."""
+    ps = shutil.which("powershell.exe")
+    if not ps:
+        return False
+    rule_name = f"InfoMesh-P2P-{port}"
+    try:
+        result = subprocess.run(
+            [
+                ps,
+                "-NoProfile",
+                "-Command",
+                f"Get-NetFirewallRule -DisplayName '{rule_name}'"
+                f" -ErrorAction SilentlyContinue"
+                f" | Select-Object -ExpandProperty Enabled",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        return result.returncode == 0 and result.stdout.strip() != ""
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _wsl_portproxy_target(port: int) -> str | None:
+    """Return the current portproxy connect-address for *port*, or None."""
+    ps = shutil.which("powershell.exe")
+    if not ps:
+        return None
+    try:
+        result = subprocess.run(
+            [ps, "-NoProfile", "-Command", "netsh interface portproxy show v4tov4"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            # Expected columns: listen-addr listen-port connect-addr connect-port
+            if len(parts) >= 4 and parts[1] == str(port):
+                return parts[2]
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def _wsl_update_portproxy(port: int, wsl_ip: str) -> bool:
+    """Silently update the portproxy connect-address to *wsl_ip*."""
+    ps = shutil.which("powershell.exe")
+    if not ps:
+        return False
+    proxy_cmd = (
+        f"netsh interface portproxy set v4tov4 "
+        f"listenport={port} listenaddress=0.0.0.0 "
+        f"connectport={port} connectaddress={wsl_ip}"
+    )
+    try:
+        result = subprocess.run(
+            [ps, "-NoProfile", "-Command", proxy_cmd],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def _check_port_wsl(port: int) -> bool:
-    """WSL-specific port check and auto-fix flow."""
+    """WSL-specific port check and auto-fix flow.
+
+    Checks whether the Windows Firewall rule and port proxy are already
+    configured.  Only prompts the user when something is missing.
+    If the port proxy exists but points to a stale WSL2 IP, it is
+    silently updated.
+    """
     wsl_ip = _get_wsl_ip()
     host_ip = _get_wsl_host_ip()
 
@@ -970,6 +1057,42 @@ def _check_port_wsl(port: int) -> bool:
         click.echo(f"    WSL2 IP: {wsl_ip}")
     if host_ip:
         click.echo(f"    Windows host IP: {host_ip}")
+
+    # ── Check existing configuration ──────────────────────────────
+    fw_ok = _wsl_firewall_exists(port)
+    proxy_target = _wsl_portproxy_target(port)
+    proxy_ok = proxy_target is not None
+
+    if fw_ok and proxy_ok:
+        # Both exist — check if port proxy IP is current
+        if proxy_target == wsl_ip:
+            click.secho(
+                f"  ✓ Firewall rule + port proxy already configured"
+                f" (→ {wsl_ip}:{port})",
+                fg="green",
+            )
+            return True
+        # Stale IP — silently update
+        click.echo(
+            f"    Port proxy target is stale ({proxy_target} → {wsl_ip}), updating..."
+        )
+        if _wsl_update_portproxy(port, wsl_ip):
+            click.secho(
+                f"  ✓ Port proxy updated: 0.0.0.0:{port} → {wsl_ip}:{port}",
+                fg="green",
+            )
+            return True
+        click.secho(
+            "  ⚠ Could not update port proxy (need Administrator?).",
+            fg="yellow",
+        )
+        # Fall through to manual instructions
+    elif fw_ok and not proxy_ok:
+        click.echo("    Firewall rule exists, but port proxy is missing.")
+    elif not fw_ok and proxy_ok:
+        click.echo("    Port proxy exists, but firewall rule is missing.")
+
+    # ── Something is missing — prompt for auto-fix ────────────────
     click.echo()
     click.secho(
         "  ⚠ WSL2 uses NAT — Windows Firewall + port proxy required for peering.",

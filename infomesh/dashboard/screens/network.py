@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.timer import Timer
@@ -9,6 +11,7 @@ from textual.widget import Widget
 from textual.widgets import DataTable, Static
 
 from infomesh.config import Config
+from infomesh.dashboard.utils import read_p2p_status
 from infomesh.dashboard.widgets.sparkline import SparklineChart
 
 
@@ -25,32 +28,53 @@ class P2PStatusPanel(Static):
     """
 
     def __init__(self, config: Config, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+        super().__init__("", **kwargs)  # type: ignore[arg-type]
         self._config = config
+        self._countdown = 0
 
     def on_mount(self) -> None:
-        self._update()
+        self._refresh_content({})
 
-    def _update(self) -> None:
+    def update_status(self, data: dict[str, object], countdown: int = 0) -> None:
+        """Public API: update panel with new status data and countdown."""
+        self._countdown = countdown
+        self._refresh_content(data)
+
+    def _refresh_content(self, data: dict[str, object]) -> None:
         port = self._config.node.listen_port
         bootstrap = len(self._config.network.bootstrap_nodes)
 
-        # Try to get live node info
-        state = "🔴 Offline"
-        peers = 0
+        raw_state = str(data.get("state", "stopped"))
+        peers = int(data.get("peers", 0))
+        peer_id = str(data.get("peer_id", ""))
 
+        match raw_state:
+            case "running":
+                state = "🟢 Online"
+            case "starting":
+                state = "🟡 Starting"
+            case "stopping":
+                state = "🟡 Stopping"
+            case "error":
+                err = data.get("error", "")
+                state = f"🔴 Error: {err}" if err else "🔴 Error"
+            case _:
+                state = "🔴 Offline"
+
+        short_id = f"{peer_id[:16]}..." if len(peer_id) > 16 else (peer_id or "—")
+        refresh_str = (
+            f"  [dim]↻ {self._countdown}s[/dim]" if self._countdown > 0 else ""
+        )
         text = (
-            f"[bold]P2P Status[/bold]\n"
+            f"[bold]P2P Status[/bold]{refresh_str}\n"
             f"  State:      {state}\n"
+            f"  Node ID:    {short_id}\n"
             f"  Peers:      {peers} connected\n"
             f"  Bootstrap:  {bootstrap} nodes configured\n"
             f"  Port:       {port} TCP\n"
             f"  Replication: {self._config.network.replication_factor}x"
         )
         self.update(text)
-
-    def refresh_data(self) -> None:
-        self._update()
 
 
 class DHTPanel(Static):
@@ -66,36 +90,31 @@ class DHTPanel(Static):
     """
 
     def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
-        self._keys_stored = 0
-        self._lookups_hr = 0
-        self._publications = 0
+        super().__init__("", **kwargs)  # type: ignore[arg-type]
 
     def on_mount(self) -> None:
-        self._update()
+        self._refresh_content({})
 
-    def update_stats(
-        self,
-        keys_stored: int = 0,
-        lookups_hr: int = 0,
-        publications: int = 0,
-    ) -> None:
-        self._keys_stored = keys_stored
-        self._lookups_hr = lookups_hr
-        self._publications = publications
-        self._update()
+    def update_data(self, dht_data: dict[str, int]) -> None:
+        """Public API: update DHT panel with new data."""
+        self._refresh_content(dht_data)
 
-    def _update(self) -> None:
-        text = (
-            f"[bold]DHT[/bold]\n"
-            f"  Keys stored:    {self._keys_stored:,}\n"
-            f"  Lookups/hr:     {self._lookups_hr:,}\n"
-            f"  Publications:   {self._publications:,}"
-        )
+    def _refresh_content(self, dht_data: dict[str, int]) -> None:
+        keys = dht_data.get("keys_stored", 0)
+        published = dht_data.get("keys_published", 0)
+        gets = dht_data.get("gets_performed", 0)
+        puts = dht_data.get("puts_performed", 0)
+        if not any([keys, published, gets, puts]):
+            text = "[bold]DHT[/bold]\n\n  [dim]Node offline — no DHT data[/dim]"
+        else:
+            text = (
+                f"[bold]DHT[/bold]\n"
+                f"  Keys stored:    {keys:,}\n"
+                f"  Published:      {published:,}\n"
+                f"  GET ops:        {gets:,}\n"
+                f"  PUT ops:        {puts:,}"
+            )
         self.update(text)
-
-    def refresh_data(self) -> None:
-        self._update()
 
 
 class PeerTable(Widget):
@@ -112,38 +131,20 @@ class PeerTable(Widget):
     def compose(self) -> ComposeResult:
         yield Static("[bold]Connected Peers[/bold]", classes="panel-title")
         table: DataTable[str] = DataTable(id="peers-table")
-        table.add_columns("Peer ID", "Latency", "Trust", "State")
+        table.add_columns("Peer ID", "State")
         yield table
 
-    def set_peers(self, peers: list[dict[str, object]]) -> None:
-        """Update the peer table with current data."""
+    def set_peers(self, peer_ids: list[str]) -> None:
+        """Update the peer table with connected peer IDs."""
         try:
             table = self.query_one("#peers-table", DataTable)
             table.clear()
-            for peer in peers:
-                peer_id = str(peer.get("peer_id", ""))
-                short_id = peer_id[:12] + "..." if len(peer_id) > 12 else peer_id
-                latency = peer.get("latency_ms", "—")
-                trust = peer.get("trust", "—")
-                state = peer.get("state", "unknown")
-
-                latency_str = (
-                    f"{latency}ms"
-                    if isinstance(latency, (int, float))
-                    else str(latency)
-                )
-                trust_str = f"{trust:.2f}" if isinstance(trust, float) else str(trust)
-
-                table.add_row(short_id, latency_str, trust_str, str(state))
-        except Exception:  # noqa: BLE001
-            pass
-
-    def refresh_data(self) -> None:
-        """Clear and show empty state when no peers available."""
-        try:
-            table = self.query_one("#peers-table", DataTable)
-            if table.row_count == 0:
-                pass  # Table stays empty, which is fine
+            if not peer_ids:
+                table.add_row("No peers connected", "—")
+                return
+            for pid in peer_ids:
+                short_id = f"{pid[:16]}...{pid[-6:]}" if len(pid) > 24 else pid
+                table.add_row(short_id, "connected")
         except Exception:  # noqa: BLE001
             pass
 
@@ -163,6 +164,9 @@ class BandwidthPanel(Widget):
     def __init__(self, config: Config, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
+        self._prev_up: int = 0
+        self._prev_dn: int = 0
+        self._prev_time: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield Static("[bold]Bandwidth[/bold]", classes="panel-title")
@@ -183,8 +187,38 @@ class BandwidthPanel(Widget):
                 classes="bw-value",
             )
 
-    def update_bandwidth(self, upload_mbps: float, download_mbps: float) -> None:
-        """Update bandwidth display and sparklines."""
+    def update_from_status(self, bw_data: dict[str, int]) -> None:
+        """Calculate Mbps from cumulative byte counters and update display."""
+        now = time.monotonic()
+        up_bytes = int(bw_data.get("upload_bytes", 0))
+        dn_bytes = int(bw_data.get("download_bytes", 0))
+
+        upload_mbps = 0.0
+        download_mbps = 0.0
+
+        if self._prev_time > 0:
+            dt = now - self._prev_time
+            if dt > 0:
+                up_delta = max(0, up_bytes - self._prev_up)
+                dn_delta = max(0, dn_bytes - self._prev_dn)
+                # bytes → megabits: * 8 / 1_000_000
+                upload_mbps = (up_delta * 8) / (dt * 1_000_000)
+                download_mbps = (dn_delta * 8) / (dt * 1_000_000)
+        else:
+            # First sample — record baseline, don't display zeros
+            self._prev_up = up_bytes
+            self._prev_dn = dn_bytes
+            self._prev_time = now
+            return
+
+        self._prev_up = up_bytes
+        self._prev_dn = dn_bytes
+        self._prev_time = now
+
+        self._update_display(upload_mbps, download_mbps)
+
+    def _update_display(self, upload_mbps: float, download_mbps: float) -> None:
+        """Push values to sparklines and labels."""
         try:
             up_spark = self.query_one("#bw-upload-spark", SparklineChart)
             up_spark.push_value(upload_mbps)
@@ -193,10 +227,10 @@ class BandwidthPanel(Widget):
             up_limit = self._config.network.upload_limit_mbps
             dn_limit = self._config.network.download_limit_mbps
             self.query_one("#bw-upload-val", Static).update(
-                f"{upload_mbps:.1f}/{up_limit:.1f} Mbps"
+                f"{upload_mbps:.2f}/{up_limit:.1f} Mbps"
             )
             self.query_one("#bw-download-val", Static).update(
-                f"{download_mbps:.1f}/{dn_limit:.1f} Mbps"
+                f"{download_mbps:.2f}/{dn_limit:.1f} Mbps"
             )
         except Exception:  # noqa: BLE001
             pass
@@ -211,10 +245,15 @@ class NetworkPane(Widget):
     }
     """
 
+    _REFRESH_INTERVAL = 5.0
+    _TICK_INTERVAL = 1.0
+
     def __init__(self, config: Config, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._refresh_timer: Timer | None = None
+        self._last_refresh: float = 0.0
+        self._last_data: dict[str, object] = {}
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -225,15 +264,58 @@ class NetworkPane(Widget):
             yield BandwidthPanel(self._config, id="bandwidth")
 
     def on_mount(self) -> None:
-        self._refresh_timer = self.set_interval(2.0, self._tick)
+        self._refresh_timer = self.set_interval(self._TICK_INTERVAL, self._tick)
+        self._refresh_from_status()
 
-    def _tick(self) -> None:
-        """Periodic refresh."""
+    def _refresh_from_status(self) -> None:
+        """Read p2p_status.json and distribute data to all panels."""
         import contextlib
 
+        self._last_refresh = time.monotonic()
+        data = read_p2p_status(self._config)
+        self._last_data = data
+        countdown = int(self._REFRESH_INTERVAL)
+
+        # P2P Status
         with contextlib.suppress(Exception):
-            self.query_one("#p2p-status", P2PStatusPanel).refresh_data()
+            self.query_one("#p2p-status", P2PStatusPanel).update_status(
+                data, countdown=countdown
+            )
+
+        # DHT
+        with contextlib.suppress(Exception):
+            dht_data = data.get("dht", {})
+            if isinstance(dht_data, dict):
+                self.query_one("#dht-status", DHTPanel).update_data(dht_data)
+
+        # Peer Table
+        with contextlib.suppress(Exception):
+            peer_ids = data.get("peer_ids", [])
+            if isinstance(peer_ids, list):
+                self.query_one("#peer-table", PeerTable).set_peers(peer_ids)
+
+        # Bandwidth
+        with contextlib.suppress(Exception):
+            bw_data = data.get("bandwidth", {})
+            if isinstance(bw_data, dict):
+                self.query_one("#bandwidth", BandwidthPanel).update_from_status(bw_data)
+
+    def _tick(self) -> None:
+        """Periodic tick — refresh from file on interval, countdown otherwise."""
+        import contextlib
+
+        elapsed = time.monotonic() - self._last_refresh
+        remaining = max(0, int(self._REFRESH_INTERVAL - elapsed))
+
+        if elapsed >= self._REFRESH_INTERVAL:
+            self._refresh_from_status()
+        else:
+            # Update countdown only
+            with contextlib.suppress(Exception):
+                self.query_one("#p2p-status", P2PStatusPanel).update_status(
+                    self._last_data, countdown=remaining
+                )
 
     def refresh_data(self) -> None:
         """Manual refresh."""
-        self._tick()
+        self._refresh_from_status()

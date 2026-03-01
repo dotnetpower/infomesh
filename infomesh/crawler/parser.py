@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
@@ -52,20 +53,11 @@ def extract_content(html: str, url: str, *, raw_hash: str = "") -> ParsedPage | 
             logger.debug("parse_empty", url=url)
             return None
 
-        # Extract metadata
-        metadata = trafilatura.extract(
-            html,
-            url=url,
-            output_format="xml",
-            include_links=False,
-        )
-
+        # Extract title from trafilatura metadata (avoids a second extract call)
         title = ""
-        if metadata:
-            # Try to extract title from XML output
-            title_match = re.search(r'title="([^"]*)"', metadata)
-            if title_match:
-                title = title_match.group(1)
+        traf_meta = trafilatura.extract_metadata(html, default_url=url)
+        if traf_meta and traf_meta.title:
+            title = traf_meta.title
 
         if not title:
             # Fallback: extract from HTML <title> tag
@@ -106,6 +98,17 @@ def extract_content(html: str, url: str, *, raw_hash: str = "") -> ParsedPage | 
 # Pattern for valid HTTP(S) links
 _HREF_RE = re.compile(r'<a\s[^>]*href=["\']([^"\'#][^"\']*)["\']', re.IGNORECASE)
 
+# Pattern for <link rel="canonical" href="...">
+_CANONICAL_RE = re.compile(
+    r'<link\s[^>]*rel=["\']canonical["\'][^>]*href=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+# Alternative order: href before rel
+_CANONICAL_RE_ALT = re.compile(
+    r'<link\s[^>]*href=["\']([^"\']+)["\'][^>]*rel=["\']canonical["\']',
+    re.IGNORECASE,
+)
+
 # Skip these extensions — not crawlable content
 _SKIP_EXTENSIONS = frozenset(
     {
@@ -132,6 +135,35 @@ _SKIP_EXTENSIONS = frozenset(
         ".woff2",
     }
 )
+
+
+def extract_canonical(html: str, page_url: str) -> str | None:
+    """Extract the canonical URL from ``<link rel="canonical">``.
+
+    Args:
+        html: Raw HTML string.
+        page_url: The URL of the page (used to resolve relative canonicals).
+
+    Returns:
+        Absolute canonical URL, or None if not found.
+    """
+    match = _CANONICAL_RE.search(html) or _CANONICAL_RE_ALT.search(html)
+    if not match:
+        return None
+
+    href = match.group(1).strip()
+    if not href:
+        return None
+
+    # Resolve relative canonical URLs
+    canonical = urljoin(page_url, href)
+    parsed = urlparse(canonical)
+
+    # Only accept HTTP(S) canonical URLs
+    if parsed.scheme not in ("http", "https"):
+        return None
+
+    return canonical
 
 
 def extract_links(html: str, base_url: str) -> list[str]:
@@ -167,7 +199,8 @@ def extract_links(html: str, base_url: str) -> list[str]:
 
         # Skip binary file extensions
         path_lower = parsed.path.lower()
-        if any(path_lower.endswith(ext) for ext in _SKIP_EXTENSIONS):
+        _, ext = os.path.splitext(path_lower)
+        if ext in _SKIP_EXTENSIONS:
             continue
 
         # Strip fragment

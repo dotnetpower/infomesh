@@ -186,20 +186,27 @@ class Replicator:
     async def _find_replica_peers(self, url: str) -> list[str]:
         """Find N peers closest to hash(url) for replication.
 
-        Uses the DHT's built-in peer routing to find the closest peers
-        to the URL's hash.
+        Uses XOR distance between the DHT key of the URL and each
+        peer's ID (interpreted as an integer) to select the closest
+        peers for replica placement.
 
         Returns:
             List of peer ID strings (may be fewer than replication_factor).
         """
-        # Use connected peers, ideally closest to hash(url) via XOR distance
-        _dht_key = url_to_dht_key(url)  # TODO: use for XOR-distance sorting
+        import hashlib
+
+        dht_key = url_to_dht_key(url)
+        key_int = int(hashlib.sha256(dht_key.encode()).hexdigest(), 16)
         connected_peers = self._host.get_connected_peers()  # type: ignore[attr-defined]
 
-        # Select up to N peers (excluding self)
+        # Select up to N peers (excluding self), sorted by XOR distance
         candidates = [str(pid) for pid in connected_peers if str(pid) != self._peer_id]
 
-        # Return up to replication_factor peers
+        def _xor_distance(peer_id_str: str) -> int:
+            peer_int = int(hashlib.sha256(peer_id_str.encode()).hexdigest(), 16)
+            return key_int ^ peer_int
+
+        candidates.sort(key=_xor_distance)
         return candidates[: self._replication_factor]
 
     async def _send_replicate_request(

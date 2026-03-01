@@ -140,8 +140,6 @@ class OllamaBackend(LLMBackend):
         return str(resp.json()["response"])
 
     async def is_available(self) -> bool:
-        import httpx
-
         try:
             client = await self._get_client()
             resp = await client.get(f"{self._base_url}/api/tags")

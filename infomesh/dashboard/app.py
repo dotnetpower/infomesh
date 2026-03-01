@@ -7,6 +7,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Label, TabbedContent, TabPane
@@ -25,11 +26,49 @@ from infomesh.dashboard.screens.settings import SettingsPane
 # CSS path relative to this module
 _CSS_PATH = Path(__file__).parent / "dashboard.tcss"
 
-# BGM assets directory (project_root / assets / bgm)
-_BGM_DIR = Path(__file__).parent.parent.parent / "assets" / "bgm"
+# BGM assets directory (infomesh/assets/bgm — inside the package)
+_BGM_DIR = Path(__file__).parent.parent / "assets" / "bgm"
 _BGM_FILE = _BGM_DIR / "infomesh-bg-fade.mp3"
 _COIN_SFX = _BGM_DIR / "coin-street-fighter.mp3"
-_BGM_VOLUME = 50
+
+
+class DashboardCommandProvider(Provider):
+    """Command palette provider for InfoMesh dashboard actions."""
+
+    _COMMANDS: list[tuple[str, str, str]] = [
+        ("Overview", "Switch to Overview tab (1)", "app.tab_1"),
+        ("Crawl", "Switch to Crawl tab (2)", "app.tab_2"),
+        ("Search", "Switch to Search tab (3)", "app.tab_3"),
+        ("Network", "Switch to Network tab (4)", "app.tab_4"),
+        ("Credits", "Switch to Credits tab (5)", "app.tab_5"),
+        ("Settings", "Switch to Settings tab (6)", "app.tab_6"),
+        ("Refresh", "Refresh all panels (r)", "app.refresh"),
+        ("Toggle BGM", "Toggle background music (m)", "app.toggle_bgm"),
+        ("Help", "Show keyboard shortcuts (?)", "app.help"),
+        ("Exit", "Quit the dashboard (q)", "app.quit"),
+    ]
+
+    async def discover(self) -> Hits:
+        """Show all commands when the palette first opens."""
+        for name, help_text, action in self._COMMANDS:
+            yield DiscoveryHit(
+                display=name,
+                command=self.app.run_action(action),
+                help=help_text,
+            )
+
+    async def search(self, query: str) -> Hits:
+        """Yield commands matching the query."""
+        matcher = self.matcher(query)
+        for name, help_text, action in self._COMMANDS:
+            score = matcher.match(name)
+            if score > 0:
+                yield Hit(
+                    score=score,
+                    match_display=matcher.highlight(name),
+                    command=self.app.run_action(action),
+                    help=help_text,
+                )
 
 
 class QuitConfirmScreen(ModalScreen[str]):
@@ -65,6 +104,12 @@ class QuitConfirmScreen(ModalScreen[str]):
 
     #quit-buttons Button {
         margin: 0 1;
+        min-width: 24;
+    }
+
+    #btn-cancel {
+        min-width: 24;
+        border: tall $accent;
     }
     """
 
@@ -88,12 +133,20 @@ class QuitConfirmScreen(ModalScreen[str]):
             yield Label("[dim]Use Tab / Shift+Tab to move between buttons[/dim]")
             with Horizontal(id="quit-buttons"):
                 yield Button(
-                    "Dashboard Only",
+                    "Close Dashboard (keep node)",
                     variant="primary",
                     id="btn-dashboard-only",
                 )
-                yield Button("Stop All", variant="error", id="btn-stop-all")
-                yield Button("Cancel", id="btn-cancel")
+                yield Button(
+                    "Stop Node & Exit",
+                    variant="error",
+                    id="btn-stop-all",
+                )
+                yield Button(
+                    "✖ Cancel",
+                    variant="warning",
+                    id="btn-cancel",
+                )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-dashboard-only":
@@ -119,6 +172,7 @@ class DashboardApp(App[None]):
 
     CSS_PATH = _CSS_PATH
     THEME = "catppuccin-mocha"
+    COMMANDS = {DashboardCommandProvider}
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
@@ -148,7 +202,7 @@ class DashboardApp(App[None]):
         self._data_cache = DashboardDataCache(self.config, ttl=0.5)
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Header(icon="🌐")
         with TabbedContent(initial=self._initial_tab):
             with TabPane("Overview", id="overview"):
                 yield OverviewPane(self.config, data_cache=self._data_cache)
@@ -214,7 +268,14 @@ class DashboardApp(App[None]):
 
     def action_refresh(self) -> None:
         """Refresh all panes."""
-        for pane_type in (OverviewPane, CrawlPane, NetworkPane, CreditsPane):
+        for pane_type in (
+            OverviewPane,
+            CrawlPane,
+            SearchPane,
+            NetworkPane,
+            CreditsPane,
+            SettingsPane,
+        ):
             try:
                 pane = self.query_one(pane_type)
                 pane.refresh_data()  # type: ignore[attr-defined]
@@ -272,10 +333,18 @@ class DashboardApp(App[None]):
             timeout=5,
         )
 
-    def action_quit(self) -> None:  # type: ignore[override]
-        """Override quit to show confirmation when node is running."""
+    def on_unmount(self) -> None:
+        """Ensure BGM and data cache are cleaned up on any exit path."""
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        """Stop BGM player and close data cache (idempotent)."""
         self._bgm.stop()
         self._data_cache.close()
+
+    def action_quit(self) -> None:  # type: ignore[override]
+        """Override quit to show confirmation when node is running."""
+        self._cleanup()
         if self._node_pid is not None:
             self.push_screen(QuitConfirmScreen(), self._handle_quit_response)  # type: ignore[arg-type]
         else:
@@ -287,6 +356,28 @@ class DashboardApp(App[None]):
             return
         self.exit_action = result
         self.exit()
+
+
+def _reset_terminal() -> None:
+    """Reset terminal to sane state after TUI exit or crash.
+
+    Disables mouse tracking and restores normal terminal mode so that
+    partial ANSI escape sequences don't leak into the shell as commands.
+    """
+    import sys
+
+    if not sys.stdout.isatty():
+        return
+    # Disable SGR mouse tracking + normal mouse tracking + alt screen
+    sys.stdout.write(
+        "\x1b[?1006l"  # disable SGR extended mouse
+        "\x1b[?1003l"  # disable any-event mouse tracking
+        "\x1b[?1002l"  # disable button-event mouse tracking
+        "\x1b[?1000l"  # disable normal mouse tracking
+        "\x1b[?25h"  # show cursor
+        "\x1b[0m"  # reset attributes
+    )
+    sys.stdout.flush()
 
 
 def run_dashboard(
@@ -307,5 +398,12 @@ def run_dashboard(
         Exit action: ``"dashboard_only"`` or ``"stop_all"``.
     """
     app = DashboardApp(config=config, initial_tab=initial_tab, node_pid=node_pid)
-    app.run()
+    try:
+        app.run()
+    except Exception:
+        _reset_terminal()
+        raise
+    finally:
+        app._cleanup()
+        _reset_terminal()
     return app.exit_action

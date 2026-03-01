@@ -101,6 +101,7 @@ class DeduplicatorDB:
         import sqlite3
 
         self._conn = sqlite3.connect(db_path or ":memory:")
+        self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_urls (
                 url_hash TEXT PRIMARY KEY,
@@ -148,7 +149,9 @@ class DeduplicatorDB:
         matches = self._simhash_index.find_near_duplicates(fp, threshold=threshold)
         return len(matches) > 0
 
-    def mark_seen(self, url: str, text_hash: str, text: str = "") -> None:
+    def mark_seen(
+        self, url: str, text_hash: str, text: str = "", *, commit: bool = True
+    ) -> None:
         """Mark a URL and its content hash as seen.
 
         If *text* is provided, also computes and stores the SimHash fingerprint.
@@ -157,6 +160,8 @@ class DeduplicatorDB:
             url: Page URL.
             text_hash: SHA-256 content hash.
             text: Optional extracted text for SimHash indexing.
+            commit: If ``False``, skip the SQLite commit (caller must
+                commit later). Useful for batch inserts.
         """
         import time
 
@@ -173,16 +178,24 @@ class DeduplicatorDB:
             " VALUES (?, ?, ?, ?, ?)",
             (url_hash, normalized, text_hash, fp_signed, time.time()),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
         # Add to in-memory SimHash index (use url_hash as pseudo doc_id)
         if fp is not None:
-            self._simhash_index.add(hash(url_hash) & 0x7FFFFFFF, fp)
+            # Use first 4 bytes of url_hash (hex) for a stable 31-bit doc_id.
+            # hash() is non-deterministic across Python sessions (PYTHONHASHSEED).
+            doc_id = int(url_hash[:8], 16) & 0x7FFFFFFF
+            self._simhash_index.add(doc_id, fp)
 
     @property
     def simhash_index(self) -> SimHashIndex:
         """Access the in-memory SimHash index."""
         return self._simhash_index
+
+    def flush(self) -> None:
+        """Commit any pending database writes (for batch mode)."""
+        self._conn.commit()
 
     def close(self) -> None:
         """Close the database connection."""

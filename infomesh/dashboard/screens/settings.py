@@ -565,7 +565,7 @@ class SettingsPane(Widget):
 
             # Update dashboard data cache refresh interval
             if hasattr(app, "_data_cache"):
-                app._data_cache._ttl = new_config.dashboard.refresh_interval
+                app._data_cache.set_ttl(new_config.dashboard.refresh_interval)
         except Exception:  # noqa: BLE001
             pass
 

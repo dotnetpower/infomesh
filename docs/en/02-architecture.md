@@ -101,11 +101,16 @@ Workload distribution:
 Crawling rules:
 - Always strictly respect `robots.txt`
 - Default politeness: ≤1 request/second per domain
+- **Crawl-Delay**: Honors the `Crawl-delay` directive in robots.txt. Per-domain delay is applied automatically and capped at 60 seconds to prevent abuse.
+- **Sitemap discovery**: Extracts `Sitemap:` URLs from robots.txt and automatically schedules discovered URLs for crawling.
+- **Canonical tag**: Recognizes `<link rel="canonical">` in HTML. If a page declares a different canonical URL, the crawler skips indexing the current page and schedules the canonical URL instead — preventing duplicate content in the index.
+- **Retry with backoff**: Transient HTTP errors (5xx) and network failures trigger automatic retries (up to 2 retries with exponential backoff: 1s, 2s). SSRF-blocked URLs are never retried.
 - Content extraction: `trafilatura` primary, `BeautifulSoup` fallback
 - Storage: raw text + metadata (title, URL, crawl timestamp, language)
 - **Crawl lock**: Before crawling, publish `hash(url) = CRAWLING` to DHT to prevent multiple nodes crawling the same URL. Lock timeout: 5 minutes.
 - **SPA/JS rendering**: Most content is extractable from static HTML. For JavaScript-heavy pages, a `js_required` DHT tag triggers delegation to nodes with Playwright/headless browser capability. Phase 0 (MVP) focuses on static HTML only.
 - **Bandwidth limits**: Default ≤5 Mbps upload / 10 Mbps download for P2P traffic. Configurable via `~/.infomesh/config.toml`. Crawl concurrency: max 5 simultaneous connections per node (adjustable).
+- **Force re-crawl**: `crawl_url(url, force=True)` bypasses URL dedup to re-crawl previously visited pages. Useful for refreshing stale content or discovering new child links after depth limits were changed.
 
 ---
 
@@ -288,7 +293,7 @@ log_level = "info"                  # debug, info, warning, error
 [crawl]
 max_concurrent = 5                  # simultaneous HTTP connections
 politeness_delay = 1.0              # seconds between requests to same domain
-max_depth = 3                       # link-following depth limit
+max_depth = 0                       # 0 = unlimited (rate limits & dedup control breadth)
 
 [network]
 upload_limit_mbps = 5               # P2P upload bandwidth cap
@@ -331,7 +336,7 @@ infomesh search --local "query"     # Local-only search
 
 # Management
 infomesh config show                # Display current configuration
-infomesh config set crawl.max_depth 5
+infomesh config set crawl.max_depth 10  # set hard depth limit (0=unlimited)
 infomesh keys export                # Export keys for backup
 infomesh keys rotate                # Rotate node identity key
 

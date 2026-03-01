@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 
 import structlog
@@ -55,7 +56,7 @@ class CrawlConfig:
 
     max_concurrent: int = 5
     politeness_delay: float = 1.0  # seconds per domain
-    max_depth: int = 3
+    max_depth: int = 0  # 0 = unlimited (controlled by rate limits & dedup)
     urls_per_hour: int = 60
     pending_per_domain: int = 10
     user_agent: str = "InfoMesh/0.1 (+https://github.com/dotnetpower/infomesh)"
@@ -159,6 +160,9 @@ def _coerce(value: str, target_type: type) -> object:
         return float(value)
     if target_type is Path:
         return Path(value)
+    if target_type is list:
+        # Env var lists are comma-separated
+        return [item.strip() for item in value.split(",") if item.strip()]
     return value
 
 
@@ -167,7 +171,6 @@ _VALUE_CONSTRAINTS: dict[str, tuple[float, float]] = {
     "listen_port": (1, 65535),
     "max_concurrent": (1, 100),
     "politeness_delay": (0.1, 60.0),
-    "max_depth": (0, 10),
     "urls_per_hour": (1, 10000),
     "pending_per_domain": (1, 1000),
     "upload_limit_mbps": (0.1, 1000.0),
@@ -244,7 +247,7 @@ def _build_section[T](
 ) -> T:
     """Build a dataclass instance from TOML data + env overrides."""
     kwargs: dict[str, object] = {}
-    for f in cls.__dataclass_fields__.values():  # type: ignore[attr-defined]
+    for f in dataclass_fields(cls):  # type: ignore[arg-type]
         # TOML value
         raw = toml_section.get(f.name)
         # env override

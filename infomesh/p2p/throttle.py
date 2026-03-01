@@ -4,6 +4,11 @@ Uses a token-bucket algorithm to limit throughput per direction.
 Each direction (upload / download) gets its own ``BandwidthBucket`` that
 refills at the configured rate.
 
+**Important**: This module uses ``asyncio`` primitives (``asyncio.Lock``,
+``asyncio.sleep``).  It is designed for the asyncio-based crawl path,
+**not** for the trio-based P2P/libp2p event loop.  Do not ``await``
+throttle methods from within a trio task.
+
 Usage::
 
     throttle = BandwidthThrottle(upload_mbps=5.0, download_mbps=10.0)

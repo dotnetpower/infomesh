@@ -37,16 +37,20 @@ def search(query: str, limit: int, local: bool, vector: bool) -> None:
                 persist_dir=config.node.data_dir / "chroma",
                 model_name=config.index.embedding_model,
             )
-            hybrid = search_hybrid(store, vec_store, query, limit=limit)  # type: ignore[arg-type]
-            click.echo(format_hybrid_results(hybrid))
-            vec_store.close()
-            store.close()
+            try:
+                hybrid = search_hybrid(store, vec_store, query, limit=limit)  # type: ignore[arg-type]
+                click.echo(format_hybrid_results(hybrid))
+            finally:
+                vec_store.close()
+                store.close()
             return
         except ImportError:
             click.echo(
                 "Warning: chromadb not installed, falling back to keyword search."
             )
 
-    result = search_local(store, query, limit=limit)
-    click.echo(format_fts_results(result))
-    store.close()
+    try:
+        result = search_local(store, query, limit=limit)
+        click.echo(format_fts_results(result))
+    finally:
+        store.close()
