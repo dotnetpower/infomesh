@@ -39,6 +39,24 @@
 
 ---
 
+> [!NOTE]
+> **P2P Bootstrap Nodes — Coming Soon**
+> Public bootstrap node infrastructure is currently being set up. Until official bootstrap nodes are available, you can connect peers manually:
+> ```bash
+> # Add a peer's address to your bootstrap list
+> infomesh peer add /ip4/<IP>/tcp/4001/p2p/<PEER_ID>
+> # Test connectivity to configured bootstrap nodes
+> infomesh peer test
+> ```
+> Or configure directly in `~/.infomesh/config.toml`:
+> ```toml
+> [network]
+> bootstrap_nodes = ["/ip4/<IP>/tcp/4001/p2p/<PEER_ID>"]
+> ```
+> This will be resolved shortly. Local crawling, indexing, and MCP search work fully without P2P.
+
+---
+
 ## 💡 Why InfoMesh?
 
 ### The Problem
@@ -231,6 +249,29 @@ Your AI assistant can now search the web for free via MCP.
 ### From Source (Contributors / Developers)
 
 If you want to contribute code or run from source:
+
+#### System Prerequisites
+
+The P2P optional dependency (`libp2p`) includes C extensions (`fastecdsa`, `coincurve`, `pynacl`) that require native build tools.
+
+**Linux (Debian / Ubuntu):**
+
+```bash
+sudo apt-get update && sudo apt-get install -y build-essential python3-dev libgmp-dev
+```
+
+**macOS:**
+
+```bash
+brew install gmp
+# Xcode Command Line Tools are usually pre-installed
+```
+
+**Windows:** Use WSL2 (recommended) or install Visual Studio Build Tools + GMP.
+
+> **Note:** These system packages are only required for the `p2p` optional dependency. The base install (`uv sync`) does not need them.
+
+#### Clone & Run
 
 ```bash
 # Clone and install with dev dependencies
@@ -809,6 +850,7 @@ All core phases are **complete**. Current focus is on community growth and produ
 ### What's Next
 
 - 🌍 **Public bootstrap nodes** — volunteer-run seed nodes for easy onboarding
+  > ⚠️ **Note**: Public bootstrap node setup is currently in progress. Until official bootstrap nodes are available, you can connect peers manually using `infomesh peer add /ip4/<IP>/tcp/4001/p2p/<PEER_ID>` or configure bootstrap nodes in `~/.infomesh/config.toml`. Use `infomesh peer test` to verify connectivity. This will be resolved shortly.
 - 🎭 **JS rendering** — Playwright-based SPA crawling for JS-heavy sites
 - 📱 **Web dashboard** — optional browser UI alongside the TUI
 - 🔍 **Semantic search fusion** — BM25 + vector hybrid ranking with RRF

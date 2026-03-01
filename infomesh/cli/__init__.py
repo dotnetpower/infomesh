@@ -42,6 +42,7 @@ from infomesh.cli.config import config_group  # noqa: E402
 from infomesh.cli.crawl import crawl, dashboard, mcp_cmd  # noqa: E402
 from infomesh.cli.index import index_group  # noqa: E402
 from infomesh.cli.keys import keys_group  # noqa: E402
+from infomesh.cli.peer import peer_group  # noqa: E402
 from infomesh.cli.search import search  # noqa: E402
 from infomesh.cli.serve import serve, start, status, stop  # noqa: E402
 
@@ -56,3 +57,4 @@ cli.add_command(search)
 cli.add_command(index_group)
 cli.add_command(config_group)
 cli.add_command(keys_group)
+cli.add_command(peer_group)

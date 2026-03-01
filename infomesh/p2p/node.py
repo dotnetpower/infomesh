@@ -121,6 +121,9 @@ class InfoMeshNode:
         self._pow_nonce: int | None = None
         self._url_assigner: UrlAssigner | None = None
 
+        # Bootstrap status tracking
+        self._bootstrap_results: dict[str, object] = {}
+
         # Background thread for trio
         self._trio_thread: threading.Thread | None = None
         self._trio_cancel_scope: object | None = None
@@ -192,6 +195,7 @@ class InfoMeshNode:
                 "error": error,
                 "dht": dht_data,
                 "bandwidth": bw_data,
+                "bootstrap": self._bootstrap_results,
             }
             status_path.write_text(json.dumps(data))
         except OSError:
@@ -267,7 +271,20 @@ class InfoMeshNode:
 
         Args:
             blocking: If True, run in the current thread (blocks).
+
+        Raises:
+            ImportError: If ``libp2p`` is not installed.
         """
+        # Early check — fail fast with clear error instead of timing
+        # out in the background thread.
+        try:
+            import libp2p  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "libp2p is required for P2P networking. "
+                "Install with: pip install 'infomesh[p2p]'"
+            ) from None
+
         if self._state in (NodeState.RUNNING, NodeState.STARTING):
             logger.warning("node_already_running", state=self._state)
             return
@@ -564,20 +581,64 @@ class InfoMeshNode:
 
         if not bootstrap_addrs:
             logger.info("no_bootstrap_nodes", note="running in standalone mode")
+            self._bootstrap_results = {"configured": 0, "connected": 0, "failed": 0}
             return
+
+        connected = 0
+        failed = 0
+        failed_addrs: list[str] = []
 
         for addr_str in bootstrap_addrs:
             try:
                 maddr = Multiaddr(addr_str)
                 peer_info = info_from_p2p_addr(maddr)
+                timed_out = True
                 with _trio.move_on_after(10):  # 10s timeout per peer
                     await self._host.connect(peer_info)  # type: ignore[union-attr]
                     logger.info("bootstrap_connected", addr=addr_str)
-                    continue
-                # If we get here, the connect timed out
-                logger.warning("bootstrap_timeout", addr=addr_str, timeout_sec=10)
-            except Exception:
-                logger.warning("bootstrap_failed", addr=addr_str)
+                    connected += 1
+                    timed_out = False
+                if timed_out:
+                    logger.warning(
+                        "bootstrap_timeout",
+                        addr=addr_str,
+                        timeout_sec=10,
+                        hint=(
+                            "Check that the bootstrap node is running "
+                            "and port 4001 is open (firewall/NSG)"
+                        ),
+                    )
+                    failed += 1
+                    failed_addrs.append(addr_str)
+            except Exception as exc:
+                logger.warning(
+                    "bootstrap_failed",
+                    addr=addr_str,
+                    error=str(exc),
+                )
+                failed += 1
+                failed_addrs.append(addr_str)
+
+        self._bootstrap_results = {
+            "configured": len(bootstrap_addrs),
+            "connected": connected,
+            "failed": failed,
+            "failed_addrs": failed_addrs,
+        }
+
+        if connected == 0 and failed > 0:
+            logger.error(
+                "bootstrap_all_failed",
+                configured=len(bootstrap_addrs),
+                failed=failed,
+                hint=(
+                    "No bootstrap nodes reachable. Possible causes: "
+                    "(1) Bootstrap node not running, "
+                    "(2) Firewall/NSG blocking TCP 4001, "
+                    "(3) Wrong IP or peer ID in config. "
+                    "Check with: nc -zv <ip> 4001"
+                ),
+            )
 
     # ─── Public API (thread-safe) ──────────────────────────
 

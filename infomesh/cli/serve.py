@@ -402,8 +402,8 @@ def _try_start_p2p(
     except ImportError:
         log.warning(
             "p2p_unavailable",
-            reason="libp2p or trio not installed",
-            hint="pip install 'libp2p[trio]'  OR  uv add libp2p trio",
+            reason="libp2p not installed",
+            hint="pip install 'infomesh[p2p]'  OR  uv sync --extra p2p",
         )
         return None
 
@@ -483,6 +483,45 @@ def status() -> None:
             addrs = p2p.get("listen_addrs", [])
             if addrs and isinstance(addrs, list):
                 click.echo(f"P2P addrs:       {', '.join(str(a) for a in addrs)}")
+            # Show bootstrap status if peers=0
+            bs = p2p.get("bootstrap", {})
+            if isinstance(bs, dict) and p2p_peers == 0:
+                bs_conf = bs.get("configured", 0)
+                bs_conn = bs.get("connected", 0)
+                bs_fail = bs.get("failed", 0)
+                if bs_conf == 0:
+                    click.echo(
+                        "Bootstrap:       "
+                        + click.style("none configured", fg="yellow")
+                    )
+                    click.echo(
+                        "                 Add bootstrap nodes in"
+                        " ~/.infomesh/config.toml:"
+                    )
+                    click.echo("                 [network]")
+                    click.echo(
+                        "                 bootstrap_nodes"
+                        ' = ["/ip4/<IP>/tcp/4001'
+                        '/p2p/<PEER_ID>"]'
+                    )
+                elif bs_fail > 0 and bs_conn == 0:
+                    click.echo(
+                        "Bootstrap:       "
+                        + click.style(
+                            f"all {bs_fail} nodes unreachable",
+                            fg="red",
+                        )
+                    )
+                    failed = bs.get("failed_addrs", [])
+                    if isinstance(failed, list):
+                        for fa in failed:
+                            click.echo(f"                 ✗ {fa}")
+                    click.echo(
+                        "                 Check: (1) node running?"
+                        " (2) port 4001 open?"
+                        " (3) correct IP?"
+                    )
+                    click.echo("                 Test: nc -zv <IP> 4001")
         elif p2p_state == "error":
             click.echo("P2P:             " + click.style("error", fg="red"))
             err = p2p.get("error", "")
@@ -490,9 +529,7 @@ def status() -> None:
                 click.echo(f"P2P error:       {err}")
         elif running:
             click.echo("P2P:             " + click.style("not connected", fg="yellow"))
-            click.echo(
-                "                 (libp2p/trio not installed or no bootstrap nodes)"
-            )
+            click.echo("                 (libp2p not installed or no bootstrap nodes)")
         else:
             click.echo("P2P:             stopped")
 
