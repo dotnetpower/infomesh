@@ -133,7 +133,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml infomesh/__init__.py
-          git commit -m "chore: release v${{ steps.version.outputs.version }} [auto-release]"
+          # Only commit if there are staged changes (version may already be bumped)
+          if git diff --cached --quiet; then
+            echo "Version files already at target — skipping commit"
+          else
+            git commit -m "chore: release v${{ steps.version.outputs.version }} [auto-release]"
+          fi
           git tag "${{ steps.version.outputs.tag }}"
           git push origin main --follow-tags
 
