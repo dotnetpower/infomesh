@@ -1,0 +1,18 @@
+# InfoMesh Kubernetes Deployment
+#
+# Deploy with:
+#   kubectl apply -f k8s/
+#
+# This creates:
+#   - Namespace: infomesh
+#   - StatefulSet: 3 replicas with persistent storage
+#   - Service: ClusterIP for admin API + MCP HTTP
+#   - ConfigMap: shared configuration
+#   - Secret: optional API key
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: infomesh
+  labels:
+    app: infomesh

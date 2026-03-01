@@ -123,6 +123,51 @@ class IndexSubmitSender:
         """Record a failed submission."""
         self._error_count += 1
 
+    async def send_to_peers(self, message: bytes) -> int:
+        """Send a pre-built index-submit message to all configured peers.
+
+        Uses HTTP POST to each peer's ``/index/submit`` endpoint as a
+        lightweight bridge.  Full P2P stream integration (libp2p/trio)
+        is planned — this serves as the functional fallback.
+
+        Args:
+            message: Encoded msgpack message from :meth:`build_submit_message`.
+
+        Returns:
+            Number of peers that acknowledged successfully.
+        """
+        import httpx as _httpx
+
+        success = 0
+        for peer_addr in self._submit_peers:
+            url = f"{peer_addr.rstrip('/')}/index/submit"
+            try:
+                async with _httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        url,
+                        content=message,
+                        headers={"Content-Type": "application/x-msgpack"},
+                    )
+                    if resp.status_code < 400:
+                        self.record_sent()
+                        success += 1
+                        logger.info("index_submit_sent", peer=peer_addr)
+                    else:
+                        self.record_error()
+                        logger.warning(
+                            "index_submit_peer_error",
+                            peer=peer_addr,
+                            status=resp.status_code,
+                        )
+            except (_httpx.HTTPError, OSError) as exc:
+                self.record_error()
+                logger.warning(
+                    "index_submit_send_failed",
+                    peer=peer_addr,
+                    error=str(exc),
+                )
+        return success
+
 
 class IndexSubmitReceiver:
     """Receives and indexes pages from remote crawlers.

@@ -26,11 +26,27 @@ AI assistants to external tools.
 
 ## MCP Tools Provided
 
-- `search(query, limit)` — Full network web search, merges local + remote results
-- `search_local(query, limit)` — Local-only search (works offline)
-- `fetch_page(url)` — Fetch and return full text of any web page
-- `crawl_url(url, depth)` — Crawl a URL and add it to the index
-- `network_stats()` — Network status: peer count, index size, credits
+### Core Search
+- `search(query, limit, format, language, ...)` — Full network web search, merges local + remote results with BM25 + freshness + trust ranking
+- `search_local(query, limit, format, language, ...)` — Local-only search (works offline, <10ms)
+- `batch_search(queries, limit, format)` — Run up to 10 search queries in one call
+- `suggest(prefix, limit)` — Autocomplete / search suggestions
+
+### Content Access
+- `fetch_page(url, format)` — Fetch and return full text of any web page (max 100KB)
+- `crawl_url(url, depth, force)` — Crawl a URL and add it to the index
+
+### Intelligence (NEW in v0.2.0)
+- `explain(query)` — Score breakdown for each result (BM25, freshness, trust components)
+- `search_rag(query)` — RAG-optimized chunked output with source attribution
+- `extract_answer(query)` — Direct answer extraction with confidence scores
+- `fact_check(claim)` — Cross-reference claims against multiple indexed sources
+- `search_history(action)` — View or clear search history with latency stats
+
+### Infrastructure
+- `network_stats(format)` — Network status: peer count, index size, credits
+- `analytics(format)` — Search/crawl/fetch counts and average latency
+- `register_webhook(url)` — Register webhook for crawl completion notifications
 
 ## MCP Configuration
 
@@ -55,6 +71,21 @@ AI assistants to external tools.
 | Tavily MCP | 1,000/month | Required (free) | No | No | Logged by provider |
 | DuckDuckGo MCP | Unlimited | Not required | No | No | Minimal logging |
 | SearXNG | Unlimited (self-host) | Not required | No (single instance) | No | Self-hosted |
+
+## Key Capabilities (v0.2.0)
+
+- 15 MCP tools for search, RAG, fact-checking, analytics
+- NLP query processing: stop-words (9 languages), synonyms, spelling correction
+- Search facets, result clustering, snippet highlighting
+- RAG support with chunked output and source attribution
+- PDF extraction, RSS/Atom feed parsing, structured data (JSON-LD, OpenGraph)
+- Language detection, code block extraction, HTML table parsing
+- Content diffing between crawl versions
+- API key management, role-based access control, audit logging
+- Prometheus metrics endpoint, OpenAPI 3.1 spec
+- Python SDK, LangChain/LlamaIndex/Haystack integrations
+- Docker Compose, Helm chart, systemd, Terraform deployment options
+- Plugin system with lifecycle hooks
 
 ## Links
 

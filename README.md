@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/dotnetpower/infomesh/actions"><img src="https://img.shields.io/github/actions/workflow/status/dotnetpower/infomesh/ci.yml?branch=main&label=CI&logo=github" alt="CI"></a>
-  <a href="https://pypi.org/project/infomesh/"><img src="https://img.shields.io/pypi/v/infomesh?logo=pypi&logoColor=white" alt="PyPI"></a>
+  <a href="https://pypi.org/project/infomesh/"><img src="https://img.shields.io/pypi/v/infomesh?logo=pypi&logoColor=white&cache_seconds=0" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/dotnetpower/infomesh?color=blue" alt="MIT License"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="https://github.com/dotnetpower/infomesh/stargazers"><img src="https://img.shields.io/github/stars/dotnetpower/infomesh?style=social" alt="Stars"></a>
@@ -22,15 +22,16 @@
   <a href="https://github.com/dotnetpower/infomesh/commits/main"><img src="https://img.shields.io/github/last-commit/dotnetpower/infomesh?logo=git&logoColor=white" alt="Last Commit"></a>
   <a href="https://github.com/dotnetpower/infomesh"><img src="https://img.shields.io/github/repo-size/dotnetpower/infomesh" alt="Repo Size"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMyA3djEwbDkgNSA5LTVIN0wzIDd6IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg==" alt="MCP Compatible"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-v0.2.0-blue" alt="Changelog"></a>
 </p>
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-why-infomesh">Why InfoMesh</a> •
   <a href="#-features">Features</a> •
+  <a href="#-whats-new-in-v020">What's New</a> •
   <a href="#-architecture">Architecture</a> •
   <a href="#-security--trust">Security</a> •
-  <a href="#-enterprise-readiness">Enterprise</a> •
   <a href="#-earning-credits">Credits</a> •
   <a href="#-contributing">Contributing</a> •
   <a href="#-documentation">Docs</a>
@@ -309,7 +310,7 @@ See [examples/README.md](examples/README.md) for the full list.
 ### MCP Integration — Free Web Search for AI Assistants
 
 Most commercial search APIs charge per query or require a paid subscription.
-InfoMesh exposes **5 MCP tools completely free** — no API key, no billing:
+InfoMesh exposes **15 MCP tools completely free** — no API key, no billing:
 
 | Tool | Description |
 |------|-------------|
@@ -318,6 +319,15 @@ InfoMesh exposes **5 MCP tools completely free** — no API key, no billing:
 | `fetch_page(url)` | Return full extracted text for a URL (from index cache or live crawl) |
 | `crawl_url(url, depth)` | Submit a URL to be crawled and indexed by the network |
 | `network_stats()` | Network status: peer count, index size, credit balance |
+| `batch_search(queries)` | Run up to 10 search queries in one call |
+| `suggest(prefix)` | Autocomplete / search suggestions |
+| `register_webhook(url)` | Register webhook for crawl completion notifications |
+| `analytics()` | Search/crawl/fetch counts and average latency |
+| `explain(query)` | **NEW** — Score breakdown: BM25, freshness, trust components per result |
+| `search_history(action)` | **NEW** — View or clear past search queries with latency stats |
+| `search_rag(query)` | **NEW** — RAG-optimized chunked output with source attribution |
+| `extract_answer(query)` | **NEW** — Direct answer extraction with confidence scores |
+| `fact_check(claim)` | **NEW** — Cross-reference claims against indexed sources |
 
 #### Configure in VS Code / Copilot / Claude Desktop / Cursor
 
@@ -347,7 +357,72 @@ uv sync --extra llm
 
 ---
 
-## 🏗️ Architecture
+## � What's New in v0.2.0
+
+v0.2.0 adds **100+ features** across search intelligence, RAG support, security, observability, and developer experience. Here are the highlights:
+
+### Search Intelligence
+
+| Feature | Description |
+|---------|-------------|
+| 🧠 **NLP Query Processing** | Stop-word removal (9 languages), synonym expansion, natural language parsing |
+| ✏️ **Did-you-mean** | Edit-distance spelling correction when no results found |
+| 📊 **Search Facets** | Domain, language, and date-range facet counts per query |
+| 🎯 **Result Clustering** | Groups results by domain for organized browsing |
+| 🔦 **Snippet Highlighting** | Query terms highlighted in result snippets |
+| 🧹 **Smart Deduplication** | Jaccard similarity-based near-duplicate removal |
+| 🔍 **Search Explain** | Transparent score breakdowns for every result |
+
+### RAG & Answer Extraction
+
+| Feature | Description |
+|---------|-------------|
+| 📚 **RAG Output** | Chunked, source-attributed context windows for LLM consumption |
+| 💡 **Answer Extraction** | Direct answers with confidence scores and source URLs |
+| ✅ **Fact Checking** | Cross-reference claims against multiple indexed sources |
+| 🏷️ **Entity Extraction** | Identifies persons, organizations, URLs, emails |
+| 🛡️ **Toxicity Filtering** | Content safety scoring for search results |
+
+### Crawler Enhancements
+
+| Feature | Description |
+|---------|-------------|
+| 📄 **PDF Extraction** | Text extraction from crawled PDF documents |
+| 🏗️ **Structured Data** | JSON-LD, OpenGraph, and meta tag parsing |
+| 🌍 **Language Detection** | Script + word-frequency detection (9 languages) |
+| 📡 **RSS/Atom Feeds** | Auto-discovery and parsing of feeds |
+| 📝 **Content Diffing** | Change detection between crawl versions |
+| 💻 **Code Blocks** | Extracts `<pre><code>` with language detection |
+| 📊 **Table Extraction** | HTML tables → structured data (CSV/dict) |
+
+### Security & API
+
+| Feature | Description |
+|---------|-------------|
+| 🔑 **API Key Management** | Create, validate, revoke, rotate keys |
+| 👥 **Role-Based Access** | Admin/Reader/Crawler permission matrix |
+| 📋 **Audit Logging** | SQLite-backed audit trail for all tool calls |
+| 🔒 **Webhook Signatures** | HMAC-SHA256 payload verification |
+| 📊 **Prometheus Metrics** | `/metrics` endpoint for monitoring |
+| 📖 **OpenAPI Spec** | Auto-generated OpenAPI 3.1 at `/openapi-spec` |
+
+### Developer Experience
+
+| Feature | Description |
+|---------|-------------|
+| 🐍 **Python SDK** | `InfoMeshClient` with sync/async search, crawl, suggest |
+| 🔌 **Plugin System** | Register custom plugins with lifecycle hooks |
+| 🦜 **LangChain** | `InfoMeshRetriever` integration |
+| 🦙 **LlamaIndex** | `InfoMeshReader` integration |
+| 🏗️ **Haystack** | `InfoMeshDocumentStore` integration |
+| ⎈ **Helm Chart** | Kubernetes deployment with configurable resources |
+| 🐳 **Docker Compose** | Multi-container setup with volumes |
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete list of changes.
+
+---
+
+## �🏗️ Architecture
 
 <!-- Mermaid source: assets/diagrams/architecture.mmd -->
 <p align="center">
@@ -632,7 +707,7 @@ git clone https://github.com/dotnetpower/infomesh.git
 cd infomesh
 uv sync --dev
 
-# Run the test suite (1020+ tests)
+# Run the test suite (1,307 tests)
 uv run pytest
 
 # Run linter + formatter
@@ -650,7 +725,7 @@ uv run mypy infomesh/
 | 🐛 Report a bug | Easy | High — helps everyone |
 | 📝 Improve docs / translations | Easy | High — lowers entry barrier |
 | 🌱 Add seed URLs | Easy | Medium — expands crawl coverage |
-| 🧪 Write tests | Medium | High — currently 1020+ tests, always need more |
+| 🧪 Write tests | Medium | High — currently 1,307 tests, always need more |
 | 🔧 Fix an issue | Medium | Direct impact |
 | ✨ Implement a feature | Hard | Moves the project forward |
 | 🔐 Security audit | Hard | Critical for trust |
@@ -701,13 +776,14 @@ Detailed documentation is available in the [docs/](docs/) directory:
 
 | Metric | Value |
 |--------|-------|
-| Source modules | 96 |
-| Test files | 50 |
-| Source lines | ~19,500 |
-| Test lines | ~10,400 |
-| Tests passing | 1020+ |
+| Source modules | 130+ |
+| Test files | 67 |
+| Source lines | ~27,000 |
+| Test lines | ~14,000 |
+| Tests passing | 1,307 |
+| MCP tools | 15 |
 | Test coverage | Core modules fully tested |
-| Development phases | 9 (Phase 0 → 5D, all complete) |
+| Development phases | 10 (Phase 0 → 6, all complete) |
 | Python version | 3.12+ |
 | License | MIT |
 
@@ -728,13 +804,15 @@ All core phases are **complete**. Current focus is on community growth and produ
 | 5B | Search quality — latency-aware routing, Merkle Tree integrity | ✅ Complete |
 | 5C | Release readiness — Docker, key rotation, mDNS, LICENSE, CONTRIBUTING | ✅ Complete |
 | 5D | Polish — LLM reputation, timezone verification, dashboard settings, P2P credit verification | ✅ Complete |
+| 6 | Search intelligence, RAG, security, observability, SDK, integrations, DX | ✅ Complete |
 
 ### What's Next
 
 - 🌍 **Public bootstrap nodes** — volunteer-run seed nodes for easy onboarding
--  **Plugin system** — custom crawlers, parsers, and ranking strategies
 - 🎭 **JS rendering** — Playwright-based SPA crawling for JS-heavy sites
 - 📱 **Web dashboard** — optional browser UI alongside the TUI
+- 🔍 **Semantic search fusion** — BM25 + vector hybrid ranking with RRF
+- 🌐 **Multi-language stemming** — language-specific tokenization and stemming
 
 ---
 

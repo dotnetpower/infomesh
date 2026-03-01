@@ -170,18 +170,31 @@ Copilot Chat에서 바로 사용:
 | 5B | 검색 품질 — 지연시간 인식 라우팅, Merkle Tree 무결성 | ✅ 완료 |
 | 5C | 릴리스 준비 — Docker, 키 교체, mDNS, LICENSE, CONTRIBUTING | ✅ 완료 |
 | 5D | 폴리시 — LLM 평판, 시간대 검증, 대시보드, PyPI 준비 | ✅ 완료 |
+| 6 | 검색 인텔리전스, RAG, 보안, 관측성, SDK, 통합, DX | ✅ 완료 |
+
+### v0.2.0 주요 하이라이트
+
+최신 릴리스에서 **100개 이상의 기능**이 추가되었습니다:
+
+- **검색 인텔리전스** — NLP 쿼리 처리 (9개 언어), 맞춤법 교정, 패싯, 클러스터링, 스니펫 하이라이팅
+- **RAG & 답변 추출** — 청크 RAG 출력, 직접 답변 추출, 팩트 체크, 엔티티 추출
+- **크롤러 강화** — PDF 추출, RSS/Atom 피드, 구조화 데이터 (JSON-LD, OpenGraph), 언어 감지, 콘텐츠 비교
+- **보안 & API** — API 키 관리, 역할 기반 접근 제어, 감사 로깅, 웹훅 서명, Prometheus 메트릭
+- **개발자 경험** — Python SDK, 플러그인 시스템, LangChain/LlamaIndex/Haystack 통합
+- **배포** — Helm 차트, Docker Compose, systemd 서비스, Terraform 모듈
+- **15개 MCP 도구** (기존 9개에서 증가) — `explain`, `search_rag`, `extract_answer`, `fact_check`, `search_history` 포함
+
+전체 변경 사항은 [CHANGELOG](../../CHANGELOG.md)를 참조하세요.
 
 ### 향후 작업
 
 다음 항목은 외부 인프라 또는 주요 의존성이 필요하여 향후 릴리스에서 계획:
 
-- [ ] **인덱스 팩 배포** — 노드 간 사전 구축된 인덱스 팩 공유를 위한 P2P 파일 전송
-- [ ] **SPA/JS 렌더링** — JavaScript 기반 사이트를 위한 Playwright 위임
-- [ ] **SQLCipher 암호화** — 로컬 인덱스의 선택적 저장 시 암호화
 - [ ] **공개 부트스트랩 노드** — 쉬운 온보딩을 위한 자원봉사 시드 노드
-- [ ] **PyPI 릴리스** — `pip install infomesh` / `uv add infomesh`
-- [ ] **플러그인 시스템** — 사용자 정의 크롤러, 파서, 랭킹 전략
-- [ ] **커뮤니티 시드 기여** — GitHub PR 기반 시드 URL 제출 (CI 자동 검증 + 크레딧 보상)
+- [ ] **SPA/JS 렌더링** — JavaScript 기반 사이트를 위한 Playwright 위임
+- [ ] **다국어 스테밍** — 언어별 토큰화 및 스테밍
+- [ ] **웹 대시보드** — TUI와 함께 선택적 브라우저 UI
+- [ ] **시맨틱 검색 융합** — BM25 + 벡터 하이브리드 랭킹 (RRF)
 
 ---
 

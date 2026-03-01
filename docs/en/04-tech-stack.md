@@ -40,6 +40,7 @@ infomesh/
 │   ├── __init__.py          # Package root
 │   ├── __main__.py          # CLI entry point
 │   ├── config.py            # Configuration management
+│   ├── services.py          # Central AppContext + index_document orchestration
 │   ├── p2p/                 # P2P network layer
 │   │   ├── node.py          #   Peer main process
 │   │   ├── dht.py           #   Kademlia DHT
@@ -52,7 +53,8 @@ infomesh/
 │   │   ├── parser.py        #   HTML → text extraction
 │   │   ├── robots.py        #   robots.txt compliance
 │   │   ├── dedup.py         #   Deduplication pipeline (URL, SHA-256, SimHash)
-│   │   └── seeds.py         #   Seed URL management & category selection
+│   │   ├── seeds.py         #   Seed URL management & category selection
+│   │   └── crawl_loop.py    #   Continuous seed-and-crawl loop (extracted from services.py)
 │   ├── index/               # Search index
 │   │   ├── local_store.py   #   SQLite FTS5 local index
 │   │   ├── vector_store.py  #   ChromaDB vector index
@@ -61,12 +63,16 @@ infomesh/
 │   ├── search/              # Search engine
 │   │   ├── query.py         #   Query parsing + distributed orchestration
 │   │   └── merge.py         #   Multi-node result merging
-│   ├── mcp/                 # MCP server
-│   │   └── server.py        #   search(), search_local(), fetch_page(), crawl_url(), network_stats()
+│   ├── mcp/                 # MCP server (SRP: split into 4 modules)
+│   │   ├── server.py        #   Thin wiring: Server creation, tool dispatch, runners
+│   │   ├── tools.py         #   Tool schema definitions + filter extraction
+│   │   ├── handlers.py      #   Tool handler implementations (handle_search, etc.)
+│   │   └── session.py       #   SearchSession, AnalyticsTracker, WebhookRegistry
 │   ├── api/                 # Local admin API
 │   │   └── local_api.py     #   FastAPI (status, config)
 │   ├── credits/             # Incentive system
-│   │   └── ledger.py        #   Local credit ledger
+│   │   ├── types.py         #   ActionType, CreditState, dataclasses (extracted from ledger.py)
+│   │   └── ledger.py        #   SQLite-backed credit ledger (imports types from types.py)
 │   ├── trust/               # Trust & integrity
 │   │   ├── attestation.py   #   Content attestation chain (signing, verification)
 │   │   ├── audit.py         #   Random audit system
@@ -92,7 +98,9 @@ infomesh/
 │   ├── test_credits.py
 │   ├── test_trust.py
 │   ├── test_summarizer.py
-│   └── test_mcp.py
+│   ├── test_mcp.py
+│   ├── test_services.py     # Services layer tests
+│   └── test_mcp_handlers.py # MCP handler tests
 └── docs/
 ```
 

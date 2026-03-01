@@ -1,0 +1,75 @@
+# Default values for InfoMesh Helm chart
+# Feature #96
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/dotnetpower/infomesh
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  # MCP HTTP port
+  mcpPort: 8081
+  # P2P libp2p port
+  p2pPort: 4001
+  # Admin API port
+  adminPort: 8080
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+
+resources:
+  limits:
+    cpu: "2"
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# InfoMesh configuration
+config:
+  # Resource profile: minimal, balanced, contributor, dedicated
+  profile: balanced
+  # Enable MCP HTTP transport
+  mcpHttp: true
+  # Bootstrap nodes
+  bootstrapNodes: []
+  # Seed categories to crawl
+  seedCategories:
+    - tech-docs
+    - encyclopedia
+  # LLM summarizer (optional)
+  summarizer:
+    enabled: false
+    runtime: ollama
+    model: "qwen2.5:3b"
+
+# Health check configuration
+livenessProbe:
+  httpGet:
+    path: /health
+    port: admin
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /readiness
+    port: admin
+  initialDelaySeconds: 5
+  periodSeconds: 10

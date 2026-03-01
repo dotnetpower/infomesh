@@ -170,18 +170,31 @@ All core development phases are **complete**:
 | 5B | Search quality — latency-aware routing, Merkle Tree integrity | ✅ Complete |
 | 5C | Release readiness — Docker, key rotation, mDNS, LICENSE, CONTRIBUTING | ✅ Complete |
 | 5D | Polish — LLM reputation, timezone verification, dashboard, PyPI readiness | ✅ Complete |
+| 6 | Search intelligence, RAG, security, observability, SDK, integrations, DX | ✅ Complete |
+
+### v0.2.0 Highlights
+
+The latest release adds **100+ features** organized into:
+
+- **Search Intelligence** — NLP query processing (9 languages), spelling correction, facets, clustering, snippet highlighting
+- **RAG & Answer Extraction** — Chunked RAG output, direct answer extraction, fact checking, entity extraction
+- **Crawler Enhancements** — PDF extraction, RSS/Atom feeds, structured data (JSON-LD, OpenGraph), language detection, content diffing
+- **Security & API** — API key management, role-based access, audit logging, webhook signatures, Prometheus metrics
+- **Developer Experience** — Python SDK, plugin system, LangChain/LlamaIndex/Haystack integrations
+- **Deployment** — Helm chart, Docker Compose, systemd service, Terraform modules
+- **15 MCP tools** (up from 9) — including `explain`, `search_rag`, `extract_answer`, `fact_check`, `search_history`
+
+See the full [CHANGELOG](../../CHANGELOG.md) for details.
 
 ### Future Work
 
 These items require external infrastructure or significant dependencies and are planned for future releases:
 
-- [ ] **Index pack distribution** — P2P file transfer for sharing pre-built index packs between nodes
-- [ ] **SPA/JS rendering** — Playwright delegation to capable nodes for JavaScript-heavy sites
-- [ ] **SQLCipher encryption** — optional at-rest encryption for the local index
 - [ ] **Public bootstrap nodes** — volunteer-run seed nodes for easy onboarding
-- [ ] **PyPI release** — `pip install infomesh` / `uv add infomesh`
-- [ ] **Plugin system** — custom crawlers, parsers, and ranking strategies
-- [ ] **Community seed contribution** — GitHub PR-based seed URL submission with CI validation and credit rewards
+- [ ] **SPA/JS rendering** — Playwright delegation to capable nodes for JavaScript-heavy sites
+- [ ] **Multi-language stemming** — language-specific tokenization and stemming
+- [ ] **Web dashboard** — optional browser UI alongside the TUI
+- [ ] **Semantic search fusion** — BM25 + vector hybrid ranking with RRF
 
 ---
 

@@ -1,7 +1,22 @@
-"""InfoMesh MCP server — exposes search tools to LLMs via MCP protocol."""
+"""InfoMesh MCP server — exposes search tools to LLMs via MCP protocol.
+
+Supports both stdio and HTTP (Streamable) transports.
+
+This module is the thin wiring layer that:
+1. Creates the ``Server`` instance and ``AppContext``.
+2. Registers tool schemas from ``mcp.tools``.
+3. Dispatches tool calls to handlers in ``mcp.handlers``.
+4. Provides server runner functions (stdio / HTTP).
+
+Business logic lives in ``mcp.handlers``; tool definitions in
+``mcp.tools``; session/analytics helpers in ``mcp.session``.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 from typing import Any
 
 import structlog
@@ -10,61 +25,64 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from infomesh.config import Config, load_config
-from infomesh.search.formatter import (
-    format_distributed_results,
-    format_fetch_result,
-    format_fts_results,
-    format_hybrid_results,
+from infomesh.mcp.handlers import (
+    deduct_search_cost,
+    handle_batch,
+    handle_crawl,
+    handle_explain,
+    handle_extract_answer,
+    handle_fact_check,
+    handle_fetch,
+    handle_search,
+    handle_search_rag,
+    handle_stats,
+    handle_suggest,
 )
-from infomesh.search.query import search_distributed, search_hybrid, search_local
-from infomesh.security import SSRFError, validate_url
-from infomesh.services import (
-    AppContext,
-    crawl_and_index,
-    fetch_page_async,
+from infomesh.mcp.session import (
+    AnalyticsTracker,
+    SearchSession,
+    SessionStore,
+    WebhookRegistry,
 )
+from infomesh.mcp.tools import (
+    check_api_key,
+    extract_filters,
+    get_all_tools,
+)
+from infomesh.persistence.store import PersistentStore
+from infomesh.search.cache import QueryCache
+from infomesh.services import AppContext
 
 logger = structlog.get_logger()
 
-# ── Attribution & copyright notices ────────────────────────────────
-
-_SEARCH_ATTRIBUTION = (
-    "\n---\n"
-    "Attribution: All results sourced from their original publishers.\n"
-    "Each result includes a source URL — always cite the original source."
-)
-
-_FETCH_COPYRIGHT_NOTICE = (
-    "\n---\n"
-    "COPYRIGHT NOTICE: This content is cached by InfoMesh "
-    "for search indexing purposes only.\n"
-    "The original content is owned by its respective "
-    "author/publisher.\n"
-    "Always cite the original source URL when "
-    "referencing this content.\n"
-    "Cache policy: content is refreshed every 7 days; "
-    "may not reflect the latest version."
-)
+# Backward-compatible aliases for external consumers
+_SearchSession = SearchSession
+_AnalyticsTracker = AnalyticsTracker
+_WebhookRegistry = WebhookRegistry
+_check_api_key = check_api_key
+_extract_filters = extract_filters
+_deduct_search_cost = deduct_search_cost
 
 
 def _create_app(
     config: Config,
     distributed_index: Any | None = None,
     p2p_node: Any | None = None,
-) -> tuple[Server, AppContext]:
+    *,
+    api_key: str | None = None,
+) -> tuple[Server, AppContext, PersistentStore]:
     """Create and configure the MCP server with all tools.
 
     Args:
         config: Application configuration.
-        distributed_index: Optional DistributedIndex for DHT search.
+        distributed_index: Optional DistributedIndex for DHT.
         p2p_node: Optional P2P Node for network stats.
+        api_key: Optional API key for authentication.
 
-    Returns the ``(Server, AppContext)`` pair so the caller can manage
-    the context lifecycle.
+    Returns the ``(Server, AppContext, PersistentStore)`` tuple.
     """
     app = Server("infomesh")
 
-    # Initialize all components via service layer
     ctx = AppContext(config)
     try:
         store = ctx.store
@@ -77,417 +95,204 @@ def _create_app(
         ctx.close()
         raise
 
+    cache_size = getattr(getattr(config, "search", None), "cache_max_size", 1000)
+    cache_ttl = getattr(getattr(config, "search", None), "cache_ttl_seconds", 300.0)
+    query_cache = QueryCache(
+        max_size=int(cache_size),
+        ttl_seconds=float(cache_ttl),
+    )
+    llm_backend = ctx.llm_backend
+    sessions = SessionStore()
+    analytics = AnalyticsTracker()
+    webhooks = WebhookRegistry()
+    pstore = PersistentStore(
+        str(config.node.data_dir / "persistent.db"),
+    )
+
     @app.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
     async def list_tools() -> list[Tool]:
-        return [
-            Tool(
-                name="search",
-                description=(
-                    "Search the InfoMesh P2P network for web content. "
-                    "Returns relevant text snippets from crawled pages. "
-                    "Searches local index and, when available, the "
-                    "distributed DHT index across peers."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query text",
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results (default: 10)",
-                            "default": 10,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            Tool(
-                name="search_local",
-                description=(
-                    "Search only the local index (works offline). "
-                    "Returns relevant text snippets from locally crawled pages."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query text",
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results (default: 10)",
-                            "default": 10,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            Tool(
-                name="fetch_page",
-                description=(
-                    "Fetch the full text content of a URL. "
-                    "Returns cached content if available, otherwise crawls live. "
-                    "Max 100KB per response."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "URL to fetch",
-                        },
-                    },
-                    "required": ["url"],
-                },
-            ),
-            Tool(
-                name="crawl_url",
-                description=(
-                    "Add a URL to the crawl queue. The page will be crawled, "
-                    "indexed, and made searchable. Rate limited to 60 URLs/hour."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "URL to crawl",
-                        },
-                        "depth": {
-                            "type": "integer",
-                            "description": (
-                                "How many levels of links to follow "
-                                "(default: 0, max: 3)"
-                            ),
-                            "default": 0,
-                        },
-                        "force": {
-                            "type": "boolean",
-                            "description": (
-                                "Force re-crawl even if the URL "
-                                "was previously crawled. Useful "
-                                "for refreshing content or "
-                                "discovering new child links."
-                            ),
-                            "default": False,
-                        },
-                    },
-                    "required": ["url"],
-                },
-            ),
-            Tool(
-                name="network_stats",
-                description=(
-                    "Get InfoMesh network status: index size, peer count, credits."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                },
-            ),
-        ]
+        return get_all_tools()
 
     @app.call_tool()  # type: ignore[untyped-decorator]
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    async def call_tool(
+        name: str,
+        arguments: dict[str, Any],
+    ) -> list[TextContent]:
+        auth_err = check_api_key(arguments, api_key)
+        if auth_err is not None:
+            return [TextContent(type="text", text=auth_err)]
+
         match name:
             case "search" | "search_local":
-                query = arguments["query"]
-                limit = arguments.get("limit", 10)
-
-                # Input validation
-                if not isinstance(query, str) or not query.strip():
-                    return [
-                        TextContent(
-                            type="text", text="Error: query must be a non-empty string"
-                        )
-                    ]
-                query = query[:1000]  # Cap query length
-                limit = max(1, min(int(limit), 100))  # Cap limit
-
-                # Deduct search cost (debt-aware — never blocks)
-                _deduct_search_cost(ledger)
-
-                # Authority lookup function from link graph
-                authority_fn = link_graph.url_authority if link_graph else None
-
-                # Distributed search (network-wide) when available
-                if name == "search" and distributed_index is not None:
-                    dist_result = await search_distributed(
-                        store,
-                        distributed_index,
-                        query,
-                        limit=limit,
-                        authority_fn=authority_fn,
-                        vector_store=vector_store,
-                    )
-                    text = format_distributed_results(dist_result)
-                # Use hybrid search when vector store is available
-                elif vector_store is not None and name == "search":
-                    hybrid = search_hybrid(
-                        store,
-                        vector_store,
-                        query,
-                        limit=limit,
-                        authority_fn=authority_fn,
-                    )
-                    text = format_hybrid_results(hybrid)
-                else:
-                    result = search_local(
-                        store,
-                        query,
-                        limit=limit,
-                        authority_fn=authority_fn,
-                    )
-                    text = format_fts_results(result)
-
-                if text != "No results found.":
-                    text += _SEARCH_ATTRIBUTION
-                return [TextContent(type="text", text=text)]
-
+                return await handle_search(
+                    name,
+                    arguments,
+                    store=store,
+                    vector_store=vector_store,
+                    distributed_index=distributed_index,
+                    link_graph=link_graph,
+                    ledger=ledger,
+                    llm_backend=llm_backend,
+                    query_cache=query_cache,
+                    sessions=sessions,
+                    analytics=analytics,
+                )
             case "fetch_page":
-                url = arguments["url"]
-
-                if worker is None:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=(
-                                "Error: fetch_page requires"
-                                " a crawler worker."
-                                " This node is not configured"
-                                " for crawling."
-                            ),
-                        )
-                    ]
-
-                # SSRF protection
-                try:
-                    validate_url(url)
-                except SSRFError as exc:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=f"Error: URL blocked for security reasons: {exc}",
-                        )
-                    ]
-
-                max_size = config.index.max_doc_size_kb * 1024
-                cache_ttl = config.storage.cache_ttl_days * 86400
-
-                fp = await fetch_page_async(
-                    url,
+                return await handle_fetch(
+                    arguments,
+                    config=config,
                     store=store,
                     worker=worker,
                     vector_store=vector_store,
-                    max_size_bytes=max_size,
-                    cache_ttl_seconds=cache_ttl,
+                    link_graph=link_graph,
+                    analytics=analytics,
                 )
-
-                if not fp.success:
-                    if fp.is_paywall:
-                        return [
-                            TextContent(
-                                type="text",
-                                text=(
-                                    f"Paywall detected for {url}:"
-                                    f" {fp.error}."
-                                    " Cannot retrieve content."
-                                ),
-                            )
-                        ]
-                    return [
-                        TextContent(
-                            type="text",
-                            text=f"Failed to fetch {url}: content unavailable",
-                        )
-                    ]
-
-                # Update link graph if we just crawled
-                if not fp.is_cached and link_graph:
-                    doc = store.get_document_by_url(url)
-                    if doc:
-                        link_graph.add_links(url, [])
-
-                text = format_fetch_result(
-                    title=fp.title,
-                    url=fp.url,
-                    text=fp.text,
-                    is_cached=fp.is_cached,
-                    crawled_at=fp.crawled_at,
-                    cache_ttl=cache_ttl,
-                    is_paywall=fp.is_paywall,
-                )
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"{text}{_FETCH_COPYRIGHT_NOTICE}",
-                    )
-                ]
-
             case "crawl_url":
-                url = arguments["url"]
-                depth = min(arguments.get("depth", 0), config.crawl.max_depth)
-                force = bool(arguments.get("force", False))
-
-                if worker is None:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=(
-                                "Error: crawl_url requires"
-                                " a crawler worker."
-                                " This node is not configured"
-                                " for crawling."
-                            ),
-                        )
-                    ]
-
-                # SSRF protection
-                try:
-                    validate_url(url)
-                except SSRFError as exc:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=f"Error: URL blocked for security reasons: {exc}",
-                        )
-                    ]
-
-                ci = await crawl_and_index(
-                    url,
+                return await handle_crawl(
+                    arguments,
+                    config=config,
+                    store=store,
                     worker=worker,
+                    vector_store=vector_store,
+                    link_graph=link_graph,
+                    analytics=analytics,
+                    webhooks=webhooks,
+                )
+            case "network_stats":
+                return handle_stats(
+                    arguments,
                     store=store,
                     vector_store=vector_store,
                     link_graph=link_graph,
-                    depth=depth,
-                    force=force,
+                    ledger=ledger,
+                    scheduler=scheduler,
+                    p2p_node=p2p_node,
+                    distributed_index=distributed_index,
+                    analytics=analytics,
                 )
-                if ci.success:
+            case "batch_search":
+                return await handle_batch(
+                    arguments,
+                    store=store,
+                    link_graph=link_graph,
+                    ledger=ledger,
+                    analytics=analytics,
+                )
+            case "suggest":
+                return handle_suggest(arguments, store=store)
+            case "register_webhook":
+                url = arguments.get("url", "")
+                if not url:
                     return [
                         TextContent(
                             type="text",
-                            text=(
-                                f"Crawled successfully: {url}\n"
-                                f"Title: {ci.title}\n"
-                                f"Text length: {ci.text_length} chars\n"
-                                f"Links discovered: {ci.links_discovered}\n"
-                                f"Elapsed: {ci.elapsed_ms:.0f}ms"
-                            ),
+                            text="Error: url required",
                         )
                     ]
-
+                reg_err = webhooks.register(url)
+                if reg_err is not None:
+                    return [
+                        TextContent(
+                            type="text",
+                            text=f"Error: {reg_err}",
+                        )
+                    ]
                 return [
                     TextContent(
                         type="text",
-                        text=f"Crawl failed for {url}: {ci.error}",
+                        text=f"Webhook registered: {url}",
                     )
                 ]
-
-            case "network_stats":
-                stats = store.get_stats()
-                vec_info = ""
-                if vector_store is not None:
-                    vec_stats = vector_store.get_stats()
-                    vec_info = (
-                        f"Vector documents: {vec_stats['document_count']}\n"
-                        f"Embedding model: {vec_stats['model']}\n"
-                    )
-                else:
-                    vec_info = "Vector search: disabled\n"
-
-                link_info = ""
-                if link_graph:
-                    lg_stats = link_graph.get_stats()
-                    link_info = (
-                        f"Link graph: {lg_stats['link_count']} links, "
-                        f"{lg_stats['domain_count']} domains scored\n"
-                    )
-                else:
-                    link_info = "Link graph: disabled\n"
-
-                # Credit & debt info
-                credit_info = ""
-                if ledger is not None:
-                    allowance = ledger.search_allowance()
-                    credit_info = (
-                        f"Credit balance: {ledger.balance():.2f}\n"
-                        f"Credit state: {allowance.state.value}\n"
-                        f"Search cost: {allowance.search_cost:.3f}\n"
-                    )
-                    if allowance.state.value == "grace":
-                        credit_info += (
-                            f"Grace remaining: {allowance.grace_remaining_hours:.1f}h\n"
+            case "analytics":
+                fmt = arguments.get("format", "json")
+                data = analytics.to_dict()
+                pstore.record_search(0.0)
+                if fmt == "json":
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps(data),
                         )
-                    elif allowance.state.value == "debt":
-                        credit_info += f"Debt amount: {allowance.debt_amount:.2f}\n"
-
-                # P2P network info
-                p2p_info = ""
-                if p2p_node is not None:
-                    try:
-                        peer_count = len(p2p_node.connected_peers)
-                        p2p_info = f"P2P peers: {peer_count}\n"
-                        if distributed_index is not None:
-                            di_stats = distributed_index.stats
-                            p2p_info += (
-                                "DHT documents published:"
-                                f" {di_stats.documents_published}\n"
-                                "DHT keywords published:"
-                                f" {di_stats.keywords_published}\n"
-                                "DHT queries performed:"
-                                f" {di_stats.queries_performed}\n"
-                            )
-                    except Exception:  # noqa: BLE001
-                        p2p_info = "P2P peers: error reading status\n"
-                else:
-                    p2p_info = "P2P peers: 0 (local mode)\n"
-
+                    ]
+                lines = [
+                    "Search Analytics",
+                    "================",
+                    (f"Total searches: {data['total_searches']}"),
+                    f"Total crawls: {data['total_crawls']}",
+                    (f"Total fetches: {data['total_fetches']}"),
+                    (f"Avg latency: {data['avg_latency_ms']}ms"),
+                ]
                 return [
                     TextContent(
                         type="text",
-                        text=(
-                            f"InfoMesh Node Status\n"
-                            f"====================\n"
-                            f"Phase: 4 (Production)\n"
-                            f"Documents indexed: {stats['document_count']}\n"
-                            f"{vec_info}"
-                            f"{link_info}"
-                            f"{credit_info}"
-                            f"Pending crawl URLs: "
-                            f"{scheduler.pending_count if scheduler else 0}\n"
-                            f"Ranking: BM25 + freshness + trust + authority\n"
-                            f"{p2p_info}"
+                        text="\n".join(lines),
+                    )
+                ]
+            case "explain":
+                return await handle_explain(
+                    arguments,
+                    store=store,
+                    link_graph=link_graph,
+                )
+            case "search_history":
+                limit = min(
+                    int(arguments.get("limit", 20)),
+                    100,
+                )
+                history = pstore.get_history(limit=limit)
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(
+                            {"history": history},
+                            ensure_ascii=False,
                         ),
                     )
                 ]
-
+            case "search_rag":
+                return await handle_search_rag(
+                    arguments,
+                    store=store,
+                    link_graph=link_graph,
+                    analytics=analytics,
+                    ledger=ledger,
+                )
+            case "extract_answer":
+                return await handle_extract_answer(
+                    arguments,
+                    store=store,
+                    link_graph=link_graph,
+                    ledger=ledger,
+                )
+            case "fact_check":
+                return await handle_fact_check(
+                    arguments,
+                    store=store,
+                    link_graph=link_graph,
+                )
             case _:
-                return [TextContent(type="text", text=f"Unknown tool: {name}")]
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Unknown tool: {name}",
+                    )
+                ]
 
-    return app, ctx
-
-
-def _deduct_search_cost(ledger: Any) -> None:
-    """Deduct search cost from the credit ledger (debt-aware).
-
-    Never blocks — if balance is negative, the node enters grace/debt mode.
-    During debt mode the cost is doubled, but search is always allowed.
-    """
-    if ledger is None:
-        return
-    try:
-        allowance = ledger.search_allowance()
-        ledger.spend(allowance.search_cost, reason="search")
-    except Exception:  # noqa: BLE001
-        logger.debug("search_cost_deduction_failed")
+    return app, ctx, pstore
 
 
-async def run_mcp_server(config: Config | None = None) -> None:
-    """Run the MCP server on stdio.
+# ── Server runners ─────────────────────────────────────────────────
+
+
+def _env_api_key() -> str | None:
+    """Read optional API key from environment."""
+    return os.environ.get("INFOMESH_API_KEY")
+
+
+async def run_mcp_server(
+    config: Config | None = None,
+) -> None:
+    """Run the MCP server on stdio transport.
 
     Args:
         config: Configuration. Loads default if None.
@@ -495,8 +300,132 @@ async def run_mcp_server(config: Config | None = None) -> None:
     if config is None:
         config = load_config()
 
-    app, ctx = _create_app(config)
-    logger.info("mcp_server_starting")
+    app, ctx, pstore = _create_app(config, api_key=_env_api_key())
+    logger.info("mcp_server_starting", transport="stdio")
 
-    async with ctx, stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+    async with ctx, stdio_server() as (rs, ws):
+        try:
+            await app.run(rs, ws, app.create_initialization_options())
+        finally:
+            pstore.close()
+
+
+async def run_mcp_http_server(
+    config: Config | None = None,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8081,
+) -> None:
+    """Run the MCP server on HTTP Streamable transport.
+
+    Enables remote agents and containers to connect
+    over HTTP instead of stdio.
+
+    Args:
+        config: Configuration. Loads default if None.
+        host: Bind address (default: localhost only).
+        port: HTTP port (default: 8081).
+    """
+    if config is None:
+        config = load_config()
+
+    app, ctx, pstore = _create_app(config, api_key=_env_api_key())
+    logger.info(
+        "mcp_server_starting",
+        transport="http",
+        host=host,
+        port=port,
+    )
+
+    try:
+        from mcp.server.streamable_http import (
+            StreamableHTTPServerTransport,
+        )
+    except ImportError:
+        logger.warning(
+            "streamable_http_unavailable",
+            detail=("mcp HTTP deps missing. Install with: uv add starlette uvicorn"),
+        )
+        raise
+
+    transport = StreamableHTTPServerTransport(
+        mcp_session_id=None,
+    )
+
+    async def _asgi_app(
+        scope: dict[str, object],
+        receive: object,
+        send: object,
+    ) -> None:
+        """Minimal ASGI app routing /mcp to transport."""
+        if scope.get("type") == "http":
+            path = scope.get("path", "")
+            if path == "/health":
+                import json as _json
+
+                body = _json.dumps({"status": "ok"}).encode()
+                await send(  # type: ignore[operator]
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [
+                            [
+                                b"content-type",
+                                b"application/json",
+                            ],
+                        ],
+                    }
+                )
+                await send(  # type: ignore[operator]
+                    {
+                        "type": "http.response.body",
+                        "body": body,
+                    }
+                )
+                return
+            if path == "/mcp":
+                await transport.handle_request(
+                    scope,
+                    receive,  # type: ignore[arg-type]
+                    send,  # type: ignore[arg-type]
+                )
+                return
+        # 404 for other paths
+        if scope.get("type") == "http":
+            await send(  # type: ignore[operator]
+                {
+                    "type": "http.response.start",
+                    "status": 404,
+                    "headers": [],
+                }
+            )
+            await send(  # type: ignore[operator]
+                {
+                    "type": "http.response.body",
+                    "body": b"Not Found",
+                }
+            )
+
+    import uvicorn
+
+    uvi_config = uvicorn.Config(
+        _asgi_app,
+        host=host,
+        port=port,
+        log_level="info",
+    )
+    uvi_server = uvicorn.Server(uvi_config)
+
+    async with ctx, transport.connect() as (rs, ws):
+        task = asyncio.create_task(
+            app.run(
+                rs,
+                ws,
+                app.create_initialization_options(),
+            )
+        )
+        try:
+            await uvi_server.serve()
+        finally:
+            task.cancel()
+            pstore.close()

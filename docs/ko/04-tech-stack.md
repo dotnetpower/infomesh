@@ -40,6 +40,7 @@ infomesh/
 │   ├── __init__.py          # 패키지 루트
 │   ├── __main__.py          # CLI 진입점
 │   ├── config.py            # 설정 관리
+│   ├── services.py          # 중앙 AppContext + index_document 오케스트레이션
 │   ├── p2p/                 # P2P 네트워크 레이어
 │   │   ├── node.py          #   피어 메인 프로세스
 │   │   ├── dht.py           #   Kademlia DHT
@@ -52,7 +53,8 @@ infomesh/
 │   │   ├── parser.py        #   HTML → 텍스트 추출
 │   │   ├── robots.py        #   robots.txt 준수
 │   │   ├── dedup.py         #   중복 제거 파이프라인 (URL, SHA-256, SimHash)
-│   │   └── seeds.py         #   시드 URL 관리 및 카테고리 선택
+│   │   ├── seeds.py         #   시드 URL 관리 및 카테고리 선택
+│   │   └── crawl_loop.py    #   연속 시드-크롤링 루프 (services.py에서 추출)
 │   ├── index/               # 검색 인덱스
 │   │   ├── local_store.py   #   SQLite FTS5 로컬 인덱스
 │   │   ├── vector_store.py  #   ChromaDB 벡터 인덱스
@@ -61,12 +63,16 @@ infomesh/
 │   ├── search/              # 검색 엔진
 │   │   ├── query.py         #   쿼리 파싱 + 분산 검색 오케스트레이션
 │   │   └── merge.py         #   다중 노드 결과 병합
-│   ├── mcp/                 # MCP 서버
-│   │   └── server.py        #   search(), search_local(), fetch_page(), crawl_url(), network_stats()
+│   ├── mcp/                 # MCP 서버 (SRP: 4개 모듈로 분리)
+│   │   ├── server.py        #   연결 레이어: Server 생성, 툴 디스패치, 실행기
+│   │   ├── tools.py         #   툴 스키마 정의 + 필터 추출
+│   │   ├── handlers.py      #   툴 핸들러 구현 (handle_search 등)
+│   │   └── session.py       #   SearchSession, AnalyticsTracker, WebhookRegistry
 │   ├── api/                 # 로컬 관리 API
 │   │   └── local_api.py     #   FastAPI (상태 조회, 설정 변경)
 │   ├── credits/             # 인센티브 시스템
-│   │   └── ledger.py        #   로컬 크레딧 원장
+│   │   ├── types.py         #   ActionType, CreditState, 데이터클래스 (ledger.py에서 추출)
+│   │   └── ledger.py        #   SQLite 기반 크레딧 원장 (types.py에서 타입 임포트)
 │   ├── trust/               # 신뢰 & 무결성
 │   │   ├── attestation.py   #   콘텐츠 증명 체인 (서명, 검증)
 │   │   ├── audit.py         #   랜덤 감사 시스템
@@ -92,7 +98,9 @@ infomesh/
 │   ├── test_credits.py
 │   ├── test_trust.py
 │   ├── test_summarizer.py
-│   └── test_mcp.py
+│   ├── test_mcp.py
+│   ├── test_services.py     # 서비스 레이어 테스트
+│   └── test_mcp_handlers.py # MCP 핸들러 테스트
 └── docs/
 ```
 

@@ -1,6 +1,6 @@
 [project]
 name = "infomesh"
-version = "0.1.3"
+version = "0.2.0"
 description = "Fully decentralized P2P search engine for LLMs via MCP"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -67,6 +67,7 @@ Homepage = "https://github.com/dotnetpower/infomesh"
 Repository = "https://github.com/dotnetpower/infomesh"
 Documentation = "https://github.com/dotnetpower/infomesh/tree/main/docs"
 Issues = "https://github.com/dotnetpower/infomesh/issues"
+Changelog = "https://github.com/dotnetpower/infomesh/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
@@ -93,9 +94,11 @@ include = [
     "README.md",
     "pyproject.toml",
 ]
+exclude = ["infomesh/assets/bgm/"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["infomesh"]
+exclude = ["infomesh/assets/bgm/"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "seeds" = "share/infomesh/seeds"

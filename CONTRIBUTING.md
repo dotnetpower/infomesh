@@ -121,22 +121,55 @@ infomesh/
 │   ├── __main__.py    #   CLI entry point (Click)
 │   ├── config.py      #   Configuration management
 │   ├── services.py    #   Service layer (AppContext)
-│   ├── p2p/           #   P2P network (libp2p, DHT)
-│   ├── crawler/       #   Web crawler
-│   ├── index/         #   Search index (FTS5, ChromaDB)
-│   ├── search/        #   Query processing
-│   ├── mcp/           #   MCP server for LLMs
+│   ├── errors.py      #   Structured error hierarchy
+│   ├── scalability.py #   Batch ingest & horizontal scaling
+│   ├── data_quality.py#   Quality scoring & validation
+│   ├── security_ext.py#   API keys, RBAC, audit logging
+│   ├── dx.py          #   Developer experience (plugin system)
+│   ├── p2p/           #   P2P network (libp2p, DHT, mDNS)
+│   ├── crawler/       #   Web crawler (PDF, RSS, structured data)
+│   ├── index/         #   Search index (FTS5, ChromaDB, link graph)
+│   ├── search/        #   Query processing (NLP, facets, RAG)
+│   ├── mcp/           #   MCP server for LLMs (15 tools)
 │   ├── credits/       #   Incentive system
-│   ├── trust/         #   Content integrity
+│   ├── trust/         #   Content integrity & attestation
 │   ├── summarizer/    #   Local LLM summarization
 │   ├── dashboard/     #   Console TUI (Textual)
 │   ├── resources/     #   Resource governance
-│   └── compression/   #   zstd compression
-├── tests/             # Test suite
+│   ├── compression/   #   zstd compression
+│   ├── api/           #   FastAPI admin API + extensions
+│   ├── sdk/           #   Python SDK client
+│   ├── integrations/  #   LangChain, LlamaIndex, Haystack
+│   ├── persistence/   #   Persistent key-value store
+│   └── observability/ #   Prometheus metrics
+├── tests/             # Test suite (1,307 tests)
 ├── docs/              # Documentation (en + ko)
 ├── seeds/             # Seed URL lists
+├── examples/          # Usage examples
 └── bootstrap/         # Bootstrap node config
 ```
+
+## Good First Issues
+
+Looking for a place to start? Here are beginner-friendly tasks:
+
+| Issue | Difficulty | Area |
+|-------|-----------|------|
+| Add seed URLs for a new language/topic | 🟢 Easy | Seeds |
+| Fix typos in documentation | 🟢 Easy | Docs |
+| Translate docs to a new language | 🟢 Easy | Docs |
+| Add missing docstrings | 🟢 Easy | Code Quality |
+| Write tests for untested edge cases | 🟡 Medium | Testing |
+| Add a new NLP stop-word language | 🟡 Medium | Search |
+| Improve CLI help text and examples | 🟡 Medium | CLI |
+| Add new structured data extractors | 🟡 Medium | Crawler |
+| Create a usage example in `examples/` | 🟡 Medium | DX |
+| Add a new dashboard widget | 🟠 Moderate | Dashboard |
+| Implement a new search result format | 🟠 Moderate | Search |
+| Add new credit action types | 🟠 Moderate | Credits |
+| Integration with a new LLM framework | 🔴 Advanced | Integrations |
+| Playwright-based JS rendering | 🔴 Advanced | Crawler |
+| Multi-language stemming support | 🔴 Advanced | Search |
 
 ## Submitting Changes
 

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/dotnetpower/infomesh/tree/main/docs
+    about: Read the docs before filing an issue
+  - name: Discussions
+    url: https://github.com/dotnetpower/infomesh/discussions
+    about: Ask questions and discuss ideas

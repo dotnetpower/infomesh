@@ -1,0 +1,65 @@
+# InfoMesh Docker Compose — Multi-architecture deployment
+# Feature #97: ARM64 support + #100: One-click deploy
+#
+# Usage:
+#   docker compose up -d                    # Start single node
+#   docker compose --profile cluster up -d  # Start 3-node cluster
+#
+# Supports: linux/amd64, linux/arm64
+
+services:
+  infomesh:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: ghcr.io/dotnetpower/infomesh:latest
+    container_name: infomesh-node
+    restart: unless-stopped
+    ports:
+      - "8081:8081"   # MCP HTTP
+      - "4001:4001"   # P2P
+      - "8080:8080"   # Admin API
+    volumes:
+      - infomesh-data:/root/.infomesh
+    environment:
+      - INFOMESH_PROFILE=balanced
+      - INFOMESH_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # Cluster nodes (activate with --profile cluster)
+  infomesh-node2:
+    extends:
+      service: infomesh
+    container_name: infomesh-node2
+    profiles: ["cluster"]
+    ports:
+      - "8082:8081"
+      - "4002:4001"
+      - "8180:8080"
+    volumes:
+      - infomesh-data2:/root/.infomesh
+
+  infomesh-node3:
+    extends:
+      service: infomesh
+    container_name: infomesh-node3
+    profiles: ["cluster"]
+    ports:
+      - "8083:8081"
+      - "4003:4001"
+      - "8280:8080"
+    volumes:
+      - infomesh-data3:/root/.infomesh
+
+volumes:
+  infomesh-data:
+  infomesh-data2:
+  infomesh-data3:

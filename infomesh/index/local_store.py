@@ -237,35 +237,85 @@ class LocalStore:
             logger.debug("doc_duplicate", url=url)
             return None
 
-    def search(self, query: str, *, limit: int = 10) -> list[SearchResult]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        offset: int = 0,
+        language: str | None = None,
+        date_from: float | None = None,
+        date_to: float | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> list[SearchResult]:
         """Search the local index using FTS5 with BM25 ranking.
 
         Args:
             query: Search query string.
             limit: Maximum results to return (capped at 1000).
+            offset: Number of results to skip (for pagination).
+            language: Filter by ISO language code (e.g. ``"en"``).
+            date_from: Only include docs crawled after this Unix ts.
+            date_to: Only include docs crawled before this Unix ts.
+            include_domains: Only include results from these domains.
+            exclude_domains: Exclude results from these domains.
 
         Returns:
             List of search results ordered by relevance.
         """
         # Validate inputs
         limit = max(1, min(limit, 1000))
+        offset = max(0, min(offset, 10000))
 
         try:
+            # Build dynamic WHERE clause beyond FTS MATCH
+            extra_conditions: list[str] = []
+            params: list[object] = [query]
+
+            if language:
+                extra_conditions.append("d.language = ?")
+                params.append(language)
+            if date_from is not None:
+                extra_conditions.append("d.crawled_at >= ?")
+                params.append(date_from)
+            if date_to is not None:
+                extra_conditions.append("d.crawled_at <= ?")
+                params.append(date_to)
+
+            # Domain filtering via URL substring matching
+            if include_domains:
+                placeholders = ", ".join("?" for _ in include_domains)
+                # Extract domain from URL for matching
+                extra_conditions.append(f"{self._DOMAIN_SQL} IN ({placeholders})")
+                params.extend(include_domains)
+            if exclude_domains:
+                placeholders = ", ".join("?" for _ in exclude_domains)
+                extra_conditions.append(f"{self._DOMAIN_SQL} NOT IN ({placeholders})")
+                params.extend(exclude_domains)
+
+            where_extra = ""
+            if extra_conditions:
+                where_extra = " AND " + " AND ".join(extra_conditions)
+
+            params.extend([limit, offset])
+
             rows = self._conn.execute(
-                """SELECT
+                f"""SELECT
                        d.doc_id,
                        d.url,
                        d.title,
-                       snippet(documents_fts, 1, '<b>', '</b>', '...', 40) AS snippet,
+                       snippet(documents_fts, 1, '<b>', '</b>', '...', 40)
+                           AS snippet,
                        bm25(documents_fts) AS score,
                        d.language,
                        d.crawled_at
                    FROM documents_fts
                    JOIN documents d ON d.doc_id = documents_fts.rowid
-                   WHERE documents_fts MATCH ?
+                   WHERE documents_fts MATCH ?{where_extra}
                    ORDER BY bm25(documents_fts)
-                   LIMIT ?""",
-                (query, limit),
+                   LIMIT ? OFFSET ?""",
+                tuple(params),
             ).fetchall()
 
             results = [
@@ -286,6 +336,31 @@ class LocalStore:
 
         except sqlite3.OperationalError as exc:
             logger.error("search_error", query=query, error=str(exc))
+            return []
+
+    def suggest(self, prefix: str, *, limit: int = 10) -> list[str]:
+        """Return title-based search suggestions for a prefix.
+
+        Uses a simple LIKE query on indexed document titles.
+
+        Args:
+            prefix: Partial query text.
+            limit: Maximum suggestions.
+
+        Returns:
+            List of matching title strings.
+        """
+        limit = max(1, min(limit, 50))
+        safe = prefix.replace("%", "").replace("_", "")[:100]
+        try:
+            rows = self._conn.execute(
+                "SELECT DISTINCT title FROM documents "
+                "WHERE title LIKE ? COLLATE NOCASE "
+                "ORDER BY crawled_at DESC LIMIT ?",
+                (f"%{safe}%", limit),
+            ).fetchall()
+            return [row["title"] for row in rows]
+        except sqlite3.OperationalError:
             return []
 
     def _row_to_document(self, row: sqlite3.Row) -> IndexedDocument:

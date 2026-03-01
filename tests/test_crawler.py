@@ -586,3 +586,109 @@ class TestForceCrawl:
         # Should NOT be blocked by already_seen
         assert result.error != "already_seen"
         dedup.close()
+
+
+class TestReseedQueue:
+    """Tests for the _reseed_queue idle-restart helper."""
+
+    @pytest.mark.asyncio
+    async def test_reseed_adds_unseen_seeds(self) -> None:
+        """Unseen seed URLs are added to the scheduler queue."""
+        from infomesh.services import _reseed_queue
+
+        scheduler = Scheduler()
+        dedup = MagicMock()
+        dedup.is_url_seen = MagicMock(return_value=False)
+
+        worker = MagicMock()
+        ctx = MagicMock()
+        ctx.scheduler = scheduler
+        ctx.dedup = dedup
+        ctx.worker = worker
+        ctx.config = MagicMock()
+
+        log = MagicMock()
+
+        with (
+            patch(
+                "infomesh.crawler.crawl_loop.CATEGORIES",
+                {"cat1": "desc"},
+            ),
+            patch(
+                "infomesh.crawler.crawl_loop.load_seeds",
+                return_value=["https://a.com", "https://b.com"],
+            ),
+        ):
+            added = await _reseed_queue(ctx, log)
+
+        assert added == 2
+        assert scheduler.pending_count == 2
+
+    @pytest.mark.asyncio
+    async def test_reseed_rediscovers_links(self) -> None:
+        """Already-seen seeds are re-fetched to discover new child links."""
+        from infomesh.services import _reseed_queue
+
+        scheduler = Scheduler()
+
+        call_count = 0
+
+        def _is_url_seen(url: str) -> bool:
+            nonlocal call_count
+            # Seed URL is seen; discovered child links are not
+            if url == "https://seed.com":
+                return True
+            call_count += 1
+            return False
+
+        dedup = MagicMock()
+        dedup.is_url_seen = MagicMock(side_effect=_is_url_seen)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = (
+            "<html><body>"
+            '<a href="https://seed.com/page1">P1</a>'
+            '<a href="https://seed.com/page2">P2</a>'
+            "</body></html>"
+        )
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        worker = MagicMock()
+        worker.get_http_client = AsyncMock(return_value=mock_client)
+
+        ctx = MagicMock()
+        ctx.scheduler = scheduler
+        ctx.dedup = dedup
+        ctx.worker = worker
+
+        log = MagicMock()
+
+        with (
+            patch(
+                "infomesh.crawler.crawl_loop.CATEGORIES",
+                {"cat1": "desc"},
+            ),
+            patch(
+                "infomesh.crawler.crawl_loop.load_seeds",
+                return_value=["https://seed.com"],
+            ),
+        ):
+            added = await _reseed_queue(ctx, log)
+
+        assert added == 2
+        assert scheduler.pending_count == 2
+
+    @pytest.mark.asyncio
+    async def test_reseed_returns_zero_when_no_components(self) -> None:
+        """Returns 0 when crawler components are None."""
+        from infomesh.services import _reseed_queue
+
+        ctx = MagicMock()
+        ctx.scheduler = None
+        ctx.dedup = None
+        ctx.worker = None
+
+        added = await _reseed_queue(ctx, MagicMock())
+        assert added == 0

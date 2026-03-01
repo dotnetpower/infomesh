@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: infomesh
+  namespace: infomesh
+  labels:
+    app: infomesh
+spec:
+  serviceName: infomesh
+  replicas: 3
+  selector:
+    matchLabels:
+      app: infomesh
+  template:
+    metadata:
+      labels:
+        app: infomesh
+    spec:
+      containers:
+        - name: infomesh
+          image: infomesh:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: admin
+            - containerPort: 8081
+              name: mcp-http
+          env:
+            - name: INFOMESH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: infomesh-secret
+                  key: api-key
+                  optional: true
+            - name: INFOMESH_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: data
+              mountPath: /home/infomesh/.infomesh
+            - name: config
+              mountPath: /etc/infomesh
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: admin
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: infomesh-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

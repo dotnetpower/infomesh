@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import time
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -14,7 +15,7 @@ from textual.widgets import Button, Footer, Header, Label, TabbedContent, TabPan
 
 from infomesh import __version__
 from infomesh.config import Config, load_config
-from infomesh.dashboard.bgm import BGMPlayer
+from infomesh.dashboard.bgm import _BGM_CACHE_DIR, BGMPlayer, ensure_bgm_assets
 from infomesh.dashboard.data_cache import DashboardDataCache
 from infomesh.dashboard.screens.crawl import CrawlPane
 from infomesh.dashboard.screens.credits import CreditsPane
@@ -26,10 +27,13 @@ from infomesh.dashboard.screens.settings import SettingsPane
 # CSS path relative to this module
 _CSS_PATH = Path(__file__).parent / "dashboard.tcss"
 
-# BGM assets directory (infomesh/assets/bgm — inside the package)
-_BGM_DIR = Path(__file__).parent.parent / "assets" / "bgm"
-_BGM_FILE = _BGM_DIR / "infomesh-bg-fade.mp3"
-_COIN_SFX = _BGM_DIR / "coin-street-fighter.mp3"
+# BGM file names (downloaded to ~/.infomesh/bgm/ on first launch)
+_BGM_FILENAME = "infomesh-bg-fade.mp3"
+_COIN_SFX_FILENAME = "coin-street-fighter.mp3"
+
+# BGM auto-stop: stop music when no crawl activity for this many seconds
+_CRAWL_IDLE_THRESHOLD_SECS = 10.0
+_CRAWL_IDLE_CHECK_INTERVAL_SECS = 2.0
 
 
 class DashboardCommandProvider(Provider):
@@ -200,6 +204,8 @@ class DashboardApp(App[None]):
         self.exit_action: str = "dashboard_only"
         self._bgm = BGMPlayer()
         self._data_cache = DashboardDataCache(self.config, ttl=0.5)
+        # Track whether BGM was auto-stopped due to crawl idleness
+        self._bgm_idle_stopped: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header(icon="🌐")
@@ -224,23 +230,75 @@ class DashboardApp(App[None]):
             return
         if not self._bgm.available:
             return
-        if not _BGM_FILE.exists():
-            return
-        vol = self.config.dashboard.bgm_volume
-        if self._bgm.play(_BGM_FILE, volume=vol):
-            self.notify(
-                f"🎵 {_BGM_FILE.name} (vol {vol}%)",
-                title="BGM",
-                timeout=3,
-            )
+        try:
+            bgm_dir = ensure_bgm_assets()
+            bgm_file = bgm_dir / _BGM_FILENAME
+            if not bgm_file.exists():
+                return
+            vol = self.config.dashboard.bgm_volume
+            if self._bgm.play(bgm_file, volume=vol):
+                self.notify(
+                    f"🎵 {bgm_file.name} (vol {vol}%)",
+                    title="BGM",
+                    timeout=3,
+                )
+                # Start periodic crawl-idle check for auto-stop
+                self.set_interval(
+                    _CRAWL_IDLE_CHECK_INTERVAL_SECS,
+                    self._check_crawl_idle_bgm,
+                )
+        except Exception:  # noqa: BLE001
+            pass  # BGM is optional — never block dashboard
+
+    def _check_crawl_idle_bgm(self) -> None:
+        """Periodically check crawl activity; stop BGM if idle > threshold.
+
+        When the most recent crawl timestamp is more than
+        ``_CRAWL_IDLE_THRESHOLD_SECS`` seconds ago, BGM is paused
+        automatically — acting as an audible signal that crawling has
+        stalled.  When crawling resumes the BGM restarts automatically.
+        """
+        try:
+            stats = self._data_cache.get_stats()
+            now = time.time()
+            idle_secs = now - stats.last_crawl_at if stats.last_crawl_at else 0.0
+
+            if stats.last_crawl_at and idle_secs > _CRAWL_IDLE_THRESHOLD_SECS:
+                # Crawling idle → stop BGM if still playing
+                if self._bgm.is_playing and not self._bgm_idle_stopped:
+                    self._bgm.stop()
+                    self._bgm_idle_stopped = True
+                    self.notify(
+                        "🔇 Crawl idle — BGM paused",
+                        title="BGM",
+                        timeout=3,
+                    )
+            elif self._bgm_idle_stopped and stats.last_crawl_at:
+                # Crawling resumed → restart BGM
+                self._bgm_idle_stopped = False
+                bgm_file = _BGM_CACHE_DIR / _BGM_FILENAME
+                if bgm_file.exists():
+                    vol = self.config.dashboard.bgm_volume
+                    if self._bgm.play(bgm_file, volume=vol):
+                        self.notify(
+                            f"🎵 Crawl resumed — BGM restarted (vol {vol}%)",
+                            title="BGM",
+                            timeout=3,
+                        )
+        except Exception:  # noqa: BLE001
+            pass  # Never crash the dashboard for BGM
 
     def on_credits_pane_credit_earned(
         self,
         event: CreditsPane.CreditEarned,
     ) -> None:
         """Play coin SFX when credits increase (only if BGM is playing)."""
-        if self._bgm.is_playing and _COIN_SFX.exists():
-            self._bgm.play_sfx(_COIN_SFX, volume=100)
+        try:
+            coin_sfx = _BGM_CACHE_DIR / _COIN_SFX_FILENAME
+            if self._bgm.is_playing and coin_sfx.exists():
+                self._bgm.play_sfx(coin_sfx, volume=100)
+        except Exception:  # noqa: BLE001
+            pass
         if event.delta > 0:
             self.notify(
                 f"🪙 +{event.delta:.2f} credits!",
@@ -293,33 +351,29 @@ class DashboardApp(App[None]):
             )
             return
 
-        if not _BGM_DIR.exists() or not _BGM_DIR.is_dir():
-            self.notify(
-                "No assets/bgm/ folder found",
-                title="BGM",
-                severity="warning",
-            )
+        try:
+            bgm_dir = ensure_bgm_assets()
+        except Exception:  # noqa: BLE001
+            return
+
+        if not bgm_dir.exists() or not bgm_dir.is_dir():
             return
 
         # Find first MP3/audio file in the bgm directory
         audio_exts = (".mp3", ".wav", ".ogg", ".flac", ".m4a")
         try:
             tracks = sorted(
-                f for f in _BGM_DIR.iterdir() if f.suffix.lower() in audio_exts
+                f for f in bgm_dir.iterdir() if f.suffix.lower() in audio_exts
             )
         except OSError:
             tracks = []
 
         if not tracks:
-            self.notify(
-                "No audio files in assets/bgm/",
-                title="BGM",
-                severity="warning",
-            )
             return
 
         vol = self.config.dashboard.bgm_volume
-        bgm_track = _BGM_FILE if _BGM_FILE.exists() else tracks[0]
+        bgm_file = bgm_dir / _BGM_FILENAME
+        bgm_track = bgm_file if bgm_file.exists() else tracks[0]
         playing = self._bgm.toggle(bgm_track, volume=vol)
         icon = "🎵" if playing else "🔇"
         status = f"{bgm_track.name} (vol {vol}%)" if playing else "stopped"

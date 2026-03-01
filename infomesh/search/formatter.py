@@ -2,16 +2,112 @@
 
 Extracts the duplicated result-rendering logic into a single module
 so formatting changes only need to happen in one place.
+
+Supports both plain-text and JSON output formats.
 """
 
 from __future__ import annotations
 
+import json
 import time
 from urllib.parse import urlparse
 
 from infomesh.index.ranking import RankedResult
 from infomesh.search.merge import MergedResult
 from infomesh.search.query import DistributedResult, HybridResult, QueryResult
+
+# ── JSON formatters ────────────────────────────────────────────────
+
+
+def _ranked_to_dict(r: RankedResult, *, max_snippet: int = 200) -> dict[str, object]:
+    """Convert a RankedResult to a JSON-serializable dict."""
+    d: dict[str, object] = {
+        "url": r.url,
+        "title": r.title,
+        "domain": urlparse(r.url).netloc,
+        "snippet": r.snippet[:max_snippet],
+        "score": round(r.combined_score, 4),
+        "scores": {
+            "bm25": round(r.bm25_score, 4),
+            "freshness": round(r.freshness_score, 4),
+            "trust": round(r.trust_score, 4),
+            "authority": round(r.authority_score, 4),
+        },
+        "crawled_at": r.crawled_at,
+        "peer_id": r.peer_id,
+    }
+    # Freshness indicator (optional)
+    if r.crawled_at:
+        try:
+            from infomesh.data_quality import compute_freshness_indicator
+
+            fi = compute_freshness_indicator(r.crawled_at)
+            d["freshness_grade"] = fi.freshness_grade
+            d["freshness_label"] = fi.age_label
+        except Exception:
+            pass
+    return d
+
+
+def _merged_to_dict(r: MergedResult, *, max_snippet: int = 200) -> dict[str, object]:
+    """Convert a MergedResult to a JSON-serializable dict."""
+    scores: dict[str, float] = {}
+    if r.fts_score is not None:
+        scores["bm25"] = round(r.fts_score, 4)
+    if r.vector_score is not None:
+        scores["vector"] = round(r.vector_score, 4)
+    scores["rrf"] = round(r.combined_score, 4)
+    return {
+        "url": r.url,
+        "title": r.title,
+        "domain": urlparse(r.url).netloc,
+        "snippet": r.snippet[:max_snippet],
+        "source": r.source,
+        "scores": scores,
+    }
+
+
+def format_fts_results_json(result: QueryResult, *, max_snippet: int = 200) -> str:
+    """Format FTS-only search results as JSON."""
+    data = {
+        "total": result.total,
+        "elapsed_ms": round(result.elapsed_ms, 1),
+        "source": result.source,
+        "results": [
+            _ranked_to_dict(r, max_snippet=max_snippet) for r in result.results
+        ],
+    }
+    return json.dumps(data, ensure_ascii=False)
+
+
+def format_hybrid_results_json(hybrid: HybridResult, *, max_snippet: int = 200) -> str:
+    """Format hybrid search results as JSON."""
+    data = {
+        "total": hybrid.total,
+        "elapsed_ms": round(hybrid.elapsed_ms, 1),
+        "source": hybrid.source,
+        "results": [
+            _merged_to_dict(r, max_snippet=max_snippet) for r in hybrid.results
+        ],
+    }
+    return json.dumps(data, ensure_ascii=False)
+
+
+def format_distributed_results_json(
+    result: DistributedResult, *, max_snippet: int = 200
+) -> str:
+    """Format distributed search results as JSON."""
+    data = {
+        "total": result.total,
+        "elapsed_ms": round(result.elapsed_ms, 1),
+        "source": result.source,
+        "local_count": result.local_count,
+        "remote_count": result.remote_count,
+        "results": [
+            _ranked_to_dict(r, max_snippet=max_snippet) for r in result.results
+        ],
+    }
+    return json.dumps(data, ensure_ascii=False)
 
 
 def format_fts_results(result: QueryResult, *, max_snippet: int = 200) -> str:
@@ -88,9 +184,23 @@ def format_distributed_results(
 # ── internal helpers ───────────────────────────────────────────────
 
 
+def _freshness_label(crawled_at: float | None) -> str:
+    """Return a human-readable freshness label."""
+    if not crawled_at:
+        return ""
+    try:
+        from infomesh.data_quality import compute_freshness_indicator
+
+        fi = compute_freshness_indicator(crawled_at)
+        return f", {fi.age_label}"
+    except Exception:
+        return ""
+
+
 def _format_ranked(idx: int, r: RankedResult, *, max_snippet: int = 200) -> str:
     """Format a single FTS-ranked result."""
     domain = urlparse(r.url).netloc
+    fresh = _freshness_label(r.crawled_at)
     return (
         f"[{idx}] {r.title}\n"
         f"    Source: {r.url}\n"
@@ -99,7 +209,7 @@ def _format_ranked(idx: int, r: RankedResult, *, max_snippet: int = 200) -> str:
         f"(BM25={r.bm25_score:.3f}, "
         f"fresh={r.freshness_score:.3f}, "
         f"trust={r.trust_score:.3f}, "
-        f"auth={r.authority_score:.3f})\n"
+        f"auth={r.authority_score:.3f}{fresh})\n"
         f"    {r.snippet[:max_snippet]}\n"
     )
 

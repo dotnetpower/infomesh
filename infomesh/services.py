@@ -4,6 +4,7 @@ Extracted from CLI and MCP handlers to enforce SRP:
 - CLI commands are thin wrappers that parse args and format output.
 - MCP tool handlers dispatch to service functions and format responses.
 - Business logic lives here, in one place.
+- Crawl loop logic lives in ``crawler.crawl_loop``.
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-import httpx
 import structlog
 
 from infomesh.config import Config, NodeRole, load_config
@@ -21,7 +21,7 @@ from infomesh.crawler.robots import RobotsChecker
 from infomesh.crawler.scheduler import Scheduler
 from infomesh.crawler.worker import CrawlWorker
 from infomesh.credits.github_identity import resolve_github_email
-from infomesh.credits.ledger import ActionType, CreditLedger
+from infomesh.credits.ledger import CreditLedger
 from infomesh.index.link_graph import LinkGraph
 from infomesh.index.local_store import LocalStore
 from infomesh.p2p.keys import ensure_keys
@@ -29,6 +29,8 @@ from infomesh.security import SSRFError, validate_url
 from infomesh.types import KeyPairLike, VectorStoreLike
 
 logger = structlog.get_logger()
+
+# ─── Content utility functions ─────────────────────────────
 
 # Paywall signal strings (case-insensitive match)
 _PAYWALL_SIGNALS = (
@@ -271,137 +273,6 @@ async def crawl_and_index(
     )
 
 
-# ─── seed_and_crawl_loop: the main crawl loop ─────────────
-
-
-async def seed_and_crawl_loop(
-    ctx: AppContext,
-    seed_category: str = "tech-docs",
-) -> None:
-    """Load seeds, schedule URLs, and run the continuous crawl loop.
-
-    Extracted from ``cli/serve.py`` so both CLI and future daemon code
-    share the same logic.
-
-    Requires crawler components (worker, scheduler, dedup).
-    Search-only nodes should not call this function.
-    """
-    import asyncio
-
-    from infomesh.crawler.parser import extract_links
-    from infomesh.crawler.seeds import load_seeds
-    from infomesh.resources.preflight import is_disk_critically_low
-
-    _logger = structlog.get_logger()
-
-    if ctx.worker is None or ctx.scheduler is None or ctx.dedup is None:
-        _logger.error(
-            "seed_and_crawl_loop_skipped",
-            reason="crawler components not initialized (search-only role?)",
-        )
-        return
-
-    # ── Phase 1: seed loading & rediscovery ────────────────
-    seed_urls = load_seeds(category=seed_category)
-    if seed_urls:
-        queued = 0
-        rediscovered = 0
-        for url in seed_urls:
-            if ctx.dedup.is_url_seen(url):
-                try:
-                    client = await ctx.worker.get_http_client()
-                    resp = await client.get(url, timeout=30.0)
-                    if resp.status_code < 400:
-                        links = extract_links(resp.text, url)
-                        for link in links:
-                            if not ctx.dedup.is_url_seen(
-                                link
-                            ) and await ctx.scheduler.add_url(link, depth=1):
-                                rediscovered += 1
-                except (httpx.HTTPError, OSError):  # noqa: BLE001
-                    _logger.debug("seed_rediscovery_failed", url=url)
-            elif await ctx.scheduler.add_url(url, depth=0):
-                queued += 1
-
-        _logger.info(
-            "seeds_queued",
-            category=seed_category,
-            total=len(seed_urls),
-            new=queued,
-            rediscovered=rediscovered,
-        )
-    else:
-        _logger.warning("no_seeds_found", category=seed_category)
-
-    # ── Phase 2: continuous crawl loop ─────────────────────
-    # Disable hourly rate limit for the background crawl loop.
-    # The 60 URLs/hr limit (config.crawl.urls_per_hour) is intended
-    # for the crawl_url() MCP API, not the continuous background crawler.
-    # Per-domain politeness delays still apply.
-    ctx.scheduler.set_urls_per_hour(0)
-
-    crawl_count = 0
-    disk_check_interval = 60
-    last_disk_check = 0.0
-
-    while True:
-        now = time.monotonic()
-        if now - last_disk_check > disk_check_interval:
-            last_disk_check = now
-            if is_disk_critically_low(ctx.config.node.data_dir):
-                _logger.warning(
-                    "disk_space_critical",
-                    msg="Pausing crawl — disk space below 200 MB",
-                )
-                await asyncio.sleep(30)
-                continue
-
-        try:
-            url, depth = await asyncio.wait_for(
-                ctx.scheduler.get_url(),
-                timeout=5.0,
-            )
-        except TimeoutError:
-            _logger.debug("serve_idle", crawled=crawl_count, msg="waiting for URLs")
-            await asyncio.sleep(1)
-            continue
-
-        try:
-            result = await ctx.worker.crawl_url(url, depth=depth)
-            if result.success and result.page:
-                # Crawler-only role: forward to indexer peers
-                if ctx.index_submit_sender is not None:
-                    ctx.index_submit_sender.build_submit_message(
-                        result.page,
-                        result.discovered_links,
-                    )
-                    _logger.info(
-                        "index_submit_queued",
-                        url=url,
-                        targets=len(ctx.config.network.index_submit_peers),
-                    )
-                    # TODO: send msg to index_submit_peers via P2P stream
-                else:
-                    # Full role: index locally
-                    index_document(result.page, ctx.store, ctx.vector_store)
-                crawl_count += 1
-                # Record crawl credit (1.0 per page)
-                if ctx.ledger is not None:
-                    try:
-                        ctx.ledger.record_action(
-                            ActionType.CRAWL,
-                            quantity=1.0,
-                            note=url[:120],
-                            key_pair=ctx.key_pair,
-                        )
-                    except Exception:  # noqa: BLE001
-                        _logger.debug("credit_record_failed", url=url)
-            elif not result.success:
-                _logger.debug("crawl_skipped", url=url, reason=result.error)
-        except Exception:
-            _logger.exception("crawl_error", url=url)
-
-
 # ─── AppContext: unified component factory ─────────────────
 
 
@@ -494,6 +365,19 @@ class AppContext:
         self.index_submit_sender = None
         self.index_submit_receiver = None
 
+        # ── LLM backend (optional, for re-ranking etc.) ────
+        self.llm_backend: object | None = None
+        if c.llm.enabled:
+            try:
+                from infomesh.summarizer.engine import create_backend
+
+                self.llm_backend = create_backend(
+                    c.llm.runtime,
+                    c.llm.model,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("llm_backend_unavailable")
+
         if role == NodeRole.CRAWLER and c.network.index_submit_peers:
             from infomesh.p2p.index_submit import IndexSubmitSender
 
@@ -539,6 +423,14 @@ class AppContext:
         """Release all resources including async HTTP client."""
         if self.worker is not None:
             await self.worker.close()
+        if self.llm_backend is not None:
+            try:
+                from infomesh.summarizer.engine import LLMBackend
+
+                if isinstance(self.llm_backend, LLMBackend):
+                    await self.llm_backend.close()
+            except Exception:  # noqa: BLE001
+                pass
         self.close()
 
     def __enter__(self) -> AppContext:
@@ -552,3 +444,13 @@ class AppContext:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.close_async()
+
+
+# ─── Backward-compatible re-exports from crawler.crawl_loop ───
+# Placed at end-of-module to avoid circular import (crawl_loop
+# imports AppContext which is defined above).
+
+from infomesh.crawler.crawl_loop import (  # noqa: E402, I001
+    _reseed_queue as _reseed_queue,
+    seed_and_crawl_loop as seed_and_crawl_loop,
+)

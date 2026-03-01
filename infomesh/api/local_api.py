@@ -5,16 +5,19 @@ Not exposed to the public network; binds to localhost only.
 
 Endpoints:
     GET  /health              — Liveness probe
+    GET  /readiness           — Readiness probe (DB accessible)
     GET  /status              — Node status (uptime, index size, peer count)
     GET  /config              — Current configuration (redacted secrets)
     GET  /index/stats         — Index statistics (document count, size)
     GET  /credits/balance     — Local credit balance
     GET  /network/peers       — Connected peers summary
+    GET  /analytics           — Search analytics (counts, latency)
     POST /config/reload       — Reload configuration from disk
 """
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -41,11 +44,27 @@ _SENSITIVE_KEYS = frozenset(
 
 @dataclass
 class AdminState:
-    """Immutable state container for the admin API — replaces module globals."""
+    """State container for the admin API."""
 
     config: Config
     config_path: Path | None = None
     start_time: float = field(default_factory=time.time)
+    total_searches: int = 0
+    total_crawls: int = 0
+    total_fetches: int = 0
+    avg_latency_ms: float = 0.0
+    _latency_sum: float = 0.0
+
+    def record_search(self, latency_ms: float) -> None:
+        self.total_searches += 1
+        self._latency_sum += latency_ms
+        self.avg_latency_ms = self._latency_sum / self.total_searches
+
+    def record_crawl(self) -> None:
+        self.total_crawls += 1
+
+    def record_fetch(self) -> None:
+        self.total_fetches += 1
 
 
 def create_admin_app(
@@ -90,6 +109,17 @@ def create_admin_app(
                 status_code=403,
                 content={"detail": "Admin API is only accessible from localhost"},
             )
+
+        # Optional API key check
+        api_key = os.environ.get("INFOMESH_API_KEY")
+        if api_key is not None:
+            provided = request.headers.get("x-api-key", "")
+            if provided != api_key:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid API key"},
+                )
+
         return await call_next(request)
 
     # ── Health ──────────────────────────────────────────────
@@ -98,6 +128,18 @@ def create_admin_app(
     async def health() -> dict[str, str]:
         """Liveness probe — always returns ok."""
         return {"status": "ok"}
+
+    @app.get("/readiness")
+    async def readiness(request: Request) -> JSONResponse:
+        """Readiness probe — checks DB accessibility."""
+        st: AdminState = request.app.state.admin
+        db_path = st.config.index.db_path
+        if db_path.exists():
+            return JSONResponse(content={"status": "ready", "db": "accessible"})
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "db": "missing"},
+        )
 
     # ── Status ──────────────────────────────────────────────
 
@@ -159,13 +201,77 @@ def create_admin_app(
     # ── Network ─────────────────────────────────────────────
 
     @app.get("/network/peers")
-    async def network_peers() -> dict[str, Any]:
-        """Connected peers summary."""
+    async def network_peers(request: Request) -> dict[str, Any]:
+        """Connected peers summary (reads live P2P status file)."""
+        st: AdminState = request.app.state.admin
+        status_path = st.config.node.data_dir / "p2p_status.json"
+        try:
+            if status_path.exists():
+                import json as _json
+
+                data = _json.loads(status_path.read_text())
+                age = time.time() - float(data.get("timestamp", 0))
+                if age < 30:
+                    return {
+                        "total_peers": data.get("connected_peers", 0),
+                        "connected": data.get("connected_peers", 0),
+                        "peer_id": data.get("peer_id", ""),
+                        "uptime_seconds": data.get("uptime", 0),
+                        "dht_mode": data.get("dht_mode", "unknown"),
+                    }
+        except (OSError, ValueError):
+            pass
         return {
             "total_peers": 0,
             "connected": 0,
             "note": "P2P metrics available when node is networked",
         }
+
+    # ── Analytics ───────────────────────────────────────────
+
+    @app.get("/analytics")
+    async def analytics_endpoint(request: Request) -> dict[str, Any]:
+        """Search analytics — usage counts and avg latency."""
+        st: AdminState = request.app.state.admin
+        return {
+            "total_searches": st.total_searches,
+            "total_crawls": st.total_crawls,
+            "total_fetches": st.total_fetches,
+            "avg_latency_ms": round(st.avg_latency_ms, 1),
+            "uptime_seconds": round(time.time() - st.start_time, 1),
+        }
+
+    # ── Metrics (Prometheus) ────────────────────────────────
+
+    @app.get("/metrics")
+    async def metrics_endpoint(request: Request) -> JSONResponse:
+        """Prometheus-compatible metrics endpoint."""
+        from infomesh.observability.metrics import MetricsCollector
+
+        mc = MetricsCollector()
+        st: AdminState = request.app.state.admin
+        mc.inc("searches_total", float(st.total_searches))
+        mc.inc("crawls_total", float(st.total_crawls))
+        mc.inc("fetches_total", float(st.total_fetches))
+        mc.set_gauge("avg_latency_ms", st.avg_latency_ms)
+        mc.set_gauge(
+            "uptime_seconds",
+            round(time.time() - st.start_time, 1),
+        )
+        text = mc.format_prometheus()
+        return JSONResponse(
+            content={"metrics": text},
+            media_type="application/json",
+        )
+
+    # ── OpenAPI spec ────────────────────────────────────────
+
+    @app.get("/openapi-spec")
+    async def openapi_spec() -> dict[str, Any]:
+        """Custom OpenAPI 3.1 specification for InfoMesh API."""
+        from infomesh.api.extensions import generate_openapi_spec
+
+        return generate_openapi_spec()
 
     return app
 

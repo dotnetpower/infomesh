@@ -1,0 +1,61 @@
+# InfoMesh systemd service unit
+# Feature #99: Production systemd service
+#
+# Installation:
+#   sudo cp infomesh.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable infomesh
+#   sudo systemctl start infomesh
+
+[Unit]
+Description=InfoMesh P2P Search Engine
+Documentation=https://github.com/dotnetpower/infomesh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=infomesh
+Group=infomesh
+
+# Working directory
+WorkingDirectory=/opt/infomesh
+
+# Start command
+ExecStart=/usr/local/bin/infomesh serve --mcp-http
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+MemoryMax=4G
+CPUQuota=200%
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/infomesh /var/log/infomesh
+
+# Environment
+Environment=INFOMESH_DATA_DIR=/var/lib/infomesh
+Environment=INFOMESH_LOG_LEVEL=info
+Environment=INFOMESH_PROFILE=balanced
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=infomesh
+
+[Install]
+WantedBy=multi-user.target

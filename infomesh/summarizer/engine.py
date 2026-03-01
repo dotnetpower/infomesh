@@ -1,6 +1,6 @@
 """Local LLM summarization engine — backend abstraction.
 
-Supports multiple LLM runtimes (ollama, llama.cpp) via a unified interface.
+Supports multiple LLM runtimes (ollama, llama.cpp, vLLM) via a unified interface.
 The summarizer is optional and only activates when ``LLMConfig.enabled = True``.
 
 Recommended models (in order):
@@ -33,6 +33,7 @@ class LLMRuntime(StrEnum):
 
     OLLAMA = "ollama"
     LLAMA_CPP = "llama.cpp"
+    VLLM = "vllm"
 
 
 @dataclass(frozen=True)
@@ -230,6 +231,73 @@ class LlamaCppBackend(LLMBackend):
         )
 
 
+# --- vLLM backend (OpenAI-compatible HTTP server) --------------------------
+
+
+class VLLMBackend(LLMBackend):
+    """vLLM OpenAI-compatible API backend.
+
+    Requires a vLLM server running with ``--api-key`` disabled (or
+    matching the ``api_key`` parameter).  vLLM exposes an
+    OpenAI-compatible ``/v1/completions`` endpoint by default.
+
+    Best suited for GPU nodes wanting high throughput.
+    """
+
+    def __init__(
+        self,
+        model: str = "qwen2.5:3b",
+        base_url: str = "http://localhost:8000",
+        *,
+        api_key: str = "EMPTY",
+    ) -> None:
+        self._model = model
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self._init_client_slot()
+
+    async def generate(self, prompt: str, *, max_tokens: int = 512) -> str:
+        client = await self._get_client()
+        resp = await client.post(
+            f"{self._base_url}/v1/completions",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={
+                "model": self._model,
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": 0.3,
+            },
+        )
+        resp.raise_for_status()
+        choices = resp.json().get("choices", [])
+        if not choices:
+            return ""
+        return str(choices[0].get("text", ""))
+
+    async def is_available(self) -> bool:
+        try:
+            client = await self._get_client()
+            resp = await client.get(f"{self._base_url}/v1/models")
+            if resp.status_code != 200:
+                return False
+            models = resp.json().get("data", [])
+            return any(
+                m.get("id", "").startswith(self._model.split(":")[0]) for m in models
+            )
+        except (httpx.HTTPError, OSError):
+            return False
+
+    async def model_info(self) -> ModelInfo:
+        available = await self.is_available()
+        return ModelInfo(
+            name=self._model,
+            runtime=LLMRuntime.VLLM,
+            parameter_count=None,
+            quantization=None,
+            available=available,
+        )
+
+
 # --- Summarization engine ---------------------------------------------------
 
 # Prompt template for summarization
@@ -278,8 +346,16 @@ def create_backend(
             if base_url is not None:
                 kw["base_url"] = base_url
             return LlamaCppBackend(model_name=model, **kw)
+        case "vllm":
+            kw = {}
+            if base_url is not None:
+                kw["base_url"] = base_url
+            return VLLMBackend(model=model, **kw)
         case _:
-            msg = f"Unsupported LLM runtime: {runtime!r}. Use 'ollama' or 'llama.cpp'."
+            msg = (
+                f"Unsupported LLM runtime: {runtime!r}. "
+                "Use 'ollama', 'llama.cpp', or 'vllm'."
+            )
             raise ValueError(msg)
 
 

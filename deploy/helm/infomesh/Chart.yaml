@@ -1,0 +1,22 @@
+# InfoMesh Helm Chart
+# Feature #96: Kubernetes Helm chart for InfoMesh deployment
+
+apiVersion: v2
+name: infomesh
+description: >-
+  Decentralized P2P search engine for LLMs.
+  Deploy InfoMesh nodes on Kubernetes.
+type: application
+version: 0.1.3
+appVersion: "0.1.3"
+keywords:
+  - search
+  - p2p
+  - llm
+  - mcp
+  - decentralized
+maintainers:
+  - name: InfoMesh Community
+home: https://github.com/dotnetpower/infomesh
+sources:
+  - https://github.com/dotnetpower/infomesh

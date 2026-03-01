@@ -23,6 +23,14 @@ class ParsedPage:
     language: str | None
     raw_html_hash: str  # SHA-256 of raw HTML
     text_hash: str  # SHA-256 of extracted text
+    image_alt_texts: list[str] = ()  # type: ignore[assignment]
+
+
+# Pattern for <img> alt attributes
+_IMG_ALT_RE = re.compile(
+    r'<img\s[^>]*alt=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
 
 
 def extract_content(html: str, url: str, *, raw_hash: str = "") -> ParsedPage | None:
@@ -73,13 +81,33 @@ def extract_content(html: str, url: str, *, raw_hash: str = "") -> ParsedPage | 
         if not raw_hash:
             raw_hash = content_hash(html)
 
-        # Detect language
+        # Detect language (HTML attr → NLP fallback)
         lang_info = trafilatura.utils.load_html(html)
         language = None
         if lang_info is not None:
             lang_attr = lang_info.get("lang") or lang_info.get("xml:lang")
             if lang_attr:
                 language = lang_attr[:2]  # e.g., "en-US" → "en"
+
+        if not language:
+            try:
+                from infomesh.crawler.lang_detect import detect_language
+
+                det = detect_language(text[:2000])
+                if det.confidence > 0.3:
+                    language = det.language
+            except Exception:
+                pass  # NLP detection is optional
+
+        # Extract structured data (JSON-LD, microdata) if available
+        try:
+            from infomesh.crawler.structured import extract_structured_data
+
+            sd = extract_structured_data(html)
+            if sd:
+                _structured_data = sd
+        except Exception:
+            pass  # Structured data extraction is optional
 
         return ParsedPage(
             url=url,
@@ -88,6 +116,7 @@ def extract_content(html: str, url: str, *, raw_hash: str = "") -> ParsedPage | 
             language=language,
             raw_html_hash=raw_hash,
             text_hash=text_hash,
+            image_alt_texts=_extract_image_alts(html),
         )
 
     except Exception as exc:
@@ -97,6 +126,19 @@ def extract_content(html: str, url: str, *, raw_hash: str = "") -> ParsedPage | 
 
 # Pattern for valid HTTP(S) links
 _HREF_RE = re.compile(r'<a\s[^>]*href=["\']([^"\'#][^"\']*)["\']', re.IGNORECASE)
+
+
+def _extract_image_alts(html: str) -> list[str]:
+    """Extract non-empty alt texts from <img> tags."""
+    alts: list[str] = []
+    seen: set[str] = set()
+    for match in _IMG_ALT_RE.finditer(html):
+        alt = match.group(1).strip()
+        if alt and len(alt) > 3 and alt not in seen:
+            seen.add(alt)
+            alts.append(alt)
+    return alts
+
 
 # Pattern for <link rel="canonical" href="...">
 _CANONICAL_RE = re.compile(

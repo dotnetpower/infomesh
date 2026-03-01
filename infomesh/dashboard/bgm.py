@@ -13,11 +13,13 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import signal
 import subprocess
 from pathlib import Path
+from urllib.request import urlretrieve
 
 import structlog
 
@@ -31,8 +33,49 @@ _PLAYERS: list[tuple[str, list[str]]] = [
     ("mpv", ["--no-video", "--really-quiet", "--loop"]),
 ]
 
-# BGM assets directory (infomesh/assets/bgm — inside the package)
-_BGM_ASSET_DIR = Path(__file__).parent.parent / "assets" / "bgm"
+# BGM cache directory (~/.infomesh/bgm/ — downloaded on first launch)
+_BGM_CACHE_DIR = Path.home() / ".infomesh" / "bgm"
+
+# GitHub raw URLs for BGM assets
+_BGM_REPO_BASE = (
+    "https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/bgm"
+)
+
+_BGM_FILES: list[str] = [
+    "infomesh-bg-fade.mp3",
+    "coin-street-fighter.mp3",
+]
+
+
+def ensure_bgm_assets() -> Path:
+    """Download BGM assets from GitHub if not already cached.
+
+    Returns the path to the BGM cache directory.
+    Never raises — all errors are silently logged so BGM
+    failures never affect dashboard startup.
+    """
+    try:
+        _BGM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.debug("bgm_cache_dir_failed")
+        return _BGM_CACHE_DIR
+
+    for filename in _BGM_FILES:
+        local_path = _BGM_CACHE_DIR / filename
+        if local_path.exists():
+            continue
+        url = f"{_BGM_REPO_BASE}/{filename}"
+        try:
+            logger.info("bgm_downloading", file=filename)
+            urlretrieve(url, local_path)  # noqa: S310
+            logger.info("bgm_downloaded", file=filename)
+        except Exception:  # noqa: BLE001
+            logger.debug("bgm_download_failed", file=filename)
+            # Remove partial download
+            with contextlib.suppress(OSError):
+                local_path.unlink(missing_ok=True)
+
+    return _BGM_CACHE_DIR
 
 
 def _build_volume_args(player_cmd: str, volume: int) -> list[str]:

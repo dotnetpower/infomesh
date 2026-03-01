@@ -79,7 +79,13 @@ def search_local(
     query: str,
     *,
     limit: int = 10,
+    offset: int = 0,
     authority_fn: Callable[[str], float] | None = None,
+    language: str | None = None,
+    date_from: float | None = None,
+    date_to: float | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> QueryResult:
     """Search the local FTS5 index with full ranking.
 
@@ -90,7 +96,13 @@ def search_local(
         store: Local document store.
         query: User search query.
         limit: Maximum results.
+        offset: Skip this many results (pagination).
         authority_fn: Optional ``(url) -> float`` for domain authority lookup.
+        language: Filter by ISO language code.
+        date_from: Unix timestamp — only include newer docs.
+        date_to: Unix timestamp — only include older docs.
+        include_domains: Restrict to these domains.
+        exclude_domains: Exclude these domains.
 
     Returns:
         QueryResult with ranked search results.
@@ -98,7 +110,16 @@ def search_local(
     start = time.monotonic()
 
     sanitized = _sanitize_fts_query(query)
-    raw_results = store.search(sanitized, limit=limit * 2)  # over-fetch for ranking
+    raw_results = store.search(
+        sanitized,
+        limit=limit * 2,
+        offset=offset,
+        language=language,
+        date_from=date_from,
+        date_to=date_to,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+    )
 
     # Apply full ranking pipeline
     ranked = rank_local_results(

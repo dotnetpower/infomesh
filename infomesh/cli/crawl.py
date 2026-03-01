@@ -178,12 +178,37 @@ def _trunc(text: str, max_len: int) -> str:
 
 
 @click.command("mcp")
-def mcp_cmd() -> None:
-    """Run the MCP server (stdio mode for VS Code / Claude)."""
-    from infomesh.mcp.server import run_mcp_server
-
+@click.option(
+    "--http",
+    is_flag=True,
+    default=False,
+    help=(
+        "Use HTTP Streamable transport instead of "
+        "stdio. Enables remote/container access."
+    ),
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    help="HTTP bind address (default: 127.0.0.1)",
+)
+@click.option(
+    "--port",
+    default=8081,
+    type=int,
+    help="HTTP port (default: 8081)",
+)
+def mcp_cmd(http: bool, host: str, port: int) -> None:
+    """Run the MCP server (stdio or HTTP mode)."""
     config = load_config()
-    asyncio.run(run_mcp_server(config))
+    if http:
+        from infomesh.mcp.server import run_mcp_http_server
+
+        asyncio.run(run_mcp_http_server(config, host=host, port=port))
+    else:
+        from infomesh.mcp.server import run_mcp_server
+
+        asyncio.run(run_mcp_server(config))
 
 
 @click.command()

@@ -1,0 +1,90 @@
+# InfoMesh Docker Compose — multi-node local development setup
+#
+# Usage:
+#   docker compose up -d           # Start 3 nodes
+#   docker compose logs -f node1   # Follow node1 logs
+#   docker compose down            # Stop all
+#
+# Nodes:
+#   node1: Full node (crawler + search), admin API on :8080
+#   node2: Full node, admin API on :8082
+#   node3: Full node, admin API on :8084
+#
+# MCP HTTP transport:
+#   node1: :8081, node2: :8083, node3: :8085
+#
+# All nodes share a custom bridge network for P2P discovery.
+
+services:
+  node1:
+    build: .
+    container_name: infomesh-node1
+    hostname: node1
+    ports:
+      - "8080:8080"   # Admin API
+      - "8081:8081"   # MCP HTTP
+    volumes:
+      - node1-data:/home/infomesh/.infomesh
+    environment:
+      - INFOMESH_NODE_NAME=node1
+      - INFOMESH_API_KEY=${INFOMESH_API_KEY:-}
+    networks:
+      - infomesh-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  node2:
+    build: .
+    container_name: infomesh-node2
+    hostname: node2
+    ports:
+      - "8082:8080"
+      - "8083:8081"
+    volumes:
+      - node2-data:/home/infomesh/.infomesh
+    environment:
+      - INFOMESH_NODE_NAME=node2
+      - INFOMESH_API_KEY=${INFOMESH_API_KEY:-}
+    networks:
+      - infomesh-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  node3:
+    build: .
+    container_name: infomesh-node3
+    hostname: node3
+    ports:
+      - "8084:8080"
+      - "8085:8081"
+    volumes:
+      - node3-data:/home/infomesh/.infomesh
+    environment:
+      - INFOMESH_NODE_NAME=node3
+      - INFOMESH_API_KEY=${INFOMESH_API_KEY:-}
+    networks:
+      - infomesh-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+
+networks:
+  infomesh-net:
+    driver: bridge

@@ -61,7 +61,7 @@ infomesh/
 │   │   ├── config.py        #   `infomesh config show/set` commands
 │   │   ├── crawl.py         #   `infomesh crawl`, `mcp`, `dashboard` commands
 │   │   ├── index.py         #   `infomesh index stats/export/import` commands
-│   │   ├── keys.py          #   `infomesh keys show/rotate` commands
+│   │   ├── keys.py          #   `infomesh keys export/rotate` commands
 │   │   ├── search.py        #   `infomesh search` command
 │   │   └── serve.py         #   `infomesh start/stop/status/serve` commands
 │   ├── p2p/                 # P2P network layer
@@ -86,7 +86,8 @@ infomesh/
 │   │   ├── simhash.py       #   SimHash near-duplicate detection
 │   │   ├── seeds.py         #   Seed URL management & category selection
 │   │   ├── recrawl.py       #   Adaptive auto-recrawl scheduler
-│   │   └── url_assigner.py  #   DHT-based URL auto-assignment
+│   │   ├── url_assigner.py  #   DHT-based URL auto-assignment
+│   │   └── crawl_loop.py    #   Continuous seed-and-crawl loop (extracted from services.py)
 │   ├── index/               # Search index
 │   │   ├── local_store.py   #   SQLite FTS5 local index
 │   │   ├── vector_store.py  #   ChromaDB vector index
@@ -102,16 +103,22 @@ infomesh/
 │   │   ├── reranker.py      #   LLM re-ranking (prompt-based post-ranking)
 │   │   ├── cross_validate.py #  Query result cross-validation
 │   │   └── formatter.py     #   Search result text formatting (CLI/MCP/dashboard)
-│   ├── mcp/                 # MCP server (Model Context Protocol)
-│   │   └── server.py        #   search(), search_local(), fetch_page(), crawl_url(), network_stats()
+│   ├── mcp/                 # MCP server (Model Context Protocol) — SRP: 4 modules
+│   │   ├── server.py        #   Thin wiring: Server creation, tool dispatch, stdio/HTTP runners
+│   │   ├── tools.py         #   Tool schema definitions, filter extraction, API key check
+│   │   ├── handlers.py      #   All handle_* functions (search, fetch, crawl, batch, etc.)
+│   │   └── session.py       #   SearchSession, AnalyticsTracker, WebhookRegistry
 │   ├── api/                 # Local admin API
-│   │   └── local_api.py     #   FastAPI (health, status, config, index stats, credits)
+│   │   ├── local_api.py     #   FastAPI (health, status, config, index stats, credits, metrics)
+│   │   └── extensions.py    #   API extensions (OpenAPI spec, Prometheus metrics)
 │   ├── credits/             # Incentive system
-│   │   ├── ledger.py        #   Local credit ledger (ActionType enum, weights)
+│   │   ├── types.py         #   ActionType, CreditState, dataclasses, constants
+│   │   ├── ledger.py        #   SQLite-backed credit ledger (imports types from types.py)
 │   │   ├── farming.py       #   Credit farming detection (probation, anomaly detection)
 │   │   ├── scheduling.py    #   Energy-aware scheduling (off-peak LLM bonus + TZ verification)
 │   │   ├── timezone_verify.py #   Off-peak timezone verification (IP cross-check)
-│   │   └── verification.py  #   P2P credit verification (signed entries + Merkle proofs)
+│   │   ├── verification.py  #   P2P credit verification (signed entries + Merkle proofs)
+│   │   └── github_identity.py #   GitHub email resolution for cross-node credits
 │   ├── trust/               # Trust & integrity
 │   │   ├── attestation.py   #   Content attestation chain (signing, verification, Merkle root)
 │   │   ├── audit.py         #   Random audit system + Merkle proof audits
@@ -122,7 +129,7 @@ infomesh/
 │   │   ├── dmca.py          #   DMCA takedown propagation
 │   │   └── gdpr.py          #   GDPR distributed deletion records
 │   ├── summarizer/          # Local LLM summarization
-│   │   ├── engine.py        #   LLM backend abstraction (ollama, llama.cpp)
+│   │   ├── engine.py        #   LLM backend abstraction (ollama, llama.cpp, vllm)
 │   │   ├── peer_handler.py  #   Inter-peer summarization request handling
 │   │   └── verify.py        #   Summary verification (key-fact anchoring, NLI)
 │   ├── dashboard/           # Console app UI (Textual TUI)
@@ -130,15 +137,44 @@ infomesh/
 │   │   ├── bgm.py           #   BGM player (background music via mpv/ffplay/aplay)
 │   │   ├── text_report.py   #   Rich-based text report (non-interactive fallback)
 │   │   ├── data_cache.py    #   Dashboard data caching layer
+│   │   ├── utils.py         #   Dashboard utility functions (format_uptime, format_bytes)
 │   │   ├── dashboard.tcss   #   Textual CSS stylesheet
 │   │   ├── screens/         #   Tab panes (overview, crawl, search, network, credits, settings)
 │   │   └── widgets/         #   Reusable widgets (sparkline, bar_chart, resource_bar, live_log)
 │   ├── resources/           # Resource governance
 │   │   ├── profiles.py      #   Predefined resource profiles (minimal/balanced/contributor/dedicated)
 │   │   ├── governor.py      #   Dynamic resource throttling (CPU/memory monitoring, degrade levels)
-│   │   └── preflight.py     #   Pre-startup disk space + network connectivity checks
+│   │   ├── preflight.py     #   Pre-startup disk space + network connectivity checks
+│   │   └── port_check.py    #   Network port availability check
 │   └── compression/         # Data compression
 │       └── zstd.py          #   zstd compression with dictionary support
+│   ├── search/              # Search engine (extended in v0.2.0)
+│   │   ├── nlp.py           #   NLP query processing (stop-words, synonyms, spelling)
+│   │   ├── facets.py        #   Search facets (domain, language, date)
+│   │   ├── rag.py           #   RAG output, answer extraction, fact checking
+│   │   └── explain.py       #   Score breakdowns for search results
+│   ├── crawler/             # Crawler extensions (v0.2.0)
+│   │   ├── pdf.py           #   PDF text extraction
+│   │   ├── structured.py    #   JSON-LD, OpenGraph, meta tag parsing
+│   │   ├── rss.py           #   RSS/Atom feed discovery and parsing
+│   │   ├── content_extract.py #  Code block and table extraction
+│   │   ├── diff.py          #   Content change detection
+│   │   └── lang_detect.py   #   Language detection (script + word frequency)
+│   ├── sdk/                 # Python SDK
+│   │   └── client.py        #   InfoMeshClient (sync/async)
+│   ├── integrations/        # LLM framework integrations
+│   │   ├── langchain.py     #   LangChain InfoMeshRetriever
+│   │   ├── llamaindex.py    #   LlamaIndex InfoMeshReader
+│   │   └── haystack.py      #   Haystack InfoMeshDocumentStore
+│   ├── persistence/         # Persistent storage
+│   │   └── store.py         #   SQLite key-value store
+│   ├── observability/       # Monitoring
+│   │   └── metrics.py       #   Prometheus metrics collector
+│   ├── errors.py            #   Structured error hierarchy
+│   ├── scalability.py       #   Batch ingest & horizontal scaling
+│   ├── data_quality.py      #   Quality scoring & validation
+│   ├── security_ext.py      #   API keys, RBAC, audit logging
+│   └── dx.py                #   Developer experience (plugin system)
 ├── examples/                # Python usage examples
 │   ├── README.md            #   Examples index
 │   ├── basic_search.py      #   Simple search demo
@@ -155,7 +191,7 @@ infomesh/
 │   ├── encyclopedia.txt     #   Encyclopedia URLs
 │   ├── quickstart.txt       #   Quickstart seed URLs (curated starter set)
 │   └── search-strategy.txt  #   Search strategy seeds
-├── tests/                   # 52 test files (pytest + pytest-asyncio)
+├── tests/                   # 67 test files (pytest + pytest-asyncio)
 └── docs/                    # Documentation (EN + KO)
 ```
 
@@ -388,11 +424,28 @@ The MCP server exposes these tools:
 
 | Tool | Description |
 |------|-------------|
-| `search(query, limit)` | Full network search, merges local + remote results |
-| `search_local(query, limit)` | Local-only search (works offline) |
-| `fetch_page(url)` | Return full text for a URL (from index or live crawl) |
-| `crawl_url(url, depth, force)` | Add a URL to the network and crawl it. `force=True` bypasses dedup. |
-| `network_stats()` | Network status: peer count, index size, credits |
+| `search(query, limit, format, language, ...)` | Full network search, merges local + remote results. Supports filters, pagination, JSON output. |
+| `search_local(query, limit, format, language, ...)` | Local-only search (works offline). Same filter params as `search`. |
+| `fetch_page(url, format)` | Return full text for a URL (from index or live crawl) |
+| `crawl_url(url, depth, force, webhook_url)` | Add a URL to the network and crawl it. `force=True` bypasses dedup. |
+| `network_stats(format)` | Network status: peer count, index size, credits |
+| `batch_search(queries, limit, format)` | Run multiple search queries in one call (max 10) |
+| `suggest(prefix, limit)` | Search suggestions / autocomplete for a partial query |
+| `register_webhook(url)` | Register a webhook URL for crawl completion notifications |
+| `analytics(format)` | Search analytics: total searches, crawls, fetches, avg latency |
+| `explain(query, limit)` | Score breakdown per result: BM25, freshness, trust, authority components |
+| `search_history(action)` | View (`"list"`) or clear (`"clear"`) past search queries with latency stats |
+| `search_rag(query, limit, chunk_size)` | RAG-optimized chunked output with source attribution |
+| `extract_answer(query, limit)` | Direct answer extraction with confidence scores and source URLs |
+| `fact_check(claim, limit)` | Cross-reference claims against multiple indexed sources |
+
+**Search filters** (available on `search`, `search_local`, `batch_search`):
+`language` (ISO 639-1), `date_from`/`date_to` (Unix timestamp), `include_domains`/`exclude_domains`,
+`offset` (pagination), `snippet_length`, `session_id`, `format` ("text"/"json").
+
+**Authentication**: Set `INFOMESH_API_KEY` env var → all tool calls require `api_key` parameter.
+
+**Transports**: stdio (default) or HTTP Streamable (`infomesh mcp --http --port 8081`).
 
 ### Local LLM Summarization
 
@@ -524,6 +577,7 @@ When credits are exhausted (balance ≤ 0), the node enters a grace/debt cycle:
 | 5B | Search quality & trust — latency-aware routing, Merkle Tree integrity | **Complete** |
 | 5C | Community & release readiness — Docker, key rotation, mDNS, LICENSE, CONTRIBUTING | **Complete** |
 | 5D | Polish — LLM reputation, timezone verification, PyPI readiness, README | **Complete** |
+| 6 | Search intelligence, RAG, security, observability, SDK, integrations, DX (100+ features) | **Complete** |
 
 ## MCP Web Search API — Integration & Keywords
 
@@ -538,20 +592,33 @@ integrate with. It is a real-time, open-source alternative to paid web search AP
 - **Full-page text fetching** — retrieve the full extracted text of any web page by URL
 - **Offline / local search** — search the locally cached index without internet access
 - **Network statistics API** — query node health, peer count, index size, credit balance
+- **RAG support** — chunked, source-attributed output for retrieval-augmented generation
+- **Answer extraction** — direct answer extraction with confidence scores
+- **Fact checking** — cross-reference claims against indexed sources
+- **Score explanations** — transparent BM25/freshness/trust breakdowns
 
 ### MCP Tool Specifications
 
 | MCP Tool Name | HTTP-like Analogy | Input | Output |
 |---------------|-------------------|-------|--------|
-| `search` | `GET /search?q=...&limit=10` | `query: str`, `limit: int` | Ranked text snippets with URLs |
-| `search_local` | `GET /search/local?q=...` | `query: str`, `limit: int` | Local-only ranked results |
-| `fetch_page` | `GET /fetch?url=...` | `url: str` | Full extracted text (max 100KB) |
-| `crawl_url` | `POST /crawl` | `url: str`, `depth: int` | Crawl confirmation + page metadata |
-| `network_stats` | `GET /stats` | (none) | JSON: peers, index size, credits |
+| `search` | `GET /search?q=...&limit=10&format=json` | `query`, `limit`, `format`, `language`, `date_from`, `date_to`, `include_domains`, `exclude_domains`, `offset`, `snippet_length`, `session_id` | Ranked results (text or JSON with quota) |
+| `search_local` | `GET /search/local?q=...` | Same as `search` | Local-only ranked results |
+| `fetch_page` | `GET /fetch?url=...` | `url`, `format` | Full extracted text (max 100KB) |
+| `crawl_url` | `POST /crawl` | `url`, `depth`, `force`, `webhook_url` | Crawl confirmation + page metadata |
+| `network_stats` | `GET /stats` | `format` | JSON: peers, index size, credits, analytics |
+| `batch_search` | `POST /search/batch` | `queries[]`, `limit`, `format` | Multiple query results (max 10) |
+| `suggest` | `GET /suggest?prefix=...` | `prefix`, `limit` | JSON: autocomplete suggestions |
+| `register_webhook` | `POST /webhooks` | `url` | Webhook registration confirmation |
+| `analytics` | `GET /analytics` | `format` | Search/crawl/fetch counts, avg latency |
+| `explain` | `GET /explain?q=...` | `query`, `limit` | Score breakdown per result |
+| `search_history` | `GET /search/history` | `action` | Past queries with latency stats |
+| `search_rag` | `GET /search/rag?q=...` | `query`, `limit`, `chunk_size` | RAG-optimized chunked output |
+| `extract_answer` | `GET /extract?q=...` | `query`, `limit` | Direct answer + confidence + sources |
+| `fact_check` | `POST /fact-check` | `claim`, `limit` | Multi-source verification results |
 
 ### IDE / Client Integration
 
-InfoMesh integrates with any MCP-compatible client via **stdio transport**:
+InfoMesh integrates with any MCP-compatible client via **stdio** or **HTTP** transport:
 
 ```json
 {
@@ -564,6 +631,8 @@ InfoMesh integrates with any MCP-compatible client via **stdio transport**:
   }
 }
 ```
+
+For HTTP transport (containers/remote): `infomesh mcp --http --port 8081`
 
 **Supported clients**: VS Code (GitHub Copilot), Claude Desktop, Cursor, Windsurf,
 Continue, Cline, any MCP-compatible LLM agent.

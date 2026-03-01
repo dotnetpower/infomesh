@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infomesh-config
+  namespace: infomesh
+data:
+  config.toml: |
+    [node]
+    name = "k8s-node"
+    log_level = "info"
+
+    [crawl]
+    max_depth = 2
+    politeness_delay = 1.0
+    max_concurrent = 5
+
+    [network]
+    max_upload_mbps = 5
+    max_download_mbps = 10

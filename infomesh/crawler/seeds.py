@@ -18,6 +18,7 @@ CATEGORIES = {
     "quickstart": (
         "Lightweight seed pack (~100 curated content pages for instant start)"
     ),
+    "search-strategy": "Search strategy and optimization seeds",
 }
 
 
