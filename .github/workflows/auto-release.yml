@@ -142,6 +142,8 @@ jobs:
           # Force-create tag (may already exist locally from a previous failed run)
           git tag -f "${{ steps.version.outputs.tag }}"
           git push origin main --follow-tags
+          # Explicitly push tag in case --follow-tags didn't (no new commits)
+          git push origin "${{ steps.version.outputs.tag }}" --force
 
       - name: Generate release notes from commits
         if: steps.version.outputs.skip != 'true'
