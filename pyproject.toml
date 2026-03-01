@@ -1,6 +1,6 @@
 [project]
 name = "infomesh"
-version = "0.1.5"
+version = "0.1.6"
 description = "Fully decentralized P2P search engine for LLMs via MCP"
 readme = "README.md"
 requires-python = ">=3.12"
