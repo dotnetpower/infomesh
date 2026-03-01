@@ -13,6 +13,8 @@ on:
       - "pyproject.toml"
       - "seeds/**"
       - "bootstrap/**"
+      - ".github/workflows/auto-release.yml"
+  workflow_dispatch:
 
 concurrency:
   group: auto-release
