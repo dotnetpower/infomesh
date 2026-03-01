@@ -214,6 +214,34 @@ The following errors have caused CI failures. **Always check for these before co
 - Copy-pasting code with f-strings but removing the interpolated variables → **F541**.
 - Forgetting to remove debug `import subprocess` or `import pdb` → **F401**.
 
+### mypy Type Checking (Lessons Learned)
+
+CI runs `uv run mypy infomesh/ --ignore-missing-imports` with `strict = true`. The following patterns have caused mypy failures:
+
+| Error Pattern | Prevention |
+|---------------|------------|
+| **`dict[str, object]` values used without narrowing** | When using `.get()` on `dict[str, object]`, the return type is `object`. Narrow before use: `ts = d.get("k", 0); float(ts if isinstance(ts, (int, float, str)) else 0)`. |
+| **`int()`/`float()` on `object`** | `int(obj)` and `float(obj)` don't accept `object`. Use `isinstance` guard first: `int(x) if isinstance(x, (int, float, str)) else 0`. |
+| **Stale `# type: ignore` comments** | After fixing code, remove leftover `# type: ignore` — mypy `strict` flags unused ignores as errors. |
+| **Wrong `# type: ignore` error code** | Match the exact code: `[attr-defined]`, `[union-attr]`, `[import-untyped]`, `[arg-type]`. Wrong codes cause `[unused-ignore]` errors. |
+| **String annotations with `from __future__ import annotations`** | With future annotations, ruff UP037 removes quotes from type hints. Use bare `SomeClass` instead of `"SomeClass"`. Import under `TYPE_CHECKING` if needed to avoid circular imports. |
+| **libp2p untyped imports** | libp2p lacks type stubs. Use `# type: ignore[attr-defined]` or `# type: ignore[import-untyped]` as appropriate. Keep multiline import style to avoid E501. |
+| **Coroutine vs callable** | `self.app.run_action(action)` returns a coroutine (not a callable). Wrap with lambda: `command=lambda a=action: self.app.run_action(a)`. |
+
+### Auto-Release Workflow (Lessons Learned)
+
+The `auto-release.yml` workflow bumps version, tags, builds, and publishes. The following issues have caused failures:
+
+| Problem | Root Cause | Prevention |
+|---------|------------|------------|
+| **`git commit` fails: "nothing to commit"** | Version files already bumped by a previous failed run. `sed` makes no changes → `git add` has nothing staged. | Always check `git diff --cached --quiet` before `git commit`. Skip commit if no changes. |
+| **Tag exists locally but not on remote** | Previous run created tag + committed but `git push --follow-tags` failed or was skipped. Next fresh checkout doesn't have the local tag, but the commit is already bumped. | Use `git tag -f` to force-create, then **explicitly push the tag**: `git push origin <tag> --force`. Don't rely solely on `--follow-tags`. |
+| **`--follow-tags` doesn't push tags** | `--follow-tags` only pushes tags reachable from commits being pushed. If "nothing to push" (already up-to-date), tags are silently skipped. | Always add an explicit `git push origin <tag>` after `git push --follow-tags`. |
+| **Tag existence check misses remote state** | `git rev-parse <tag>` checks local repo only. In CI fresh checkout, local tags from previous failed runs don't exist. | Check **remote** tags: `git ls-remote --tags origin <tag>`. |
+| **sed BRE regex fails on parenthesized scope** | `\([^)]*\)\?` in basic regex consumes the entire line. | Use ERE: `sed -E 's/^feat([(][^)]*[)])?…/'`. |
+| **YAML indentation error in workflow** | A step at column 0 instead of proper indentation (6 spaces for steps). YAML parses but the step falls outside the job. | Always validate workflow YAML indentation: steps under `jobs.<id>.steps` need consistent indentation. |
+| **PyPI Trusted Publisher not configured** | `pypa/gh-action-pypi-publish` uses OIDC trusted publishing. Requires configuration on pypi.org. | Configure Trusted Publisher on PyPI: Settings → Publishing → add GitHub repo + workflow + environment (`pypi`). |
+
 ### No Private API Access in Consumers
 
 Library classes (`LocalStore`, `CreditLedger`, etc.) expose public methods for data access. **Never** access private attributes like `store._conn` or `ledger._conn` in CLI, MCP, or dashboard code. If a needed query doesn't have a public API, add one to the library class first.
