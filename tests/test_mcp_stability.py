@@ -219,6 +219,12 @@ class TestHandlerInputValidation:
         result = await handle_search(
             "search",
             {},  # no query field
+            config=MagicMock(
+                mcp=MagicMock(
+                    show_attribution=True,
+                    max_response_chars=0,
+                ),
+            ),
             store=MagicMock(),
             vector_store=None,
             distributed_index=None,
@@ -292,6 +298,12 @@ class TestQueryReTruncation:
             result = await handle_search(
                 "search_local",
                 {"query": long_query},
+                config=MagicMock(
+                    mcp=MagicMock(
+                        show_attribution=True,
+                        max_response_chars=0,
+                    ),
+                ),
                 store=MagicMock(suggest=MagicMock(return_value=[])),
                 vector_store=None,
                 distributed_index=None,

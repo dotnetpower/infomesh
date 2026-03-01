@@ -29,10 +29,14 @@ from infomesh.mcp.handlers import (
     deduct_search_cost,
     handle_batch,
     handle_crawl,
+    handle_credit_balance,
     handle_explain,
     handle_extract_answer,
     handle_fact_check,
     handle_fetch,
+    handle_index_stats,
+    handle_ping,
+    handle_remove_url,
     handle_search,
     handle_search_rag,
     handle_stats,
@@ -82,6 +86,7 @@ def _create_app(
     Returns the ``(Server, AppContext, PersistentStore)`` tuple.
     """
     app = Server("infomesh")
+    api_key_required = api_key is not None
 
     ctx = AppContext(config)
     try:
@@ -111,7 +116,9 @@ def _create_app(
 
     @app.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
     async def list_tools() -> list[Tool]:
-        return get_all_tools()
+        return get_all_tools(
+            api_key_required=api_key_required,
+        )
 
     @app.call_tool()  # type: ignore[untyped-decorator]
     async def call_tool(
@@ -127,6 +134,7 @@ def _create_app(
                 return await handle_search(
                     name,
                     arguments,
+                    config=config,
                     store=store,
                     vector_store=vector_store,
                     distributed_index=distributed_index,
@@ -179,14 +187,17 @@ def _create_app(
                     analytics=analytics,
                 )
             case "suggest":
-                return handle_suggest(arguments, store=store)
+                return handle_suggest(
+                    arguments,
+                    store=store,
+                )
             case "register_webhook":
                 url = arguments.get("url", "")
                 if not url:
                     return [
                         TextContent(
                             type="text",
-                            text="Error: url required",
+                            text=("Error [INVALID_PARAM]: url required"),
                         )
                     ]
                 reg_err = webhooks.register(url)
@@ -201,6 +212,27 @@ def _create_app(
                     TextContent(
                         type="text",
                         text=f"Webhook registered: {url}",
+                    )
+                ]
+            case "unregister_webhook":
+                url = arguments.get("url", "")
+                if not url:
+                    return [
+                        TextContent(
+                            type="text",
+                            text=("Error [INVALID_PARAM]: url required"),
+                        )
+                    ]
+                removed = webhooks.unregister(url)
+                msg = (
+                    f"Webhook removed: {url}"
+                    if removed
+                    else f"Webhook not found: {url}"
+                )
+                return [
+                    TextContent(
+                        type="text",
+                        text=msg,
                     )
                 ]
             case "analytics":
@@ -235,11 +267,31 @@ def _create_app(
                     link_graph=link_graph,
                 )
             case "search_history":
+                action = arguments.get(
+                    "action",
+                    "list",
+                )
+                if action == "clear":
+                    cleared = pstore.clear_history()
+                    return [
+                        TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "cleared": cleared,
+                                    "message": (f"Cleared {cleared} history entries"),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        )
+                    ]
                 limit = min(
                     int(arguments.get("limit", 20)),
                     100,
                 )
-                history = pstore.get_history(limit=limit)
+                history = pstore.get_history(
+                    limit=limit,
+                )
                 return [
                     TextContent(
                         type="text",
@@ -269,6 +321,24 @@ def _create_app(
                     arguments,
                     store=store,
                     link_graph=link_graph,
+                )
+            case "ping":
+                return handle_ping()
+            case "credit_balance":
+                return handle_credit_balance(
+                    arguments,
+                    ledger=ledger,
+                )
+            case "index_stats":
+                return handle_index_stats(
+                    arguments,
+                    store=store,
+                    vector_store=vector_store,
+                )
+            case "remove_url":
+                return handle_remove_url(
+                    arguments,
+                    store=store,
                 )
             case _:
                 return [
@@ -352,18 +422,51 @@ async def run_mcp_http_server(
         mcp_session_id=None,
     )
 
+    _CORS_HEADERS: list[list[bytes]] = [
+        [b"access-control-allow-origin", b"*"],
+        [
+            b"access-control-allow-methods",
+            b"GET, POST, OPTIONS",
+        ],
+        [
+            b"access-control-allow-headers",
+            b"content-type, authorization",
+        ],
+    ]
+
     async def _asgi_app(
         scope: dict[str, object],
         receive: object,
         send: object,
     ) -> None:
-        """Minimal ASGI app routing /mcp to transport."""
+        """Minimal ASGI app with CORS + routing."""
         if scope.get("type") == "http":
+            method = scope.get("method", "")
             path = scope.get("path", "")
+
+            # CORS preflight
+            if method == "OPTIONS":
+                await send(  # type: ignore[operator]
+                    {
+                        "type": "http.response.start",
+                        "status": 204,
+                        "headers": _CORS_HEADERS,
+                    }
+                )
+                await send(  # type: ignore[operator]
+                    {
+                        "type": "http.response.body",
+                        "body": b"",
+                    }
+                )
+                return
+
             if path == "/health":
                 import json as _json
 
-                body = _json.dumps({"status": "ok"}).encode()
+                body = _json.dumps(
+                    {"status": "ok"},
+                ).encode()
                 await send(  # type: ignore[operator]
                     {
                         "type": "http.response.start",
@@ -373,6 +476,7 @@ async def run_mcp_http_server(
                                 b"content-type",
                                 b"application/json",
                             ],
+                            *_CORS_HEADERS,
                         ],
                     }
                 )
@@ -396,7 +500,7 @@ async def run_mcp_http_server(
                 {
                     "type": "http.response.start",
                     "status": 404,
-                    "headers": [],
+                    "headers": _CORS_HEADERS,
                 }
             )
             await send(  # type: ignore[operator]

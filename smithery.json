@@ -32,63 +32,152 @@
   "tools": [
     {
       "name": "search",
-      "description": "Search the web via the decentralized P2P network. Merges local index + remote peer results. Returns ranked text snippets with source URLs.",
+      "description": "Search the web via the decentralized P2P network. Merges local + remote peer results with BM25 + freshness + trust ranking.",
       "parameters": {
-        "query": {
-          "type": "string",
-          "description": "Search query string"
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Maximum number of results to return",
-          "default": 10
-        }
+        "query": { "type": "string", "description": "Search query" },
+        "limit": { "type": "integer", "description": "Max results (default: 10)", "default": 10 },
+        "language": { "type": "string", "description": "ISO 639-1 language code (e.g. 'en')" },
+        "format": { "type": "string", "enum": ["text", "json"], "default": "text" }
       }
     },
     {
       "name": "search_local",
-      "description": "Search the local index only (works offline). Returns results from locally crawled and indexed pages.",
+      "description": "Search local index only (works offline, <10ms). Same filters as search.",
       "parameters": {
-        "query": {
-          "type": "string",
-          "description": "Search query string"
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Maximum number of results to return",
-          "default": 10
-        }
+        "query": { "type": "string", "description": "Search query" },
+        "limit": { "type": "integer", "default": 10 },
+        "format": { "type": "string", "enum": ["text", "json"], "default": "text" }
       }
     },
     {
       "name": "fetch_page",
-      "description": "Fetch and return the full extracted text of a web page by URL.",
+      "description": "Fetch full extracted text of a URL. Returns cached content or crawls live. Max 100KB.",
       "parameters": {
-        "url": {
-          "type": "string",
-          "description": "URL of the page to fetch"
-        }
+        "url": { "type": "string", "description": "URL to fetch" },
+        "format": { "type": "string", "enum": ["text", "json"], "default": "text" }
       }
     },
     {
       "name": "crawl_url",
-      "description": "Crawl a URL and add it to the search index for future queries.",
+      "description": "Add a URL to the crawl queue and index it. Rate limited to 60 URLs/hour.",
       "parameters": {
-        "url": {
-          "type": "string",
-          "description": "URL to crawl"
-        },
-        "depth": {
-          "type": "integer",
-          "description": "Crawl depth (how many links deep to follow)",
-          "default": 1
-        }
+        "url": { "type": "string", "description": "URL to crawl" },
+        "depth": { "type": "integer", "description": "Link-follow depth (0=this page only, max: 3)", "default": 0 },
+        "force": { "type": "boolean", "description": "Force re-crawl", "default": false }
       }
     },
     {
       "name": "network_stats",
-      "description": "Get network statistics: peer count, index size, credit balance, node health.",
+      "description": "Node status: index size, peers, credits, quota, analytics.",
+      "parameters": {
+        "format": { "type": "string", "enum": ["text", "json"], "default": "text" }
+      }
+    },
+    {
+      "name": "batch_search",
+      "description": "Run multiple search queries in one call (max 10).",
+      "parameters": {
+        "queries": { "type": "array", "items": { "type": "string" }, "description": "Search queries (max 10)" },
+        "limit": { "type": "integer", "default": 5 },
+        "format": { "type": "string", "enum": ["text", "json"], "default": "text" }
+      }
+    },
+    {
+      "name": "suggest",
+      "description": "Search suggestions / autocomplete for a partial query.",
+      "parameters": {
+        "prefix": { "type": "string", "description": "Partial query" },
+        "limit": { "type": "integer", "default": 10 }
+      }
+    },
+    {
+      "name": "register_webhook",
+      "description": "Register a webhook URL for crawl completion notifications.",
+      "parameters": {
+        "url": { "type": "string", "description": "Webhook URL to POST to" }
+      }
+    },
+    {
+      "name": "unregister_webhook",
+      "description": "Remove a previously registered webhook URL.",
+      "parameters": {
+        "url": { "type": "string", "description": "Webhook URL to remove" }
+      }
+    },
+    {
+      "name": "analytics",
+      "description": "Search analytics: total searches, crawls, fetches, avg latency.",
+      "parameters": {
+        "format": { "type": "string", "enum": ["text", "json"], "default": "json" }
+      }
+    },
+    {
+      "name": "explain",
+      "description": "Score breakdown for search results: BM25, freshness, trust, authority.",
+      "parameters": {
+        "query": { "type": "string", "description": "Search query" },
+        "limit": { "type": "integer", "default": 5 },
+        "format": { "type": "string", "enum": ["text", "json"], "default": "json" }
+      }
+    },
+    {
+      "name": "search_history",
+      "description": "View or clear search history.",
+      "parameters": {
+        "action": { "type": "string", "enum": ["list", "clear"], "default": "list" },
+        "limit": { "type": "integer", "default": 20 }
+      }
+    },
+    {
+      "name": "search_rag",
+      "description": "RAG-optimized search with chunked, source-attributed output.",
+      "parameters": {
+        "query": { "type": "string", "description": "Search query" },
+        "limit": { "type": "integer", "default": 5 },
+        "chunk_size": { "type": "integer", "default": 500 }
+      }
+    },
+    {
+      "name": "extract_answer",
+      "description": "Extract direct answers from search results with confidence scores.",
+      "parameters": {
+        "query": { "type": "string", "description": "Question to answer" },
+        "limit": { "type": "integer", "default": 3 }
+      }
+    },
+    {
+      "name": "fact_check",
+      "description": "Cross-reference a claim against indexed sources.",
+      "parameters": {
+        "claim": { "type": "string", "description": "Claim to verify" },
+        "limit": { "type": "integer", "default": 10 }
+      }
+    },
+    {
+      "name": "ping",
+      "description": "Health check. Returns server status and version.",
       "parameters": {}
+    },
+    {
+      "name": "credit_balance",
+      "description": "View credit balance, tier, search cost, and credit state.",
+      "parameters": {
+        "format": { "type": "string", "enum": ["text", "json"], "default": "json" }
+      }
+    },
+    {
+      "name": "index_stats",
+      "description": "Detailed index statistics: document count, top domains.",
+      "parameters": {
+        "format": { "type": "string", "enum": ["text", "json"], "default": "json" }
+      }
+    },
+    {
+      "name": "remove_url",
+      "description": "Remove a URL from the local index.",
+      "parameters": {
+        "url": { "type": "string", "description": "URL to remove" }
+      }
     }
   ]
 }

@@ -62,6 +62,7 @@ logger = structlog.get_logger()
 # ── Constants ──────────────────────────────────────────────────────
 
 MCP_API_VERSION = "2025.1"
+SERVER_VERSION = "0.2.0"
 
 _SEARCH_ATTRIBUTION = (
     "\n---\n"
@@ -82,6 +83,47 @@ _FETCH_COPYRIGHT_NOTICE = (
     "Cache policy: content is refreshed every 7 days; "
     "may not reflect the latest version."
 )
+
+# ── Structured error codes ─────────────────────────────────────────
+
+
+class ErrorCode:
+    """Structured error codes for MCP tool responses."""
+
+    INVALID_PARAM = "INVALID_PARAM"
+    AUTH_FAILED = "AUTH_FAILED"
+    SSRF_BLOCKED = "SSRF_BLOCKED"
+    CRAWL_FAILED = "CRAWL_FAILED"
+    FETCH_FAILED = "FETCH_FAILED"
+    PAYWALL = "PAYWALL_DETECTED"
+    RATE_LIMITED = "RATE_LIMITED"
+    EMPTY_INDEX = "EMPTY_INDEX"
+    NOT_FOUND = "NOT_FOUND"
+    INTERNAL = "INTERNAL_ERROR"
+    WORKER_UNAVAILABLE = "WORKER_UNAVAILABLE"
+
+
+def _error(
+    code: str,
+    message: str,
+    *,
+    hint: str = "",
+) -> list[TextContent]:
+    """Return a structured error TextContent with isError.
+
+    All error responses use this helper to ensure the
+    ``isError`` flag is set and a machine-readable error
+    code is included.
+    """
+    parts = [f"Error [{code}]: {message}"]
+    if hint:
+        parts.append(f"Hint: {hint}")
+    return [
+        TextContent(
+            type="text",
+            text="\n".join(parts),
+        )
+    ]
 
 
 # ── Credit helper ──────────────────────────────────────────────────
@@ -105,6 +147,7 @@ async def handle_search(
     name: str,
     arguments: dict[str, Any],
     *,
+    config: Config,
     store: Any,
     vector_store: Any,
     distributed_index: Any | None,
@@ -125,12 +168,10 @@ async def handle_search(
     filters = extract_filters(arguments)
 
     if not isinstance(query, str) or not query.strip():
-        return [
-            TextContent(
-                type="text",
-                text="Error: query must be a non-empty string",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "query must be a non-empty string",
+        )
     query = query[:1000]
     limit = max(1, min(int(limit), 100))
     offset = max(0, int(offset))
@@ -280,13 +321,31 @@ async def handle_search(
 
     # ── NLP post-processing ───────────────────────────────────
     if text.startswith("No results found"):
+        # Check if index is empty
+        try:
+            st = store.get_stats()
+            doc_count = st.get("document_count", 0)
+            if isinstance(doc_count, int) and doc_count == 0:
+                text += (
+                    "\n\nYour index is empty. "
+                    "Try crawling some pages first:\n"
+                    "  crawl_url(url='https://docs."
+                    "python.org/3/', depth=1)"
+                )
+        except Exception:  # noqa: BLE001
+            pass
         vocab = store.suggest(original_query[:20], limit=50) if store else []
         suggestion = did_you_mean(original_query, vocab)
         if suggestion:
             text += f'\n\nDid you mean: "{suggestion}"?'
 
-    if fmt != "json" and text != "No results found.":
+    if fmt != "json" and text != "No results found." and config.mcp.show_attribution:
         text += _SEARCH_ATTRIBUTION
+
+    # Apply max_response_chars truncation
+    max_chars = config.mcp.max_response_chars
+    if max_chars > 0 and len(text) > max_chars:
+        text = text[:max_chars] + "\n... (truncated)"
 
     # Session tracking
     if session_id:
@@ -316,30 +375,25 @@ async def handle_fetch(
     fmt = arguments.get("format", "text")
 
     if not url or not isinstance(url, str):
-        return [
-            TextContent(
-                type="text",
-                text="Error: url must be a non-empty string",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "url must be a non-empty string",
+        )
 
     if worker is None:
-        return [
-            TextContent(
-                type="text",
-                text="Error: fetch_page requires a crawler worker.",
-            )
-        ]
+        return _error(
+            ErrorCode.WORKER_UNAVAILABLE,
+            "fetch_page requires a crawler worker",
+            hint=("Start the node with 'infomesh start' first."),
+        )
 
     try:
         validate_url(url)
     except SSRFError as exc:
-        return [
-            TextContent(
-                type="text",
-                text=(f"Error: URL blocked for security reasons: {exc}"),
-            )
-        ]
+        return _error(
+            ErrorCode.SSRF_BLOCKED,
+            f"URL blocked for security: {exc}",
+        )
 
     max_size = config.index.max_doc_size_kb * 1024
     cache_ttl = config.storage.cache_ttl_days * 86400
@@ -356,18 +410,16 @@ async def handle_fetch(
 
     if not fp.success:
         if fp.is_paywall:
-            return [
-                TextContent(
-                    type="text",
-                    text=(f"Paywall detected for {url}: {fp.error}. Cannot retrieve."),
-                )
-            ]
-        return [
-            TextContent(
-                type="text",
-                text=(f"Failed to fetch {url}: content unavailable"),
+            return _error(
+                ErrorCode.PAYWALL,
+                f"Paywall detected for {url}",
+                hint="This page requires a subscription.",
             )
-        ]
+        return _error(
+            ErrorCode.FETCH_FAILED,
+            f"Failed to fetch {url}: content unavailable",
+            hint="The page may be down. Try again later.",
+        )
 
     if not fp.is_cached and link_graph:
         doc = store.get_document_by_url(url)
@@ -403,12 +455,15 @@ async def handle_fetch(
         cache_ttl=cache_ttl,
         is_paywall=fp.is_paywall,
     )
-    return [
-        TextContent(
-            type="text",
-            text=f"{text}{_FETCH_COPYRIGHT_NOTICE}",
-        )
-    ]
+    if config.mcp.show_copyright:
+        text = f"{text}{_FETCH_COPYRIGHT_NOTICE}"
+
+    # Apply max_response_chars truncation
+    max_chars = config.mcp.max_response_chars
+    if max_chars > 0 and len(text) > max_chars:
+        text = text[:max_chars] + "\n... (truncated)"
+
+    return [TextContent(type="text", text=text)]
 
 
 async def handle_crawl(
@@ -432,30 +487,25 @@ async def handle_crawl(
     webhook_url = arguments.get("webhook_url")
 
     if not url or not isinstance(url, str):
-        return [
-            TextContent(
-                type="text",
-                text="Error: url must be a non-empty string",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "url must be a non-empty string",
+        )
 
     if worker is None:
-        return [
-            TextContent(
-                type="text",
-                text="Error: crawl_url requires a crawler worker.",
-            )
-        ]
+        return _error(
+            ErrorCode.WORKER_UNAVAILABLE,
+            "crawl_url requires a crawler worker",
+            hint=("Start the node with 'infomesh start' first."),
+        )
 
     try:
         validate_url(url)
     except SSRFError as exc:
-        return [
-            TextContent(
-                type="text",
-                text=(f"Error: URL blocked for security reasons: {exc}"),
-            )
-        ]
+        return _error(
+            ErrorCode.SSRF_BLOCKED,
+            f"URL blocked for security: {exc}",
+        )
 
     if webhook_url:
         webhooks.register(webhook_url)
@@ -497,12 +547,11 @@ async def handle_crawl(
             )
         ]
 
-    return [
-        TextContent(
-            type="text",
-            text=f"Crawl failed for {url}: {ci.error}",
-        )
-    ]
+    return _error(
+        ErrorCode.CRAWL_FAILED,
+        f"Crawl failed for {url}: {ci.error}",
+        hint="Check if the URL is reachable.",
+    )
 
 
 def handle_stats(
@@ -590,7 +639,10 @@ def handle_stats(
         "InfoMesh Node Status",
         "====================",
         f"API Version: {MCP_API_VERSION}",
+        f"Server: v{SERVER_VERSION}",
         f"Phase: {data['phase']}",
+        "",
+        "── Index ──",
         f"Documents indexed: {data['documents_indexed']}",
     ]
 
@@ -610,10 +662,14 @@ def handle_stats(
 
     crd = data.get("credits")
     if isinstance(crd, dict):
-        lines.append(f"Credit balance: {crd.get('balance', 0)}")
-        lines.append(f"Credit state: {crd.get('state', 'n/a')}")
+        lines.append("")
+        lines.append("── Credits ──")
+        lines.append(f"Balance: {crd.get('balance', 0)}")
+        lines.append(f"State: {crd.get('state', 'n/a')}")
         lines.append(f"Search cost: {crd.get('search_cost', 0)}")
 
+    lines.append("")
+    lines.append("── Network ──")
     lines.append(f"Pending crawl URLs: {data['pending_crawl_urls']}")
     lines.append(f"Ranking: {data['ranking']}")
 
@@ -638,12 +694,10 @@ async def handle_batch(
     fmt = arguments.get("format", "text")
 
     if not queries or not isinstance(queries, list):
-        return [
-            TextContent(
-                type="text",
-                text="Error: queries must be a non-empty array",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "queries must be a non-empty array",
+        )
 
     queries = queries[:10]
     authority_fn = link_graph.url_authority if link_graph else None
@@ -671,7 +725,10 @@ async def handle_batch(
             TextContent(
                 type="text",
                 text=json.dumps(
-                    {"batch_results": batch},
+                    {
+                        "api_version": MCP_API_VERSION,
+                        "batch_results": batch,
+                    },
                     ensure_ascii=False,
                 ),
             )
@@ -707,14 +764,33 @@ def handle_suggest(
     limit = max(1, min(int(arguments.get("limit", 10)), 50))
 
     if not prefix or not isinstance(prefix, str):
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "prefix must be a non-empty string",
+        )
+
+    fmt = arguments.get("format", "json")
+    suggestions = store.suggest(prefix, limit=limit)
+
+    if fmt == "text":
+        if not suggestions:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"No suggestions for '{prefix}'",
+                )
+            ]
+        lines = [
+            f"Suggestions for '{prefix}':",
+            *[f"  - {s}" for s in suggestions],
+        ]
         return [
             TextContent(
                 type="text",
-                text="Error: prefix must be a non-empty string",
+                text="\n".join(lines),
             )
         ]
 
-    suggestions = store.suggest(prefix, limit=limit)
     data = {"prefix": prefix, "suggestions": suggestions}
     return [
         TextContent(
@@ -735,16 +811,16 @@ async def handle_explain(
     limit = max(1, min(int(arguments.get("limit", 5)), 20))
 
     if not query or not isinstance(query, str):
-        return [
-            TextContent(
-                type="text",
-                text="Error: query is required",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "query is required",
+        )
 
     authority_fn = link_graph.url_authority if link_graph else None
     result = search_local(store, query, limit=limit, authority_fn=authority_fn)
     explanation = explain_query(query, query, result.results, result.elapsed_ms)
+
+    fmt = arguments.get("format", "json")
 
     data: dict[str, object] = {
         "query": explanation.query,
@@ -780,6 +856,27 @@ async def handle_explain(
             for e in explanation.results
         ],
     }
+
+    if fmt == "text":
+        lines = [
+            f"Query: {explanation.query}",
+            f"Results: {explanation.total_results}",
+            f"Elapsed: {explanation.elapsed_ms:.1f}ms",
+            "",
+        ]
+        for e in explanation.results:
+            lines.append(f"  {e.url}")
+            lines.append(f"    Score: {e.combined_score:.4f}")
+            for k, v in e.weighted.items():
+                lines.append(f"    {k}: {v:.4f}")
+            lines.append("")
+        return [
+            TextContent(
+                type="text",
+                text="\n".join(lines),
+            )
+        ]
+
     return [
         TextContent(
             type="text",
@@ -801,22 +898,28 @@ async def handle_search_rag(
     limit = max(1, min(int(arguments.get("limit", 5)), 20))
 
     if not query or not isinstance(query, str):
-        return [
-            TextContent(
-                type="text",
-                text="Error: query is required",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "query is required",
+        )
 
     t0 = time.monotonic()
     deduct_search_cost(ledger)
     authority_fn = link_graph.url_authority if link_graph else None
-    result = search_local(store, query, limit=limit, authority_fn=authority_fn)
+    filters = extract_filters(arguments)
+    result = search_local(
+        store,
+        query,
+        limit=limit,
+        authority_fn=authority_fn,
+        **filters,
+    )
     elapsed = (time.monotonic() - t0) * 1000
     await analytics.record_search(elapsed)
 
     rag_output = format_rag_output(query, result.results)
     data: dict[str, object] = {
+        "api_version": MCP_API_VERSION,
         "query": query,
         "context_chunks": [
             {
@@ -850,19 +953,25 @@ async def handle_extract_answer(
     limit = max(1, min(int(arguments.get("limit", 5)), 20))
 
     if not query or not isinstance(query, str):
-        return [
-            TextContent(
-                type="text",
-                text="Error: query is required",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "query is required",
+        )
 
     deduct_search_cost(ledger)
     authority_fn = link_graph.url_authority if link_graph else None
-    result = search_local(store, query, limit=limit, authority_fn=authority_fn)
+    filters = extract_filters(arguments)
+    result = search_local(
+        store,
+        query,
+        limit=limit,
+        authority_fn=authority_fn,
+        **filters,
+    )
 
     answers = extract_answers(query, result.results)
     data: dict[str, object] = {
+        "api_version": MCP_API_VERSION,
         "query": query,
         "answers": [
             {
@@ -892,18 +1001,25 @@ async def handle_fact_check(
     claim = arguments.get("claim", "")
 
     if not claim or not isinstance(claim, str):
-        return [
-            TextContent(
-                type="text",
-                text="Error: claim is required",
-            )
-        ]
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "claim is required",
+        )
 
+    limit = max(1, min(int(arguments.get("limit", 10)), 50))
     authority_fn = link_graph.url_authority if link_graph else None
-    result = search_local(store, claim, limit=10, authority_fn=authority_fn)
+    filters = extract_filters(arguments)
+    result = search_local(
+        store,
+        claim,
+        limit=limit,
+        authority_fn=authority_fn,
+        **filters,
+    )
 
     fc = cross_reference_results(claim, result.results)
     data: dict[str, object] = {
+        "api_version": MCP_API_VERSION,
         "claim": claim,
         "verdict": fc.verdict,
         "confidence": round(fc.confidence, 3),
@@ -917,3 +1033,178 @@ async def handle_fact_check(
             text=json.dumps(data, ensure_ascii=False),
         )
     ]
+
+
+# ── New utility handlers ──────────────────────────────────────────
+
+
+def handle_ping() -> list[TextContent]:
+    """Handle ping tool: health check."""
+    data = {
+        "status": "ok",
+        "server": "infomesh",
+        "version": SERVER_VERSION,
+        "api_version": MCP_API_VERSION,
+    }
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(data, ensure_ascii=False),
+        )
+    ]
+
+
+def handle_credit_balance(
+    arguments: dict[str, Any],
+    *,
+    ledger: Any,
+) -> list[TextContent]:
+    """Handle credit_balance tool."""
+    fmt = arguments.get("format", "json")
+
+    if ledger is None:
+        data: dict[str, object] = {
+            "balance": 0,
+            "state": "normal",
+            "search_cost": 0.1,
+            "note": "Credit ledger not active",
+        }
+    else:
+        al = ledger.search_allowance()
+        data = {
+            "balance": round(ledger.balance(), 2),
+            "state": al.state.value,
+            "search_cost": round(al.search_cost, 3),
+            "tier": (
+                3 if ledger.balance() >= 1000 else 2 if ledger.balance() >= 100 else 1
+            ),
+        }
+        if al.state.value == "grace":
+            data["grace_remaining_hours"] = round(
+                al.grace_remaining_hours,
+                1,
+            )
+        elif al.state.value == "debt":
+            data["debt_amount"] = round(
+                al.debt_amount,
+                2,
+            )
+
+    if fmt == "text":
+        lines = [
+            "Credit Balance",
+            "==============",
+            f"Balance: {data.get('balance', 0)}",
+            f"State: {data.get('state', 'n/a')}",
+            f"Search cost: {data.get('search_cost', 0)}",
+        ]
+        return [
+            TextContent(
+                type="text",
+                text="\n".join(lines),
+            )
+        ]
+
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(data, ensure_ascii=False),
+        )
+    ]
+
+
+def handle_index_stats(
+    arguments: dict[str, Any],
+    *,
+    store: Any,
+    vector_store: Any,
+) -> list[TextContent]:
+    """Handle index_stats tool."""
+    fmt = arguments.get("format", "json")
+    stats = store.get_stats()
+
+    data: dict[str, object] = {
+        "document_count": stats.get(
+            "document_count",
+            0,
+        ),
+    }
+
+    # Top domains if available
+    try:
+        domains = store.get_top_domains(limit=10)
+        data["top_domains"] = [{"domain": d, "count": c} for d, c in domains]
+    except Exception:  # noqa: BLE001
+        pass
+
+    if vector_store is not None:
+        vs = vector_store.get_stats()
+        data["vector"] = {
+            "document_count": vs.get(
+                "document_count",
+                0,
+            ),
+            "model": vs.get("model", "unknown"),
+        }
+
+    if fmt == "text":
+        lines = [
+            "Index Statistics",
+            "================",
+            f"Documents: {data.get('document_count', 0)}",
+        ]
+        dom = data.get("top_domains")
+        if dom and isinstance(dom, list):
+            lines.append("Top domains:")
+            for d in dom[:5]:
+                if isinstance(d, dict):
+                    lines.append(f"  {d.get('domain', '?')}: {d.get('count', 0)}")
+        return [
+            TextContent(
+                type="text",
+                text="\n".join(lines),
+            )
+        ]
+
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(data, ensure_ascii=False),
+        )
+    ]
+
+
+def handle_remove_url(
+    arguments: dict[str, Any],
+    *,
+    store: Any,
+) -> list[TextContent]:
+    """Handle remove_url tool."""
+    url = arguments.get("url", "")
+
+    if not url or not isinstance(url, str):
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "url must be a non-empty string",
+        )
+
+    try:
+        doc = store.get_document_by_url(url)
+        if doc is None:
+            return _error(
+                ErrorCode.NOT_FOUND,
+                f"URL not found in index: {url}",
+            )
+        store.delete_document(doc["id"])
+        return [
+            TextContent(
+                type="text",
+                text=f"Removed from index: {url}",
+            )
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.error("remove_url_failed", url=url, error=str(exc))
+        return _error(
+            ErrorCode.INTERNAL,
+            f"Failed to remove {url}",
+        )

@@ -116,6 +116,102 @@ jobs:
           echo "Updated __init__.py:"
           grep __version__ infomesh/__init__.py
 
+      - name: Generate release notes from commits
+        if: steps.version.outputs.skip != 'true'
+        id: notes
+        run: |
+          # Use the latest_tag from the version step (the tag we're releasing FROM)
+          # This must run BEFORE the version bump commit, while HEAD is still
+          # the developer's last real commit.
+          latest_tag=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ -z "$latest_tag" ]; then
+            range="HEAD"
+          else
+            range="${latest_tag}..HEAD"
+          fi
+          echo "Generating release notes for range: ${range}"
+
+          # Categorize commits by conventional-commit prefix
+          features=""
+          fixes=""
+          docs=""
+          chores=""
+          tests=""
+          others=""
+
+          while IFS= read -r line; do
+            # Skip auto-release commits, skip-release commits, and empty lines
+            if [ -z "$line" ] || echo "$line" | grep -qE '\[(auto-release|skip release)\]'; then
+              continue
+            fi
+            # Categorize by conventional-commit prefix
+            if echo "$line" | grep -qi '^feat'; then
+              msg=$(echo "$line" | sed -E 's/^feat([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              features="${features}- ${msg}\n"
+            elif echo "$line" | grep -qi '^fix'; then
+              msg=$(echo "$line" | sed -E 's/^fix([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              fixes="${fixes}- ${msg}\n"
+            elif echo "$line" | grep -qi '^docs'; then
+              msg=$(echo "$line" | sed -E 's/^docs([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              docs="${docs}- ${msg}\n"
+            elif echo "$line" | grep -qi '^test'; then
+              msg=$(echo "$line" | sed -E 's/^test([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              tests="${tests}- ${msg}\n"
+            elif echo "$line" | grep -qi '^chore'; then
+              msg=$(echo "$line" | sed -E 's/^chore([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              chores="${chores}- ${msg}\n"
+            elif echo "$line" | grep -qi '^refactor\|^perf\|^ci\|^build\|^style'; then
+              msg=$(echo "$line" | sed -E 's/^(refactor|perf|ci|build|style)([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+              chores="${chores}- ${msg}\n"
+            else
+              # Non-conventional commits — classify by keywords in the message
+              lower=$(echo "$line" | tr '[:upper:]' '[:lower:]')
+              if echo "$lower" | grep -qE 'add|implement|support|enable|new|create|introduce'; then
+                features="${features}- ${line}\n"
+              elif echo "$lower" | grep -qE 'fix|patch|correct|resolve|repair|bug'; then
+                fixes="${fixes}- ${line}\n"
+              elif echo "$lower" | grep -qE 'doc|readme|changelog|comment|typo'; then
+                docs="${docs}- ${line}\n"
+              elif echo "$lower" | grep -qE 'test|spec|coverage|assert'; then
+                tests="${tests}- ${line}\n"
+              else
+                others="${others}- ${line}\n"
+              fi
+            fi
+          done <<< "$(git log "${range}" --pretty=format:'%s' --no-merges)"
+
+          # Build release body
+          body=""
+          if [ -n "$features" ]; then
+            body="${body}## 🚀 New Features\n${features}\n"
+          fi
+          if [ -n "$fixes" ]; then
+            body="${body}## 🐛 Bug Fixes\n${fixes}\n"
+          fi
+          if [ -n "$docs" ]; then
+            body="${body}## 📖 Documentation\n${docs}\n"
+          fi
+          if [ -n "$tests" ]; then
+            body="${body}## 🧪 Tests\n${tests}\n"
+          fi
+          if [ -n "$chores" ]; then
+            body="${body}## 🔧 Maintenance\n${chores}\n"
+          fi
+          if [ -n "$others" ]; then
+            body="${body}## 🔄 Other Changes\n${others}\n"
+          fi
+
+          # If no categorized commits, fall back to auto-generated
+          if [ -z "$body" ]; then
+            echo "use_generate=true" >> "$GITHUB_OUTPUT"
+          else
+            # Write to file (handles multiline safely)
+            printf '%b' "$body" > /tmp/release-notes.md
+            echo "use_generate=false" >> "$GITHUB_OUTPUT"
+            echo "--- Generated release notes ---"
+            cat /tmp/release-notes.md
+          fi
+
       - name: Build package
         if: steps.version.outputs.skip != 'true'
         run: uv build
@@ -144,69 +240,6 @@ jobs:
           git push origin main --follow-tags
           # Explicitly push tag in case --follow-tags didn't (no new commits)
           git push origin "${{ steps.version.outputs.tag }}" --force
-
-      - name: Generate release notes from commits
-        if: steps.version.outputs.skip != 'true'
-        id: notes
-        run: |
-          # Get previous tag
-          prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-
-          if [ -z "$prev_tag" ]; then
-            range="HEAD"
-          else
-            range="${prev_tag}..HEAD"
-          fi
-
-          # Categorize commits by conventional-commit prefix
-          features=""
-          fixes=""
-          docs=""
-          others=""
-
-          while IFS= read -r line; do
-            # Skip auto-release commits and empty lines
-            if [ -z "$line" ] || echo "$line" | grep -q '\[auto-release\]'; then
-              continue
-            fi
-            # Strip conventional-commit prefix: feat(scope): msg → msg
-            if echo "$line" | grep -qi '^feat'; then
-              msg=$(echo "$line" | sed -E 's/^feat([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              features="${features}- ${msg}\n"
-            elif echo "$line" | grep -qi '^fix'; then
-              msg=$(echo "$line" | sed -E 's/^fix([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              fixes="${fixes}- ${msg}\n"
-            elif echo "$line" | grep -qi '^docs'; then
-              msg=$(echo "$line" | sed -E 's/^docs([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              docs="${docs}- ${msg}\n"
-            else
-              others="${others}- ${line}\n"
-            fi
-          done <<< "$(git log "${range}" --pretty=format:'%s' --no-merges)"
-
-          # Build release body
-          body=""
-          if [ -n "$features" ]; then
-            body="${body}## 🚀 New Features\n${features}\n"
-          fi
-          if [ -n "$fixes" ]; then
-            body="${body}## 🐛 Bug Fixes\n${fixes}\n"
-          fi
-          if [ -n "$docs" ]; then
-            body="${body}## 📖 Documentation\n${docs}\n"
-          fi
-          if [ -n "$others" ]; then
-            body="${body}## 🔄 Other Changes\n${others}\n"
-          fi
-
-          # If no categorized commits, fall back to auto-generated
-          if [ -z "$body" ]; then
-            echo "use_generate=true" >> "$GITHUB_OUTPUT"
-          else
-            # Write to file (handles multiline safely)
-            printf '%b' "$body" > /tmp/release-notes.md
-            echo "use_generate=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Create GitHub Release
         if: steps.version.outputs.skip != 'true'

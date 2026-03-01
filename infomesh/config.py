@@ -131,6 +131,17 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
+class McpConfig:
+    """MCP server settings."""
+
+    default_format: str = "text"
+    max_response_chars: int = 0  # 0 = no limit
+    show_attribution: bool = True
+    show_copyright: bool = True
+    debug: bool = False
+
+
+@dataclass(frozen=True)
 class Config:
     """Root configuration container."""
 
@@ -142,6 +153,7 @@ class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     resources: ResourceConfig = field(default_factory=ResourceConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    mcp: McpConfig = field(default_factory=McpConfig)
 
 
 def _env_override(section: str, key: str) -> str | None:
@@ -186,6 +198,7 @@ _VALUE_CONSTRAINTS: dict[str, tuple[float, float]] = {
     "memory_limit_mb": (64, 1048576),
     "bgm_volume": (0, 100),
     "refresh_interval": (0.2, 5.0),
+    "max_response_chars": (0, 10000000),
 }
 
 # Allowed values for string enums
@@ -196,6 +209,7 @@ _ALLOWED_VALUES: dict[str, frozenset[str]] = {
     "profile": frozenset({"minimal", "balanced", "contributor", "dedicated"}),
     "disk_io_priority": frozenset({"low", "normal", "high"}),
     "fts_tokenizer": frozenset({"unicode61", "ascii", "porter", "trigram"}),
+    "default_format": frozenset({"text", "json"}),
     "theme": frozenset(
         {
             "catppuccin-mocha",
@@ -295,6 +309,7 @@ def load_config(config_path: Path | None = None) -> Config:
     storage = _build_section(StorageConfig, raw.get("storage", {}), "storage")  # type: ignore[arg-type]
     resources = _build_section(ResourceConfig, raw.get("resources", {}), "resources")  # type: ignore[arg-type]
     dashboard = _build_section(DashboardConfig, raw.get("dashboard", {}), "dashboard")  # type: ignore[arg-type]
+    mcp_cfg = _build_section(McpConfig, raw.get("mcp", {}), "mcp")  # type: ignore[arg-type]
 
     config = Config(
         node=node,
@@ -305,6 +320,7 @@ def load_config(config_path: Path | None = None) -> Config:
         storage=storage,
         resources=resources,
         dashboard=dashboard,
+        mcp=mcp_cfg,
     )
 
     # Ensure data directory exists (resolve to prevent traversal)
@@ -339,6 +355,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         ("storage", config.storage, defaults.storage),
         ("resources", config.resources, defaults.resources),
         ("dashboard", config.dashboard, defaults.dashboard),
+        ("mcp", config.mcp, defaults.mcp),
     ]
 
     for section_name, current_section, default_section in section_map:

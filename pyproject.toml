@@ -47,6 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 p2p = [
     "libp2p>=0.2",
+    "trio>=0.22",
 ]
 vector = [
     "chromadb>=0.5",

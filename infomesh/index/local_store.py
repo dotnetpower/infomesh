@@ -389,6 +389,28 @@ class LocalStore:
             return None
         return self._row_to_document(row)
 
+    def delete_document(self, doc_id: int) -> bool:
+        """Delete a document by ID.
+
+        Removes from both the documents table and the
+        FTS5 index.
+
+        Returns:
+            True if the document was deleted.
+        """
+        cur = self._conn.execute(
+            "DELETE FROM documents WHERE doc_id = ?",
+            (doc_id,),
+        )
+        if cur.rowcount > 0:
+            self._conn.execute(
+                "DELETE FROM documents_fts WHERE rowid = ?",
+                (doc_id,),
+            )
+            self._conn.commit()
+            return True
+        return False
+
     def get_stats(self) -> dict[str, int]:
         """Get index statistics."""
         row = self._conn.execute("SELECT COUNT(*) as count FROM documents").fetchone()

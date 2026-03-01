@@ -62,19 +62,17 @@ AI assistants to external tools.
 }
 ```
 
-## Comparison with Other Free Web Search MCP Servers
+## Comparison with Other Approaches
 
-| MCP Server | Free Tier | API Key | Decentralized | Offline | Privacy |
-|------------|-----------|---------|---------------|---------|---------|
+| Approach | Free Tier | API Key | Decentralized | Offline | Privacy |
+|----------|-----------|---------|---------------|---------|---------|
 | InfoMesh | Unlimited (credit-based) | Not required | Yes (P2P) | Yes | Queries never recorded |
-| Brave Search MCP | 2,000/month | Required (free) | No | No | Logged by provider |
-| Tavily MCP | 1,000/month | Required (free) | No | No | Logged by provider |
-| DuckDuckGo MCP | Unlimited | Not required | No | No | Minimal logging |
-| SearXNG | Unlimited (self-host) | Not required | No (single instance) | No | Self-hosted |
+| Commercial search APIs | Limited / paid | Required | No | No | Logged by provider |
+| Self-hosted search | Depends on setup | Not required | No (single instance) | Varies | Self-hosted |
 
 ## Key Capabilities (v0.2.0)
 
-- 15 MCP tools for search, RAG, fact-checking, analytics
+- 19 MCP tools for search, RAG, fact-checking, analytics, index management
 - NLP query processing: stop-words (9 languages), synonyms, spelling correction
 - Search facets, result clustering, snippet highlighting
 - RAG support with chunked output and source attribution
