@@ -90,9 +90,9 @@ jobs:
           new_version="${major}.${minor}.${patch}"
           new_tag="v${new_version}"
 
-          # Check if tag already exists (e.g. from a previous failed run)
-          if git rev-parse "$new_tag" >/dev/null 2>&1; then
-            echo "⚠️ Tag $new_tag already exists — skipping release"
+          # Check if tag already exists on REMOTE (local may not have it after fresh checkout)
+          if git ls-remote --tags origin "$new_tag" | grep -q "$new_tag"; then
+            echo "⚠️ Tag $new_tag already exists on remote — skipping release"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -139,7 +139,8 @@ jobs:
           else
             git commit -m "chore: release v${{ steps.version.outputs.version }} [auto-release]"
           fi
-          git tag "${{ steps.version.outputs.tag }}"
+          # Force-create tag (may already exist locally from a previous failed run)
+          git tag -f "${{ steps.version.outputs.tag }}"
           git push origin main --follow-tags
 
       - name: Generate release notes from commits
