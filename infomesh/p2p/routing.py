@@ -20,7 +20,6 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-import msgpack
 import structlog
 
 from infomesh.p2p.peer_profile import PeerProfileTracker
@@ -31,6 +30,7 @@ from infomesh.p2p.protocol import (
     SearchResponse,
     dataclass_to_payload,
     encode_message,
+    safe_unpackb,
 )
 
 logger = structlog.get_logger()
@@ -268,7 +268,7 @@ class QueryRouter:
             if not response_data:
                 return []
 
-            unpacked = msgpack.unpackb(response_data, raw=False)
+            unpacked = safe_unpackb(response_data)
             results = []
             for r in unpacked.get("payload", {}).get("results", []):
                 results.append(
@@ -304,7 +304,7 @@ class QueryRouter:
             if not data:
                 return
 
-            unpacked = msgpack.unpackb(data, raw=False)
+            unpacked = safe_unpackb(data)
             msg_type = unpacked.get("type", -1)
             payload = unpacked.get("payload", {})
 
@@ -312,7 +312,7 @@ class QueryRouter:
                 return
 
             query = payload.get("query", "")
-            limit = payload.get("limit", 10)
+            limit = min(payload.get("limit", 10), 100)
             request_id = payload.get("request_id", "")
 
             # Perform local search

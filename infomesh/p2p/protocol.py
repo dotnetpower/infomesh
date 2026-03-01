@@ -309,6 +309,20 @@ def encode_message(msg_type: MessageType, payload: dict[str, Any]) -> bytes:
     return bytes(length + raw)
 
 
+# Safe msgpack deserialization limits for untrusted data.
+_SAFE_UNPACK: dict[str, int] = {
+    "max_map_len": 2**16,
+    "max_array_len": 2**16,
+    "max_str_len": 2**20,
+    "max_bin_len": 2**20,
+}
+
+
+def safe_unpackb(data: bytes) -> Any:
+    """Deserialize msgpack with size limits to prevent OOM attacks."""
+    return msgpack.unpackb(data, raw=False, **_SAFE_UNPACK)
+
+
 def decode_message(data: bytes) -> tuple[MessageType, dict[str, Any]]:
     """Decode a length-prefixed msgpack message.
 
@@ -319,20 +333,24 @@ def decode_message(data: bytes) -> tuple[MessageType, dict[str, Any]]:
         Tuple of (MessageType, payload dict).
 
     Raises:
-        ValueError: If message is malformed.
+        ValueError: If message is malformed or exceeds size limit.
     """
     if len(data) < _LENGTH_PREFIX_BYTES:
         raise ValueError(f"Message too short: {len(data)} bytes")
+
+    # Reject oversized messages before any deserialization
+    if len(data) > MAX_MESSAGE_SIZE + _LENGTH_PREFIX_BYTES:
+        raise ValueError(f"Message exceeds max size: {len(data)} bytes")
 
     # Check if data starts with a valid length prefix
     length = int.from_bytes(data[:_LENGTH_PREFIX_BYTES], byteorder="big")
 
     if length <= 0 or length > MAX_MESSAGE_SIZE:
         # Maybe it's raw msgpack without length prefix
-        unpacked = msgpack.unpackb(data, raw=False)
+        unpacked = safe_unpackb(data)
     else:
         raw = data[_LENGTH_PREFIX_BYTES : _LENGTH_PREFIX_BYTES + length]
-        unpacked = msgpack.unpackb(raw, raw=False)
+        unpacked = safe_unpackb(raw)
 
     if "type" not in unpacked or "payload" not in unpacked:
         raise ValueError("Message missing 'type' or 'payload' field")

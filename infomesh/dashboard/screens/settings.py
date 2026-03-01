@@ -603,15 +603,14 @@ class SettingsPane(Widget):
         serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
         log_path = self._config.node.data_dir / "node.log"
         try:
-            log_file = open(log_path, "a")  # noqa: SIM115
-            proc = subprocess.Popen(
-                serve_cmd,
-                stdout=log_file,
-                stderr=log_file,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            log_file.close()
+            with open(log_path, "a") as log_file:
+                proc = subprocess.Popen(
+                    serve_cmd,
+                    stdout=log_file,
+                    stderr=log_file,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
             # Update app's node_pid so quit dialog still works
             if hasattr(app, "_node_pid"):
                 app._node_pid = proc.pid

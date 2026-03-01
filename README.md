@@ -9,13 +9,6 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/web_search-FREE-brightgreen?style=for-the-badge&logo=searchengineland&logoColor=white" alt="Free Web Search">
-  <img src="https://img.shields.io/badge/MCP-FREE-brightgreen?style=for-the-badge" alt="MCP Free">
-  <img src="https://img.shields.io/badge/CLI-FREE-brightgreen?style=for-the-badge" alt="CLI Free">
-  <img src="https://img.shields.io/badge/Python_Package-FREE-brightgreen?style=for-the-badge&logo=python&logoColor=white" alt="Python Package Free">
-</p>
-
-<p align="center">
   <a href="https://github.com/dotnetpower/infomesh/actions"><img src="https://img.shields.io/github/actions/workflow/status/dotnetpower/infomesh/ci.yml?branch=main&label=CI&logo=github" alt="CI"></a>
   <a href="https://pypi.org/project/infomesh/"><img src="https://img.shields.io/pypi/v/infomesh?logo=pypi&logoColor=white" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/dotnetpower/infomesh?color=blue" alt="MIT License"></a>
@@ -91,28 +84,28 @@ You run a node, you contribute to the network, and **search is free — forever.
 
 ---
 
-## � InfoMesh vs Other Web Search MCP Servers
+## InfoMesh vs Other Web Search MCP Servers
 
-Looking for a **free web search MCP server**? Here's how InfoMesh compares:
+Looking for a **free web search MCP server**? Here's how InfoMesh compares to common alternatives:
 
-| Feature | **InfoMesh** | Brave Search MCP | Tavily MCP | DuckDuckGo MCP | SearXNG |
-|---------|-------------|-----------------|------------|----------------|---------|
-| **Free tier** | ♾️ Unlimited (credit-based) | 2,000 queries/mo | 1,000 queries/mo | Unlimited | Unlimited |
-| **API key** | ❌ Not required | ✅ Required (free signup) | ✅ Required (free signup) | ❌ Not required | ❌ Not required |
-| **Decentralized** | ✅ Fully P2P | ❌ Centralized | ❌ Centralized | ❌ Centralized | ❌ Single instance |
-| **Offline search** | ✅ Local index works offline | ❌ | ❌ | ❌ | ❌ |
-| **Privacy** | ✅ Queries never leave node | ⚠️ Logged by provider | ⚠️ Logged by provider | ✅ Minimal logging | ✅ Self-hosted |
-| **Self-hosted** | ✅ You own everything | ❌ | ❌ | ❌ | ✅ Docker required |
-| **Crawl your own URLs** | ✅ `crawl_url()` tool | ❌ | ❌ | ❌ | ❌ |
-| **Full page fetch** | ✅ `fetch_page()` tool | ❌ | ✅ Extract | ❌ | ❌ |
-| **Install** | `pip install infomesh` | npm package | pip package | npm package | Docker Compose |
-| **Open source** | ✅ MIT | ✅ MIT | ⚠️ Partial | ✅ MIT | ✅ AGPL |
+| Feature | **InfoMesh** | API-based MCP servers | Scraper-based MCP servers | Meta-search engines |
+|---------|-------------|----------------------|--------------------------|---------------------|
+| **Free tier** | ♾️ Unlimited (credit-based) | Limited (1,000–2,000/mo typical) | Unlimited (no API) | Unlimited |
+| **API key** | ❌ Not required | ✅ Required (signup needed) | ❌ Not required | ❌ Not required |
+| **Decentralized** | ✅ Fully P2P | ❌ Centralized | ❌ Centralized | ❌ Single instance |
+| **Offline search** | ✅ Local index works offline | ❌ | ❌ | ❌ |
+| **Privacy** | ✅ Queries never leave node | ⚠️ Logged by provider | Varies | ✅ Self-hosted |
+| **Self-hosted** | ✅ You own everything | ❌ | ❌ | ✅ Docker required |
+| **Crawl your own URLs** | ✅ `crawl_url()` tool | ❌ | ❌ | ❌ |
+| **Full page fetch** | ✅ `fetch_page()` tool | Varies | ❌ | ❌ |
+| **Install** | `pip install infomesh` | Varies | Varies | Docker Compose |
+| **Open source** | ✅ MIT | Varies | Varies | Varies |
 
 > **InfoMesh is the only web search MCP server that is fully decentralized, works offline, requires no API key, and lets you crawl and index your own content — all for free.**
 
 ---
 
-## �🔐 Safe by Design — The Most Secure Search Engine You Can Run
+## 🔐 Safe by Design — The Most Secure Search Engine You Can Run
 
 Most search engines ask you to trust *them*. InfoMesh asks you to trust *math*.
 
@@ -167,20 +160,28 @@ Trust = 0.15 × uptime  +  0.25 × contribution  +  0.40 × audit_pass_rate  +  
 
 ## 🚀 Quick Start
 
-### Install & Run (One Command — No Git Required)
+### Install & Run (Two Steps — No Git Required)
 
-All you need is a Linux terminal (Ubuntu, Debian, etc.). No prior Python or developer experience required.
+All you need is a Linux terminal (Ubuntu, Debian, etc.).
+No prior Python or developer experience required.
+
+**Step 1 — Install `uv` (Python package manager, one-time setup):**
 
 ```bash
-# 1. Install uv — the fast Python package manager (handles everything for you)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source ~/.bashrc    # apply PATH changes (or restart your terminal)
+```
 
-# 2. Run InfoMesh instantly — auto-downloads on first use, nothing to install
+After this finishes, **close and reopen your terminal** (or run `source ~/.bashrc`).
+This ensures the `uv` and `uvx` commands are available.
+
+**Step 2 — Run InfoMesh:**
+
+```bash
 uvx infomesh status
 ```
 
-That's it — no `git clone`, no `pip install`, no virtual environments. `uv` handles everything automatically.
+`uvx` automatically downloads and runs InfoMesh — no `git clone`, no `pip install`, no virtual environments.
+On the first run it may take a few seconds to download; subsequent runs are instant.
 
 ### Try It Out
 
@@ -307,7 +308,7 @@ See [examples/README.md](examples/README.md) for the full list.
 
 ### MCP Integration — Free Web Search for AI Assistants
 
-While OpenAI charges for `web_search_preview` and other providers bill per query,
+Most commercial search APIs charge per query or require a paid subscription.
 InfoMesh exposes **5 MCP tools completely free** — no API key, no billing:
 
 | Tool | Description |
@@ -348,82 +349,14 @@ uv sync --extra llm
 
 ## 🏗️ Architecture
 
-```mermaid
-graph TB
-    subgraph Interface["🔌 Interface Layer"]
-        MCP["MCP Server<br/><i>search · search_local · fetch_page · crawl_url</i>"]
-        CLI["CLI<br/><i>infomesh search · crawl · status</i>"]
-        API["FastAPI<br/><i>REST admin endpoints</i>"]
-        TUI["Textual Dashboard<br/><i>6-tab TUI with live stats</i>"]
-    end
-
-    subgraph Search["🔍 Search Engine"]
-        QP["Query Parser"]
-        Rank["BM25 + Freshness + Trust + Authority"]
-        Cache["LRU Cache<br/><i>TTL + auto-expiry</i>"]
-        Rerank["LLM Re-ranker<br/><i>optional</i>"]
-    end
-
-    subgraph Index["💾 Index Layer"]
-        FTS["SQLite FTS5<br/><i>WAL mode · BM25</i>"]
-        Vec["ChromaDB<br/><i>optional vector search</i>"]
-        DHT_Idx["DHT Inverted Index<br/><i>hash keyword → peer pointers</i>"]
-    end
-
-    subgraph Crawl["🕷️ Crawler"]
-        Worker["Async Workers<br/><i>httpx</i>"]
-        Parser["Content Extractor<br/><i>trafilatura</i>"]
-        Robots["robots.txt Checker"]
-        Dedup["3-Layer Dedup<br/><i>URL · SHA-256 · SimHash</i>"]
-    end
-
-    subgraph P2P["📡 P2P Network"]
-        Libp2p["libp2p Transport<br/><i>Noise encryption</i>"]
-        KadDHT["Kademlia DHT<br/><i>160-bit · N=3 replication</i>"]
-        MDNS["mDNS Discovery"]
-        Routing["Latency-aware Routing"]
-    end
-
-    subgraph Trust["🔐 Trust & Incentive"]
-        Attest["Content Attestation<br/><i>SHA-256 + Ed25519</i>"]
-        Merkle["Merkle Tree Integrity"]
-        Audit["Random Audits"]
-        Credits["Credit Ledger<br/><i>signed entries + Merkle proofs</i>"]
-        Sybil["Sybil Defense<br/><i>PoW + subnet limiting</i>"]
-    end
-
-    subgraph Resources["⚙️ Resource Governance"]
-        Gov["CPU / Memory Governor"]
-        Guard["Load Guard<br/><i>QPM + concurrency</i>"]
-        Preflight["Disk & Network Preflight"]
-        Compress["zstd Compression"]
-    end
-
-    MCP & CLI & API & TUI --> QP
-    QP --> FTS & Vec & DHT_Idx
-    FTS & Vec & DHT_Idx --> Rank
-    Rank --> Cache --> Rerank
-    Worker --> Parser --> Dedup --> FTS
-    Robots -.->|enforce| Worker
-    Worker <--> Libp2p
-    DHT_Idx <--> KadDHT
-    KadDHT <--> Libp2p
-    MDNS -.->|discover| Libp2p
-    Routing -.->|optimize| KadDHT
-    Attest & Merkle & Audit -.->|verify| FTS
-    Credits -.->|incentivize| Worker
-    Sybil -.->|protect| KadDHT
-    Gov & Guard -.->|throttle| Worker & KadDHT
-    Compress -.->|compress| FTS
-
-    style Interface fill:#1a1a2e,stroke:#e94560,color:#fff
-    style Search fill:#1a1a2e,stroke:#0f3460,color:#fff
-    style Index fill:#1a1a2e,stroke:#16213e,color:#fff
-    style Crawl fill:#1a1a2e,stroke:#533483,color:#fff
-    style P2P fill:#1a1a2e,stroke:#e94560,color:#fff
-    style Trust fill:#1a1a2e,stroke:#0f3460,color:#fff
-    style Resources fill:#1a1a2e,stroke:#16213e,color:#fff
-```
+<!-- Mermaid source: assets/diagrams/architecture.mmd -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/architecture.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/architecture.svg">
+    <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/architecture.png" alt="InfoMesh Architecture Diagram" width="800">
+  </picture>
+</p>
 
 ### Tech Stack
 
@@ -446,18 +379,14 @@ graph TB
 
 ### Search Flow (Target Latency: ~1 second)
 
-```mermaid
-graph LR
-    Q["🔎 Query"] --> Parse["Parse Keywords"]
-    Parse --> Local["Local Index<br/>SQLite FTS5<br/>⚡ < 10ms"]
-    Parse --> DHT["DHT Lookup<br/>hash keyword<br/>⏱️ ~500ms"]
-    DHT --> Remote["Remote Nodes<br/>fetch results<br/>⏱️ ~200ms"]
-    Local & Remote --> Merge["Merge + Rank<br/>BM25 + freshness + trust"]
-    Merge --> Result["📦 Return via MCP<br/>top-N results<br/>⏱️ ~1s total"]
-
-    style Q fill:#e94560,stroke:#e94560,color:#fff
-    style Result fill:#0f3460,stroke:#0f3460,color:#fff
-```
+<!-- Mermaid source: assets/diagrams/search-flow.mmd -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/search-flow.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/search-flow.svg">
+    <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/search-flow.png" alt="InfoMesh Search Flow Diagram" width="700">
+  </picture>
+</p>
 
 ---
 

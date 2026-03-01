@@ -221,9 +221,7 @@ class PeerSummarizationHandler:
     def _prune_stale_peers(self, now: float) -> None:
         """Remove peer tracking entries not seen within the cleanup interval."""
         cutoff = now - self._cleanup_interval
-        stale = [
-            pid for pid, ts in self._peer_last_request.items() if ts < cutoff
-        ]
+        stale = [pid for pid, ts in self._peer_last_request.items() if ts < cutoff]
         for pid in stale:
             del self._peer_last_request[pid]
             self._peer_pending.pop(pid, None)

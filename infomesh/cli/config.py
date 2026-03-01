@@ -1,4 +1,4 @@
-"""CLI commands: config show, config set."""
+"""CLI commands: config show, config set, config github."""
 
 from __future__ import annotations
 
@@ -104,3 +104,71 @@ def _write_toml(path: Path | str, data: dict[str, Any]) -> None:
     p = Path(path) if not isinstance(path, Path) else path
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("\n".join(lines))
+
+
+@config_group.command("github")
+@click.argument("email", required=False)
+def config_github(email: str | None) -> None:
+    """Show or set the GitHub account for cross-node credit aggregation.
+
+    \b
+    Usage:
+      infomesh config github              Show current GitHub identity
+      infomesh config github user@email   Connect a GitHub account
+
+    When a GitHub email is linked, credits earned on multiple nodes
+    running under the same account are logically aggregated, giving
+    you a higher contribution score and cheaper search costs across
+    all your machines.
+    """
+    config = load_config()
+
+    if email is None:
+        # Show current identity
+        from infomesh.credits.github_identity import (
+            detect_git_email,
+            format_startup_message,
+            resolve_github_email,
+        )
+
+        resolved = resolve_github_email(config)
+        click.echo()
+        click.echo(format_startup_message(resolved))
+        click.echo()
+
+        # Also show auto-detected vs configured
+        if config.node.github_email:
+            click.echo(f"  Config:  {config.node.github_email} (explicit)")
+        git_email = detect_git_email()
+        if git_email:
+            click.echo(f"  Git:     {git_email} (auto-detected)")
+        click.echo()
+        return
+
+    # Set the email
+    from infomesh.credits.github_identity import is_valid_email
+
+    if not is_valid_email(email):
+        click.secho(f'  Invalid email format: "{email}"', fg="red")
+        raise SystemExit(1)
+
+    config_path = config.node.data_dir / "config.toml"
+
+    raw: dict[str, dict[str, object]] = {}
+    if config_path.exists():
+        import tomllib
+
+        with open(config_path, "rb") as f:
+            raw = tomllib.load(f)
+
+    if "node" not in raw:
+        raw["node"] = {}
+    raw["node"]["github_email"] = email
+
+    _write_toml(config_path, raw)
+    click.echo()
+    click.secho(f"  GitHub account connected: {email}", fg="green", bold=True)
+    click.echo()
+    click.echo("  Credits will now be linked to this account across all nodes.")
+    click.echo("  Run the same command on your other nodes to aggregate credits.")
+    click.echo()

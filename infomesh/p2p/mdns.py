@@ -187,10 +187,10 @@ class MDNSDiscovery:
         if len(data) < len(MAGIC) + 3 or data[: len(MAGIC)] != MAGIC:
             return None
 
-        import msgpack
-
         try:
-            payload = msgpack.unpackb(data[len(MAGIC) :], raw=False)
+            from infomesh.p2p.protocol import safe_unpackb
+
+            payload = safe_unpackb(data[len(MAGIC) :])
         except Exception:
             return None
 

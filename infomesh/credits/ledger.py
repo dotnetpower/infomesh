@@ -178,6 +178,7 @@ class LedgerStats:
     credit_state: CreditState = CreditState.NORMAL
     grace_remaining_hours: float | None = None
     debt_amount: float = 0.0
+    owner_email: str = ""
 
 
 # --- Ledger ---------------------------------------------------------------
@@ -200,7 +201,8 @@ class CreditLedger(SQLiteStore):
             timestamp   REAL    NOT NULL,
             note        TEXT    NOT NULL DEFAULT '',
             entry_hash  TEXT    NOT NULL DEFAULT '',
-            signature   TEXT    NOT NULL DEFAULT ''
+            signature   TEXT    NOT NULL DEFAULT '',
+            owner_email TEXT    NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS credit_spending (
@@ -222,9 +224,25 @@ class CreditLedger(SQLiteStore):
             ON credit_entries(timestamp);
     """
 
-    def __init__(self, db_path: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        *,
+        owner_email: str = "",
+    ) -> None:
+        self._owner_email = owner_email
         super().__init__(db_path, extra_pragmas=["PRAGMA foreign_keys=ON"])
         self._migrate()
+
+    @property
+    def owner_email(self) -> str:
+        """GitHub email associated with this ledger (empty if local-only)."""
+        return self._owner_email
+
+    @owner_email.setter
+    def owner_email(self, value: str) -> None:
+        """Update the owner email for future entries."""
+        self._owner_email = value
 
     # --- Migration ---------------------------------------------------------
 
@@ -245,6 +263,12 @@ class CreditLedger(SQLiteStore):
             self._conn.execute(
                 "ALTER TABLE credit_entries"
                 " ADD COLUMN signature TEXT"
+                " NOT NULL DEFAULT ''"
+            )
+        if "owner_email" not in columns:
+            self._conn.execute(
+                "ALTER TABLE credit_entries"
+                " ADD COLUMN owner_email TEXT"
                 " NOT NULL DEFAULT ''"
             )
 
@@ -316,8 +340,8 @@ class CreditLedger(SQLiteStore):
         self._conn.execute(
             """INSERT INTO credit_entries
                (action, quantity, weight, multiplier, credits, timestamp, note,
-                entry_hash, signature)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                entry_hash, signature, owner_email)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 action.value,
                 quantity,
@@ -328,6 +352,7 @@ class CreditLedger(SQLiteStore):
                 note,
                 entry_hash,
                 sig_hex,
+                self._owner_email,
             ),
         )
         self._conn.commit()
@@ -590,6 +615,7 @@ class CreditLedger(SQLiteStore):
             credit_state=allowance.state,
             grace_remaining_hours=allowance.grace_remaining_hours,
             debt_amount=allowance.debt_amount,
+            owner_email=self._owner_email,
         )
 
     def recent_entries(self, *, limit: int = 50) -> list[CreditEntry]:

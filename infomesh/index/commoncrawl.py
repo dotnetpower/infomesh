@@ -27,7 +27,6 @@ import httpx
 import structlog
 
 from infomesh.crawler import create_ssl_context
-
 from infomesh.crawler.dedup import DeduplicatorDB
 from infomesh.hashing import content_hash
 from infomesh.index.local_store import LocalStore
@@ -305,7 +304,9 @@ class CommonCrawlImporter:
 
     async def _download_wet(self, url: str) -> str:
         """Download a WET file from a URL (supports .gz)."""
-        async with httpx.AsyncClient(timeout=120.0, verify=create_ssl_context()) as client:
+        async with httpx.AsyncClient(
+            timeout=120.0, verify=create_ssl_context()
+        ) as client:
             resp = await client.get(url)
             resp.raise_for_status()
 

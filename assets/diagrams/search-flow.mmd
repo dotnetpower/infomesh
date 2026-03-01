@@ -1,0 +1,10 @@
+graph LR
+    Q["🔎 Query"] --> Parse["Parse Keywords"]
+    Parse --> Local["Local Index<br/>SQLite FTS5<br/>⚡ < 10ms"]
+    Parse --> DHT["DHT Lookup<br/>hash keyword<br/>⏱️ ~500ms"]
+    DHT --> Remote["Remote Nodes<br/>fetch results<br/>⏱️ ~200ms"]
+    Local & Remote --> Merge["Merge + Rank<br/>BM25 + freshness + trust"]
+    Merge --> Result["📦 Return via MCP<br/>top-N results<br/>⏱️ ~1s total"]
+
+    style Q fill:#e94560,stroke:#e94560,color:#fff
+    style Result fill:#0f3460,stroke:#0f3460,color:#fff

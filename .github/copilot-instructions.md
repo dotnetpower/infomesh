@@ -164,6 +164,7 @@ infomesh/
 ### General
 
 - **Language**: All source code, comments, docstrings, commit messages, and PR descriptions in **English**.
+- **No specific company/product names in comparisons**: README, docs, and marketing text must **never mention specific competing companies or products by name** (e.g., no "Tavily", "Brave Search", "OpenAI charges…"). Use generic categories instead ("API-based search providers", "commercial search APIs", "other MCP servers"). This avoids legal risk, keeps the project neutral, and prevents the text from becoming outdated when products change. Mentioning _MCP-compatible clients_ (VS Code, Claude Desktop, Cursor, etc.) as integration targets is allowed — that is factual compatibility documentation, not competitive comparison.
 - **Python version**: 3.12+ — use modern syntax (`match/case`, `type` statement, `StrEnum`, `TypeVar` defaults).
 - **Async-first**: All I/O-bound code must use `async/await` with `asyncio`. Never use blocking I/O in the event loop.
 - **⚠️ trio exception**: `py-libp2p` uses **trio** (not asyncio). All libp2p/P2P code must run under `trio.run()`. Use a `_run_trio()` wrapper for tests to avoid `asyncio_mode=auto` conflict. Phase 2 will need a trio↔asyncio bridge (e.g., `anyio` or `trio-asyncio`).
@@ -192,6 +193,34 @@ When reviewing code, ask: _"If I change X, what else breaks?"_ If the answer inc
 - Linter: **ruff check** with `select = ["E", "F", "I", "UP", "B", "SIM"]`.
 - Import order: stdlib → third-party → local (enforced by ruff/isort).
 - Prefer `pathlib.Path` over `os.path`.
+
+### Pre-commit Checks (Required)
+
+Before every commit, **both lint and format checks must pass**:
+
+```bash
+# Lint check — must show 0 errors
+uv run ruff check infomesh/ tests/
+
+# Format check — must show "X files already formatted"
+uv run ruff format --check .
+
+# Build check — must produce .whl and .tar.gz without errors
+uv build
+
+# Test check — must pass on both Python 3.12 and 3.13
+uv run pytest tests/ \
+  --ignore=tests/test_vector.py \
+  --ignore=tests/test_libp2p_spike.py \
+  -x -q --tb=short
+```
+
+If lint errors are found, fix them before committing:
+- Auto-fix safe issues: `uv run ruff check infomesh/ tests/ --fix`
+- Auto-format lines: `uv run ruff format .`
+- Manual fixes needed for: long help strings (split into multi-line), missing imports (F821), unused variables (F841)
+
+**CI enforces all four checks on Python 3.12 and 3.13.** A commit that breaks lint, format, build, or tests will fail CI.
 
 ### Naming
 

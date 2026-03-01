@@ -383,7 +383,6 @@ def load_revocations(data_dir: Path) -> list[KeyRevocationRecord]:
     Returns:
         List of ``KeyRevocationRecord`` instances.
     """
-    import msgpack
 
     from infomesh.p2p.protocol import KeyRevocationRecord
 
@@ -394,7 +393,9 @@ def load_revocations(data_dir: Path) -> list[KeyRevocationRecord]:
     records: list[KeyRevocationRecord] = []
     for path in sorted(revocations_dir.glob("*.bin")):
         try:
-            raw = msgpack.unpackb(path.read_bytes(), raw=False)
+            from infomesh.p2p.protocol import safe_unpackb
+
+            raw = safe_unpackb(path.read_bytes())
             records.append(KeyRevocationRecord(**raw))
         except Exception:
             logger.warning("revocation_load_failed", path=str(path))

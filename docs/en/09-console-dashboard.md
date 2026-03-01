@@ -260,7 +260,46 @@ DashboardApp (App[None])
 | `/` | Focus search input | Search tab only |
 | `q` | Quit | Global |
 | `r` | Refresh (Overview, Crawl, Network, Credits) | Global |
+| `m` | Toggle BGM on/off | Global |
 | `?` | Show help notification (5s timeout) | Global |
+
+## BGM (Background Music)
+
+The dashboard can play background music during operation via an external player subprocess.
+
+### Supported Players
+
+Players are auto-detected in this order: **mpv**, **ffplay** (part of ffmpeg).
+If neither is found, BGM is silently disabled.
+
+```bash
+# Install on Debian/Ubuntu:
+sudo apt install mpv     # or: sudo apt install ffmpeg
+
+# Install on macOS:
+brew install mpv         # or: brew install ffmpeg
+```
+
+### Configuration
+
+BGM is **off by default**. Enable it with the `m` keyboard shortcut or via config:
+
+```toml
+[dashboard]
+bgm_auto_start = true    # false by default — enable to auto-play on start
+bgm_volume = 50           # 0–100
+```
+
+### Performance Note
+
+On resource-constrained systems (especially WSL2), the audio player subprocess
+may compete with crawling and indexing for CPU time, causing stuttering. If this
+occurs:
+
+1. Press `m` to disable BGM
+2. Use `mpv` instead of `ffplay` (lighter CPU usage)
+3. Increase `refresh_interval` to reduce dashboard overhead
+4. Use the `minimal` resource profile
 
 ## Implementation Specs
 
@@ -301,4 +340,4 @@ DashboardApp (App[None])
 
 ---
 
-*Related docs: [Overview](01-overview.md) · [Architecture](02-architecture.md) · [Credit System](03-credit-system.md) · [Tech Stack](04-tech-stack.md) · [Legal](06-legal.md) · [Trust & Integrity](07-trust-integrity.md) · [Security Audit](08-security-audit.md) · [MCP Integration](10-mcp-integration.md) · [Publishing](11-publishing.md)*
+*Related docs: [Overview](01-overview.md) · [Architecture](02-architecture.md) · [Credit System](03-credit-system.md) · [Tech Stack](04-tech-stack.md) · [Legal](06-legal.md) · [Trust & Integrity](07-trust-integrity.md) · [Security Audit](08-security-audit.md) · [MCP Integration](10-mcp-integration.md) · [Publishing](11-publishing.md) · [FAQ](12-faq.md)*

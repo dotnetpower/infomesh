@@ -1,18 +1,27 @@
-name: Publish to PyPI
+name: Publish to PyPI (Manual Release)
+
+# Manual release workflow — triggered when you create a GitHub Release
+# from the UI. For automatic releases on every push, see auto-release.yml.
+#
+# This workflow skips auto-release created releases to avoid double-publish.
 
 on:
   release:
     types: [published]
 
 permissions:
-  id-token: write  # Required for trusted publishing
+  id-token: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Skip releases created by auto-release workflow
+    if: "!contains(github.event.release.body, '[auto-release]') && github.event.release.author.login != 'github-actions[bot]'"
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -31,26 +40,9 @@ jobs:
           name: dist
           path: dist/
 
-  publish-testpypi:
-    runs-on: ubuntu-latest
-    needs: build
-    environment: testpypi
-
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
   publish-pypi:
     runs-on: ubuntu-latest
-    needs: publish-testpypi
+    needs: build
     environment: pypi
 
     steps:

@@ -132,6 +132,39 @@ class InfoMeshNode:
         """Current node state."""
         return self._state
 
+    def _write_status_file(
+        self,
+        *,
+        state: str | None = None,
+        error: str = "",
+    ) -> None:
+        """Write P2P status to a JSON file for the status command."""
+        import json
+
+        status_path = self._config.node.data_dir / "p2p_status.json"
+        try:
+            peers = len(self.get_connected_peers()) if self._host else 0
+            addrs: list[str] = []
+            if self._host and self._state == NodeState.RUNNING:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    addrs = [
+                        str(a)
+                        for a in self._host.get_addrs()  # type: ignore[attr-defined]
+                    ]
+            data = {
+                "state": state or str(self._state),
+                "peer_id": self._peer_id,
+                "peers": peers,
+                "listen_addrs": addrs,
+                "timestamp": time.time(),
+                "error": error,
+            }
+            status_path.write_text(json.dumps(data))
+        except OSError:
+            pass  # non-critical
+
     @property
     def peer_id(self) -> str:
         """This node's libp2p peer ID."""
@@ -241,6 +274,7 @@ class InfoMeshNode:
             self._trio_thread = None
 
         self._state = NodeState.STOPPED
+        self._write_status_file(state="stopped")
         logger.info("node_stopped", peer_id=self._peer_id)
 
     # ─── Trio event loop ───────────────────────────────────
@@ -251,8 +285,9 @@ class InfoMeshNode:
             import trio
 
             trio.run(self._trio_main)
-        except Exception:
+        except Exception as exc:
             self._state = NodeState.ERROR
+            self._write_status_file(state="error", error=str(exc))
             logger.exception("trio_loop_failed")
 
     async def _trio_main(self) -> None:
@@ -300,8 +335,11 @@ class InfoMeshNode:
 
             # Create DHT with InfoMesh namespace validator
             class InfoMeshValidator(Validator):
+                _MAX_VALUE_SIZE = 1024 * 1024  # 1 MB
+
                 def validate(self, key: str, value: bytes) -> None:
-                    pass
+                    if len(value) > self._MAX_VALUE_SIZE:
+                        raise ValueError(f"DHT value too large: {len(value)} bytes")
 
                 def select(self, key: str, values: list[bytes]) -> int:
                     return 0
@@ -334,7 +372,15 @@ class InfoMeshNode:
                 # Register protocol handlers
                 self._register_handlers()
 
-                # Bootstrap — connect to known peers
+                # Mark node as RUNNING before bootstrap — bootstrap is
+                # best-effort and must not block startup.  The node is
+                # fully operational once handlers are registered.
+                self._start_time = time.time()
+                self._state = NodeState.RUNNING
+                self._started_event.set()
+                self._write_status_file()
+
+                # Bootstrap — connect to known peers (non-blocking)
                 await self._bootstrap()
 
                 # ── mDNS: start LAN peer discovery ──
@@ -348,13 +394,14 @@ class InfoMeshNode:
                 # ── Publish pending key revocations to DHT ──
                 await self._publish_pending_revocations()
 
-                self._start_time = time.time()
-                self._state = NodeState.RUNNING
-                self._started_event.set()
+                # Update status after bootstrap (peer count may have changed)
+                self._write_status_file()
 
                 # ── Main loop with periodic routing refresh ──
                 refresh_interval = 300  # refresh routing every 5 min
+                status_interval = 10  # update status file every 10s
                 last_refresh = time.time()
+                last_status = time.time()
 
                 while not self._stop_event.is_set():
                     await trio.sleep(1)
@@ -365,6 +412,11 @@ class InfoMeshNode:
                         last_refresh = now
                         await self._refresh_routing_table()
 
+                    # Update status file periodically
+                    if now - last_status >= status_interval:
+                        last_status = now
+                        self._write_status_file()
+
                     # Integrate mDNS-discovered peers
                     await self._connect_mdns_peers()
 
@@ -373,6 +425,7 @@ class InfoMeshNode:
                     self._mdns.stop()
                     self._mdns = None
 
+                self._write_status_file(state="stopped")
                 logger.info("node_shutting_down", peer_id=self._peer_id)
 
     def _register_handlers(self) -> None:
@@ -463,6 +516,7 @@ class InfoMeshNode:
 
     async def _bootstrap(self) -> None:
         """Connect to bootstrap nodes from config."""
+        import trio as _trio
         from libp2p.peer.peerinfo import info_from_p2p_addr
         from multiaddr import Multiaddr
 
@@ -476,8 +530,12 @@ class InfoMeshNode:
             try:
                 maddr = Multiaddr(addr_str)
                 peer_info = info_from_p2p_addr(maddr)
-                await self._host.connect(peer_info)  # type: ignore[union-attr]
-                logger.info("bootstrap_connected", addr=addr_str)
+                with _trio.move_on_after(10):  # 10s timeout per peer
+                    await self._host.connect(peer_info)  # type: ignore[union-attr]
+                    logger.info("bootstrap_connected", addr=addr_str)
+                    continue
+                # If we get here, the connect timed out
+                logger.warning("bootstrap_timeout", addr=addr_str, timeout_sec=10)
             except Exception:
                 logger.warning("bootstrap_failed", addr=addr_str)
 
@@ -545,9 +603,7 @@ class InfoMeshNode:
         if self._dht is None:
             return
 
-        from infomesh.p2p.keys import KEY_DIR  # type: ignore[attr-defined]
-
-        revocation_dir = KEY_DIR / "revocations"
+        revocation_dir = self._config.node.data_dir / "keys" / "revocations"
         if not revocation_dir.exists():
             return
 

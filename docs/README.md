@@ -18,6 +18,7 @@
 | 8 | [Console Dashboard](en/09-console-dashboard.md) | Textual TUI dashboard, tabs, widgets, keyboard shortcuts |
 | 9 | [MCP Integration](en/10-mcp-integration.md) | MCP server setup, IDE configuration (VS Code, Claude, Cursor, etc.) |
 | 10 | [Publishing](en/11-publishing.md) | PyPI packaging, CI/CD workflows, release process |
+| 11 | [FAQ](en/12-faq.md) | Frequently asked questions, troubleshooting, prerequisites |
 
 
 ## 한국어 (Korean)
@@ -33,5 +34,6 @@
 | 7 | [보안 감사](ko/08-security-audit.md) | 취약점 분석, 엔터프라이즈 배포, 보안 강화 계획 |
 | 8 | [콘솔 대시보드](ko/09-console-dashboard.md) | Textual TUI 대시보드, 탭, 위젯, 키보드 단축키 |
 | 9 | [MCP 연동](ko/10-mcp-integration.md) | MCP 서버 설정, IDE 연동 (VS Code, Claude, Cursor 등) |
-| 10 | [배포](ko/11-publishing.md) | PyPI 패키징, CI/CD 워크플로우, 릴리스 프로세스 |  
+| 10 | [배포](ko/11-publishing.md) | PyPI 패키징, CI/CD 워크플로우, 릴리스 프로세스 |
+| 11 | [FAQ](ko/12-faq.md) | 자주 묻는 질문, 문제 해결, 사전 요구사항 |
 

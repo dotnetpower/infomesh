@@ -251,7 +251,7 @@ class CreditsPane(Widget):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
         self._refresh_timer: Timer | None = None
-        self._prev_balance: float | None = None
+        self._prev_earned: float | None = None
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -274,7 +274,7 @@ class CreditsPane(Widget):
             pass
 
     def _check_credit_change(self) -> None:
-        """Detect credit balance increase and post CreditEarned."""
+        """Detect new credit earnings and post CreditEarned."""
         try:
             from infomesh.credits.ledger import CreditLedger
 
@@ -286,11 +286,11 @@ class CreditsPane(Widget):
             stats = ledger.stats()
             ledger.close()
 
-            current = stats.balance
-            if self._prev_balance is not None and current > self._prev_balance:
-                delta = current - self._prev_balance
+            current_earned = stats.total_earned
+            if self._prev_earned is not None and current_earned > self._prev_earned:
+                delta = current_earned - self._prev_earned
                 self.post_message(self.CreditEarned(delta))
-            self._prev_balance = current
+            self._prev_earned = current_earned
         except Exception:  # noqa: BLE001
             pass
 

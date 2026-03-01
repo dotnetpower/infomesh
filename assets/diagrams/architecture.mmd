@@ -1,0 +1,74 @@
+graph TB
+    subgraph Interface["🔌 Interface Layer"]
+        MCP["MCP Server<br/><i>search · search_local · fetch_page · crawl_url</i>"]
+        CLI["CLI<br/><i>infomesh search · crawl · status</i>"]
+        API["FastAPI<br/><i>REST admin endpoints</i>"]
+        TUI["Textual Dashboard<br/><i>6-tab TUI with live stats</i>"]
+    end
+
+    subgraph Search["🔍 Search Engine"]
+        QP["Query Parser"]
+        Rank["BM25 + Freshness + Trust + Authority"]
+        Cache["LRU Cache<br/><i>TTL + auto-expiry</i>"]
+        Rerank["LLM Re-ranker<br/><i>optional</i>"]
+    end
+
+    subgraph Index["💾 Index Layer"]
+        FTS["SQLite FTS5<br/><i>WAL mode · BM25</i>"]
+        Vec["ChromaDB<br/><i>optional vector search</i>"]
+        DHT_Idx["DHT Inverted Index<br/><i>hash keyword → peer pointers</i>"]
+    end
+
+    subgraph Crawl["🕷️ Crawler"]
+        Worker["Async Workers<br/><i>httpx</i>"]
+        Parser["Content Extractor<br/><i>trafilatura</i>"]
+        Robots["robots.txt Checker"]
+        Dedup["3-Layer Dedup<br/><i>URL · SHA-256 · SimHash</i>"]
+    end
+
+    subgraph P2P["📡 P2P Network"]
+        Libp2p["libp2p Transport<br/><i>Noise encryption</i>"]
+        KadDHT["Kademlia DHT<br/><i>160-bit · N=3 replication</i>"]
+        MDNS["mDNS Discovery"]
+        Routing["Latency-aware Routing"]
+    end
+
+    subgraph Trust["🔐 Trust & Incentive"]
+        Attest["Content Attestation<br/><i>SHA-256 + Ed25519</i>"]
+        Merkle["Merkle Tree Integrity"]
+        Audit["Random Audits"]
+        Credits["Credit Ledger<br/><i>signed entries + Merkle proofs</i>"]
+        Sybil["Sybil Defense<br/><i>PoW + subnet limiting</i>"]
+    end
+
+    subgraph Resources["⚙️ Resource Governance"]
+        Gov["CPU / Memory Governor"]
+        Guard["Load Guard<br/><i>QPM + concurrency</i>"]
+        Preflight["Disk & Network Preflight"]
+        Compress["zstd Compression"]
+    end
+
+    MCP & CLI & API & TUI --> QP
+    QP --> FTS & Vec & DHT_Idx
+    FTS & Vec & DHT_Idx --> Rank
+    Rank --> Cache --> Rerank
+    Worker --> Parser --> Dedup --> FTS
+    Robots -.->|enforce| Worker
+    Worker <--> Libp2p
+    DHT_Idx <--> KadDHT
+    KadDHT <--> Libp2p
+    MDNS -.->|discover| Libp2p
+    Routing -.->|optimize| KadDHT
+    Attest & Merkle & Audit -.->|verify| FTS
+    Credits -.->|incentivize| Worker
+    Sybil -.->|protect| KadDHT
+    Gov & Guard -.->|throttle| Worker & KadDHT
+    Compress -.->|compress| FTS
+
+    style Interface fill:#1a1a2e,stroke:#e94560,color:#fff
+    style Search fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style Index fill:#1a1a2e,stroke:#16213e,color:#fff
+    style Crawl fill:#1a1a2e,stroke:#533483,color:#fff
+    style P2P fill:#1a1a2e,stroke:#e94560,color:#fff
+    style Trust fill:#1a1a2e,stroke:#0f3460,color:#fff
+    style Resources fill:#1a1a2e,stroke:#16213e,color:#fff

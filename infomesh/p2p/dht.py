@@ -23,6 +23,7 @@ import structlog
 from infomesh.hashing import content_hash
 from infomesh.p2p.protocol import (
     keyword_to_dht_key,
+    safe_unpackb,
 )
 
 logger = structlog.get_logger()
@@ -144,7 +145,7 @@ class InfoMeshDHT:
             self._stats.gets_performed += 1
             if raw is None:
                 return []
-            entry = msgpack.unpackb(raw, raw=False)
+            entry = safe_unpackb(raw)
             return entry.get("pointers", [])  # type: ignore[no-any-return]
         except Exception:
             logger.exception("dht_query_failed", keyword=keyword)
@@ -176,7 +177,7 @@ class InfoMeshDHT:
         try:
             existing = await self._dht.get_value(lock_key)  # type: ignore[attr-defined]
             if existing is not None:
-                lock_data = msgpack.unpackb(existing, raw=False)
+                lock_data = safe_unpackb(existing)
                 lock_time = lock_data.get("timestamp", 0)
                 if time.time() - lock_time < ttl_seconds:
                     logger.debug(
@@ -296,7 +297,7 @@ class InfoMeshDHT:
             self._stats.gets_performed += 1
             if raw is None:
                 return None
-            return msgpack.unpackb(raw, raw=False)  # type: ignore[no-any-return]
+            return safe_unpackb(raw)  # type: ignore[no-any-return]
         except Exception:
             logger.exception("attestation_get_failed", url=url)
             return None

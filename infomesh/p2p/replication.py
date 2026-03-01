@@ -19,7 +19,6 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-import msgpack
 import structlog
 
 from infomesh.p2p.protocol import (
@@ -27,7 +26,9 @@ from infomesh.p2p.protocol import (
     MessageType,
     ReplicateRequest,
     dataclass_to_payload,
+    decode_message,
     encode_message,
+    safe_unpackb,
     url_to_dht_key,
 )
 
@@ -228,7 +229,7 @@ class Replicator:
             # Wait for ACK
             ack_data = await stream.read(1024)
             if ack_data:
-                ack = msgpack.unpackb(ack_data, raw=False)
+                ack = safe_unpackb(ack_data)
                 return ack.get("type") == int(MessageType.REPLICATE_RESPONSE)  # type: ignore[no-any-return]
             return False
         except Exception:
@@ -253,13 +254,16 @@ class Replicator:
             if not data:
                 return
 
-            # Skip length prefix if present
-            if len(data) > 4:
-                msg_len = int.from_bytes(data[:4], byteorder="big")
-                if 0 < msg_len < len(data):
-                    data = data[4:]
-
-            unpacked = msgpack.unpackb(data, raw=False)
+            # Try decoding with length-prefix support
+            try:
+                _, unpacked_payload = decode_message(data)
+                # Wrap to match expected format
+                unpacked = {
+                    "type": int(MessageType.REPLICATE_REQUEST),
+                    "payload": unpacked_payload,
+                }
+            except (ValueError, Exception):
+                unpacked = safe_unpackb(data)
             msg_type = unpacked.get("type", -1)
             payload = unpacked.get("payload", {})
 

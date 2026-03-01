@@ -46,6 +46,7 @@ class NodeConfig:
     listen_address: str = "0.0.0.0"
     role: str = NodeRole.FULL
     log_level: str = "info"
+    github_email: str = ""
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ class ResourceConfig:
 class DashboardConfig:
     """Dashboard UI settings."""
 
-    bgm_auto_start: bool = True
+    bgm_auto_start: bool = False
     bgm_volume: int = 50
     refresh_interval: float = 0.5
     theme: str = "catppuccin-mocha"
@@ -363,7 +364,8 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
             if isinstance(value, bool):
                 lines.append(f"{key} = {str(value).lower()}")
             elif isinstance(value, str):
-                lines.append(f'{key} = "{value}"')
+                escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+                lines.append(f'{key} = "{escaped}"')
             elif isinstance(value, (float, int)):
                 lines.append(f"{key} = {value}")
             elif isinstance(value, list):

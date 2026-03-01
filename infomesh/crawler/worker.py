@@ -157,6 +157,7 @@ class CrawlWorker:
                 )
 
         # Fetch page
+        resp = None
         try:
             resp = await client.get(url, timeout=30.0)
             resp.raise_for_status()
@@ -165,8 +166,9 @@ class CrawlWorker:
 
             validate_url_post_redirect(str(resp.url))
         except SSRFError as exc:
+            final_url = str(resp.url) if resp is not None else url
             logger.warning(
-                "crawl_ssrf_redirect", url=url, final=str(resp.url), reason=str(exc)
+                "crawl_ssrf_redirect", url=url, final=final_url, reason=str(exc)
             )
             return CrawlResult(
                 url=url,

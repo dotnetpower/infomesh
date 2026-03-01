@@ -260,7 +260,45 @@ DashboardApp (App[None])
 | `/` | 검색 입력 포커스 | Search 탭 전용 |
 | `q` | 종료 | 전체 |
 | `r` | 새로고침 (Overview, Crawl, Network, Credits) | 전체 |
+| `m` | BGM 켜기/끄기 | 전체 |
 | `?` | 도움말 알림 표시 (5초 타임아웃) | 전체 |
+
+## BGM (배경 음악)
+
+대시보드는 외부 플레이어 서브프로세스를 통해 배경 음악을 재생할 수 있습니다.
+
+### 지원 플레이어
+
+다음 순서로 자동 감지합니다: **mpv**, **ffplay** (ffmpeg 포함).
+둘 다 없으면 BGM은 자동으로 비활성화됩니다 (오류 없음).
+
+```bash
+# Debian/Ubuntu 설치:
+sudo apt install mpv     # 또는: sudo apt install ffmpeg
+
+# macOS 설치:
+brew install mpv         # 또는: brew install ffmpeg
+```
+
+### 설정
+
+BGM은 **기본적으로 꺼져** 있습니다. `m` 키로 활성화하거나 설정 파일에서 변경하세요:
+
+```toml
+[dashboard]
+bgm_auto_start = true    # false 가 기본값 — true 로 설정하면 시작 시 자동 재생
+bgm_volume = 50           # 0–100
+```
+
+### 성능 참고
+
+리소스가 제한된 시스템(특히 WSL2)에서는 오디오 플레이어 프로세스가
+크롤링 및 인덱싱과 CPU를 놓고 경쟁하여 음악이 끊길 수 있습니다. 이 경우:
+
+1. `m` 키를 눌러 BGM 비활성화
+2. `ffplay` 대신 `mpv` 사용 (CPU 사용량이 더 적음)
+3. `refresh_interval` 을 높여 대시보드 오버헤드 감소
+4. `minimal` 리소스 프로필 사용
 
 ## 구현 사양
 
@@ -313,4 +351,4 @@ DashboardApp (App[None])
 
 ---
 
-*관련 문서: [개요](01-overview.md) · [아키텍처](02-architecture.md) · [크레딧 시스템](03-credit-system.md) · [기술 스택](04-tech-stack.md) · [법적 고려사항](06-legal.md) · [신뢰 & 무결성](07-trust-integrity.md) · [보안 감사](08-security-audit.md) · [MCP 연동](10-mcp-integration.md) · [배포](11-publishing.md)*
+*관련 문서: [개요](01-overview.md) · [아키텍처](02-architecture.md) · [크레딧 시스템](03-credit-system.md) · [기술 스택](04-tech-stack.md) · [법적 고려사항](06-legal.md) · [신뢰 & 무결성](07-trust-integrity.md) · [보안 감사](08-security-audit.md) · [MCP 연동](10-mcp-integration.md) · [배포](11-publishing.md) · [FAQ](12-faq.md)*

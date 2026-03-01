@@ -19,6 +19,7 @@ from infomesh.crawler.parser import ParsedPage
 from infomesh.crawler.robots import RobotsChecker
 from infomesh.crawler.scheduler import Scheduler
 from infomesh.crawler.worker import CrawlWorker
+from infomesh.credits.github_identity import resolve_github_email
 from infomesh.credits.ledger import ActionType, CreditLedger
 from infomesh.index.link_graph import LinkGraph
 from infomesh.index.local_store import LocalStore
@@ -422,6 +423,9 @@ class AppContext:
         c = self.config
         role = c.node.role
 
+        # ── Resolve GitHub identity for cross-node credits ─
+        self.github_email: str = resolve_github_email(c) or ""
+
         # ── Always needed: local store + keys ──────────────
         self.store = LocalStore(
             db_path=c.index.db_path,
@@ -463,7 +467,10 @@ class AppContext:
             self.link_graph = LinkGraph(str(c.node.data_dir / "links.db"))
 
             try:
-                self.ledger = CreditLedger(c.node.data_dir / "credits.db")
+                self.ledger = CreditLedger(
+                    c.node.data_dir / "credits.db",
+                    owner_email=self.github_email,
+                )
             except Exception:  # noqa: BLE001
                 logger.warning("credit_ledger_unavailable")
 

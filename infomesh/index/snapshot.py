@@ -151,8 +151,14 @@ def import_snapshot(
     snapshot_path = Path(snapshot_path)
     compressor = Compressor(level=LEVEL_SNAPSHOT)
 
+    _MAX_HEADER_LEN = 10 * 1024 * 1024  # 10 MB safety limit
+
     with open(snapshot_path, "rb") as f:
         header_len = struct.unpack(">I", f.read(4))[0]
+        if header_len > _MAX_HEADER_LEN:
+            raise ValueError(
+                f"Snapshot header too large: {header_len} bytes (max {_MAX_HEADER_LEN})"
+            )
         header_compressed = f.read(header_len)
         doc_compressed = f.read()
 
@@ -169,7 +175,9 @@ def import_snapshot(
 
     # Decompress and unpack documents
     doc_bytes = compressor.decompress(doc_compressed)
-    documents = msgpack.unpackb(doc_bytes, raw=False)
+    from infomesh.p2p.protocol import _SAFE_UNPACK
+
+    documents = msgpack.unpackb(doc_bytes, raw=False, **_SAFE_UNPACK)
 
     imported = 0
     skipped = 0

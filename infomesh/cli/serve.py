@@ -12,7 +12,7 @@ import click
 import structlog
 
 from infomesh import __version__
-from infomesh.config import NodeRole, load_config
+from infomesh.config import Config, NodeRole, load_config
 
 logger = structlog.get_logger()
 
@@ -38,13 +38,15 @@ def _pid_path(data_dir: Path) -> Path:
     "-b",
     is_flag=True,
     default=False,
-    help="Run in background: start node, show log path, and exit (no dashboard, no live log)",
+    help=("Run in background: start node, show log path, and exit (no dashboard)"),
 )
 @click.option(
     "--no-dashboard",
     is_flag=True,
     default=False,
-    help="Start node without launching dashboard (kept for backward compat, same as --background)",
+    help=(
+        "Start node without launching dashboard (backward compat, same as --background)"
+    ),
 )
 @click.option(
     "--role",
@@ -91,6 +93,15 @@ def start(
     click.echo(f"InfoMesh v{__version__} starting...")
     click.echo(f"  Peer ID: {keys.peer_id}")
     click.echo(f"  Data dir: {config.node.data_dir}")
+
+    # ── GitHub identity ───────────────────────────────────────
+    from infomesh.credits.github_identity import (
+        format_startup_message,
+        resolve_github_email,
+    )
+
+    github_email = resolve_github_email(config)
+    click.echo(format_startup_message(github_email))
 
     # ── Preflight checks ──────────────────────────────────────────
     from infomesh.resources.preflight import IssueSeverity, run_preflight_checks
@@ -173,7 +184,7 @@ def start(
         click.echo("  Use 'infomesh stop' to stop the node.")
 
 
-def _run_foreground_crawl(config: "Config", seed_category: str) -> None:
+def _run_foreground_crawl(config: Config, seed_category: str) -> None:
     """Run a quick initial crawl pass before launching the dashboard."""
     import time
 
@@ -187,7 +198,11 @@ def _run_foreground_crawl(config: "Config", seed_category: str) -> None:
 
     # Crawl a small batch to warm up the index
     batch_size = min(5, len(seed_urls))
-    click.echo(f"    Seeds: {seed_category} ({len(seed_urls)} URLs, crawling first {batch_size})\n")
+    click.echo(
+        f"    Seeds: {seed_category}"
+        f" ({len(seed_urls)} URLs,"
+        f" crawling first {batch_size})\n"
+    )
 
     ctx = AppContext(config)
     crawled = 0
@@ -201,11 +216,10 @@ def _run_foreground_crawl(config: "Config", seed_category: str) -> None:
                 if result.success and result.page:
                     index_document(result.page, ctx.store, ctx.vector_store)
                     crawled += 1
-                    title = result.page.title[:55] if result.page.title else "(no title)"
-                    click.echo(
-                        f"    [{i}/{batch_size}] ✓ {title}\n"
-                        f"              {url}"
+                    title = (
+                        result.page.title[:55] if result.page.title else "(no title)"
                     )
+                    click.echo(f"    [{i}/{batch_size}] ✓ {title}\n              {url}")
                 else:
                     click.echo(f"    [{i}/{batch_size}] ✗ {url} — {result.error}")
             except Exception as exc:  # noqa: BLE001
@@ -278,6 +292,9 @@ def serve(seeds: str | None, role: str | None) -> None:
     pid_file.write_text(str(os.getpid()))
     _serve_logger.info("serve_started", pid=os.getpid(), role=config.node.role)
 
+    # ── P2P node (best-effort) ─────────────────────────────────
+    p2p_node = _try_start_p2p(config, _serve_logger)
+
     async def _run() -> None:
         from infomesh.services import AppContext, seed_and_crawl_loop
 
@@ -301,8 +318,80 @@ def serve(seeds: str | None, role: str | None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        if p2p_node is not None:
+            p2p_node.stop()
+            _serve_logger.info("p2p_stopped")
         pid_file.unlink(missing_ok=True)
         _serve_logger.info("serve_stopped")
+
+
+def _try_start_p2p(config: Config, log: object) -> object | None:
+    """Try to start the P2P node. Returns the node or None on failure.
+
+    Failures are logged as warnings — the node continues in local-only mode.
+    """
+    try:
+        from infomesh.p2p.node import InfoMeshNode  # noqa: F811
+    except ImportError:
+        log.warning(  # type: ignore[attr-defined]
+            "p2p_unavailable",
+            reason="libp2p or trio not installed",
+            hint="pip install 'libp2p[trio]'  OR  uv add libp2p trio",
+        )
+        return None
+
+    try:
+        node = InfoMeshNode(config)
+        node.start(blocking=False)
+        log.info(  # type: ignore[attr-defined]
+            "p2p_started",
+            peer_id=node.peer_id,
+            listen_port=config.node.listen_port,
+            bootstrap_nodes=len(config.network.bootstrap_nodes),
+        )
+        if not config.network.bootstrap_nodes:
+            log.warning(  # type: ignore[attr-defined]
+                "p2p_no_bootstrap",
+                msg=(
+                    "No bootstrap nodes configured. "
+                    "Add [network] bootstrap_nodes in "
+                    "~/.infomesh/config.toml to connect to peers."
+                ),
+            )
+        return node
+    except Exception as exc:
+        log.warning(  # type: ignore[attr-defined]
+            "p2p_start_failed",
+            error=str(exc),
+            msg=(
+                "P2P node failed to start — running in local-only mode. "
+                "Crawling, indexing, and local search still work."
+            ),
+        )
+        return None
+
+
+def _get_p2p_status(config: Config) -> dict[str, object]:
+    """Probe the running P2P node status without starting one.
+
+    Reads a small status file written by the _serve process.
+    Returns a dict with 'state', 'peer_id', 'peers', 'listen_addrs'.
+    """
+    status_file = config.node.data_dir / "p2p_status.json"
+    if status_file.exists():
+        import json
+
+        try:
+            data = json.loads(status_file.read_text())
+            # Check freshness (stale after 30s means node probably dead)
+            import time
+
+            age = time.time() - data.get("timestamp", 0)
+            if age < 30:
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"state": "stopped", "peers": 0, "listen_addrs": []}
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +411,6 @@ def status() -> None:
 
         click.echo(f"InfoMesh v{__version__}")
         click.echo(f"{'=' * 30}")
-        click.echo("Phase:           0 (MVP)")
         click.echo(f"Running:         {'yes' if running else 'no'}")
         click.echo(f"Data dir:        {config.node.data_dir}")
         click.echo(f"Index DB:        {config.index.db_path}")
@@ -339,7 +427,28 @@ def status() -> None:
             else:
                 click.echo("Vector docs:     (chromadb not installed)")
         click.echo(f"LLM:             {'on' if config.llm.enabled else 'off'}")
-        click.echo("P2P peers:       0 (Phase 2)")
+
+        # ── P2P status ─────────────────────────────────────────
+        p2p = _get_p2p_status(config)
+        p2p_state = p2p.get("state", "stopped")
+        p2p_peers = p2p.get("peers", 0)
+        if p2p_state == "running":
+            click.echo(f"P2P:             running ({p2p_peers} peers)")
+            addrs = p2p.get("listen_addrs", [])
+            if addrs:
+                click.echo(f"P2P addrs:       {', '.join(str(a) for a in addrs)}")
+        elif p2p_state == "error":
+            click.echo("P2P:             " + click.style("error", fg="red"))
+            err = p2p.get("error", "")
+            if err:
+                click.echo(f"P2P error:       {err}")
+        elif running:
+            click.echo("P2P:             " + click.style("not connected", fg="yellow"))
+            click.echo(
+                "                 (libp2p/trio not installed or no bootstrap nodes)"
+            )
+        else:
+            click.echo("P2P:             stopped")
 
         # Credits
         if ctx.ledger is not None:
@@ -356,6 +465,17 @@ def status() -> None:
             )
             if ls.credit_state.value != "normal":
                 click.echo(f"Credit state:    {ls.credit_state.value}")
+            if ls.owner_email:
+                click.echo(f"GitHub:          {ls.owner_email}")
+                click.echo("                 Credits linked across all nodes.")
+            else:
+                click.echo(
+                    "GitHub:          " + click.style("not connected", fg="yellow")
+                )
+                click.echo(
+                    "                 Run "
+                    "'infomesh config github your@email.com' to link."
+                )
         else:
             click.echo("Credits:         N/A (ledger unavailable)")
 

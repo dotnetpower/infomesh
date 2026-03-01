@@ -1,0 +1,124 @@
+name: Auto Release & Publish
+
+# Automatically bump patch version, tag, and publish to PyPI
+# on every push to main that changes source code or tests.
+# Commits with [auto-release] or [skip release] in message are skipped.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infomesh/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "seeds/**"
+      - "bootstrap/**"
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: >-
+      !contains(github.event.head_commit.message, '[auto-release]') &&
+      !contains(github.event.head_commit.message, '[skip release]')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Lint
+        run: uv run ruff check infomesh/ tests/
+
+      - name: Run tests
+        run: |
+          uv run pytest tests/ \
+            --ignore=tests/test_vector.py \
+            --ignore=tests/test_libp2p_spike.py \
+            -x -q --tb=short
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Determine next version
+        id: version
+        run: |
+          # Get latest tag, default to v0.1.0 if none exist
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          echo "Latest tag: $latest_tag"
+
+          # Parse major.minor.patch
+          version_str="${latest_tag#v}"
+          IFS='.' read -r major minor patch <<< "$version_str"
+
+          # Bump patch
+          patch=$((patch + 1))
+          new_version="${major}.${minor}.${patch}"
+          echo "version=${new_version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${new_version}" >> "$GITHUB_OUTPUT"
+          echo "Next version: ${new_version}"
+
+      - name: Update version in pyproject.toml
+        run: |
+          sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.version }}"/' pyproject.toml
+          echo "Updated pyproject.toml:"
+          head -5 pyproject.toml
+
+      - name: Build package
+        run: uv build
+
+      - name: Verify package
+        run: |
+          ls -la dist/
+          # Ensure the built package has correct version
+          ls dist/ | grep "${{ steps.version.outputs.version }}"
+
+      - name: Commit version bump & create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: release v${{ steps.version.outputs.version }} [auto-release]"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin main --follow-tags
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            dist/* \
+            --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

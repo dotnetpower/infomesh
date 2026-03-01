@@ -67,7 +67,7 @@ def test_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_dashboard_config_defaults() -> None:
     """DashboardConfig should have sensible defaults."""
     config = Config()
-    assert config.dashboard.bgm_auto_start is True
+    assert config.dashboard.bgm_auto_start is False
     assert config.dashboard.bgm_volume == 50
     assert config.dashboard.refresh_interval == 0.5
     assert config.dashboard.theme == "catppuccin-mocha"
@@ -133,7 +133,7 @@ def test_save_config_roundtrip(tmp_path: Path) -> None:
     assert loaded.dashboard.theme == "nord"
     # Defaults should remain unchanged
     assert loaded.crawl.politeness_delay == 1.0
-    assert loaded.dashboard.bgm_auto_start is True
+    assert loaded.dashboard.bgm_auto_start is False
 
 
 def test_save_config_only_non_defaults(tmp_path: Path) -> None:

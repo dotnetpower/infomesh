@@ -184,9 +184,10 @@ class DashboardApp(App[None]):
         self,
         event: CreditsPane.CreditEarned,
     ) -> None:
-        """Play coin SFX when credits increase."""
-        if self._bgm.available and _COIN_SFX.exists():
+        """Play coin SFX when credits increase (only if BGM is playing)."""
+        if self._bgm.is_playing and _COIN_SFX.exists():
             self._bgm.play_sfx(_COIN_SFX, volume=100)
+        if event.delta > 0:
             self.notify(
                 f"🪙 +{event.delta:.2f} credits!",
                 title="Credit",

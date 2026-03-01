@@ -12,7 +12,12 @@ from infomesh.config import load_config
 
 @click.command()
 @click.argument("url")
-@click.option("--depth", "-d", default=0, help="Link follow depth (0=single page, 1-3=follow links)")
+@click.option(
+    "--depth",
+    "-d",
+    default=0,
+    help="Link follow depth (0=single page, 1-3=follow links)",
+)
 def crawl(url: str, depth: int) -> None:
     """Crawl a URL and add it to the local index."""
 
@@ -95,7 +100,7 @@ async def _crawl_with_progress(
         child_result = await ctx.worker.crawl_url(child_url, depth=child_depth)  # type: ignore[union-attr]
 
         page_num = crawled + failed + skipped + 1
-        elapsed_total = time.monotonic() - start_time
+        time.monotonic() - start_time
         remaining = ctx.scheduler.pending_count  # type: ignore[union-attr]
 
         if child_result.success and child_result.page:
@@ -104,14 +109,23 @@ async def _crawl_with_progress(
             total_chars += len(child_result.page.text)
             click.echo(
                 f"  [{page_num}] ✓ {_trunc(child_url, 70)}  "
-                f"({len(child_result.page.text):,} chars, {child_result.elapsed_ms:.0f}ms) "
+                f"({len(child_result.page.text):,} chars, "
+                f"{child_result.elapsed_ms:.0f}ms) "
                 f"[{remaining} queued]"
             )
-        elif child_result.error in ("already_seen", "duplicate_content", "near_duplicate"):
+        elif child_result.error in (
+            "already_seen",
+            "duplicate_content",
+            "near_duplicate",
+        ):
             skipped += 1
             # Don't print skip noise unless few pages
             if page_num <= 5:
-                click.echo(f"  [{page_num}] ⊘ {_trunc(child_url, 70)}  (skip: {child_result.error})")
+                click.echo(
+                    f"  [{page_num}] ⊘ "
+                    f"{_trunc(child_url, 70)}"
+                    f"  (skip: {child_result.error})"
+                )
         else:
             failed += 1
             click.echo(

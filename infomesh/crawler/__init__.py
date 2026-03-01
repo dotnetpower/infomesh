@@ -10,9 +10,9 @@ MAX_RESPONSE_BYTES: int = 10 * 1024 * 1024
 
 # Well-known system CA bundle paths (Linux / macOS)
 _SYSTEM_CA_PATHS: list[str] = [
-    "/etc/ssl/certs/ca-certificates.crt",   # Debian/Ubuntu
-    "/etc/pki/tls/certs/ca-bundle.crt",     # RHEL/CentOS
-    "/etc/ssl/cert.pem",                    # Alpine/macOS
+    "/etc/ssl/certs/ca-certificates.crt",  # Debian/Ubuntu
+    "/etc/pki/tls/certs/ca-bundle.crt",  # RHEL/CentOS
+    "/etc/ssl/cert.pem",  # Alpine/macOS
     "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",  # Fedora
 ]
 
