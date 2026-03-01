@@ -36,6 +36,23 @@ P2P 네트워크를 통해 웹을 크롤링, 인덱싱, 검색하며 MCP(Model C
 - **psutil** — 선택 사항, 대시보드의 시스템 리소스 모니터링용
 - 첫 설치와 크롤링에 인터넷 필요 (로컬 검색은 오프라인 가능)
 
+#### P2P용 시스템 패키지 (선택)
+
+`p2p` 추가 기능(`libp2p`)은 C 확장(`fastecdsa`, `coincurve`, `pynacl`)을 포함하며, 네이티브 빌드 도구가 필요합니다.
+기본 설치에서는 **불필요**하며, `uv sync --extra p2p` 또는 `pip install infomesh[p2p]` 사용 시에만 필요합니다.
+
+**Linux (Debian / Ubuntu):**
+```bash
+sudo apt-get update && sudo apt-get install -y build-essential python3-dev libgmp-dev
+```
+
+**macOS:**
+```bash
+brew install gmp
+```
+
+**Windows:** WSL2 사용 (권장) 또는 Visual Studio Build Tools + GMP 설치.
+
 ### 어떻게 설치하나요?
 
 **가장 빠른 방법 (설치 없이):**

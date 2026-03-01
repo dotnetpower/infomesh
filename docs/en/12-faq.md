@@ -36,6 +36,23 @@ MCP mode, or `infomesh start` for the full node with P2P, crawling, and the dash
 - **psutil** — optional, for system resource monitoring in the dashboard
 - Internet connection for first install and crawling (local search works offline)
 
+#### System packages for P2P (optional)
+
+The `p2p` extra (`libp2p`) includes C extensions (`fastecdsa`, `coincurve`, `pynacl`) that need native build tools.
+These are **not** required for the base install — only for `uv sync --extra p2p` or `pip install infomesh[p2p]`.
+
+**Linux (Debian / Ubuntu):**
+```bash
+sudo apt-get update && sudo apt-get install -y build-essential python3-dev libgmp-dev
+```
+
+**macOS:**
+```bash
+brew install gmp
+```
+
+**Windows:** Use WSL2 (recommended) or install Visual Studio Build Tools + GMP.
+
 ### How do I install InfoMesh?
 
 **Quickest (no permanent install):**
