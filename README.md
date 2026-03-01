@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/og-banner.png" alt="InfoMesh — Decentralized P2P Search Engine for LLMs" width="100%">
+  <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/og-banner.png" alt="InfoMesh — Decentralized P2P Search Engine for LLMs" width="100%">
 </p>
 
 <h1 align="center">InfoMesh</h1>
@@ -352,9 +352,9 @@ uv sync --extra llm
 <!-- Mermaid source: assets/diagrams/architecture.mmd -->
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/architecture.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/architecture.svg">
-    <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/architecture.png" alt="InfoMesh Architecture Diagram" width="800">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/diagrams/architecture.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/diagrams/architecture.svg">
+    <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/diagrams/architecture.png" alt="InfoMesh Architecture Diagram" width="800">
   </picture>
 </p>
 
@@ -382,9 +382,9 @@ uv sync --extra llm
 <!-- Mermaid source: assets/diagrams/search-flow.mmd -->
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/search-flow.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/search-flow.svg">
-    <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/assets/diagrams/search-flow.png" alt="InfoMesh Search Flow Diagram" width="700">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/diagrams/search-flow.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/diagrams/search-flow.svg">
+    <img src="https://raw.githubusercontent.com/dotnetpower/infomesh/main/infomesh/assets/diagrams/search-flow.png" alt="InfoMesh Search Flow Diagram" width="700">
   </picture>
 </p>
 
