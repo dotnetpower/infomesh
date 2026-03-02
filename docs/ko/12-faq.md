@@ -157,7 +157,7 @@ uvx infomesh mcp
 
 ### 오프라인에서 검색할 수 있나요?
 
-네. MCP의 `search_local` 또는 `infomesh search --local <쿼리>`를 사용하세요.
+네. MCP의 `web_search`에서 `local_only=true` 또는 `infomesh search --local <쿼리>`를 사용하세요.
 로컬에 캐시된 인덱스만 검색합니다.
 
 ### robots.txt는 준수하나요?

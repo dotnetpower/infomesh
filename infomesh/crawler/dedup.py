@@ -6,6 +6,7 @@ URL normalization + SHA-256 content hash + SimHash near-dedup.
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import structlog
@@ -100,7 +101,10 @@ class DeduplicatorDB:
     def __init__(self, db_path: str | None = None) -> None:
         import sqlite3
 
-        self._conn = sqlite3.connect(db_path or ":memory:")
+        resolved = db_path or ":memory:"
+        if resolved != ":memory:":
+            Path(resolved).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(resolved)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_urls (

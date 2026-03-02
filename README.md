@@ -39,21 +39,13 @@
 
 ---
 
-> [!NOTE]
-> **P2P Bootstrap Nodes — Coming Soon**
-> Public bootstrap node infrastructure is currently being set up. Until official bootstrap nodes are available, you can connect peers manually:
+> [!TIP]
+> **P2P Bootstrap Node Available**
+> InfoMesh ships with a default bootstrap node — your node connects automatically on first start. To add more peers manually:
 > ```bash
-> # Add a peer's address to your bootstrap list
 > infomesh peer add /ip4/<IP>/tcp/4001/p2p/<PEER_ID>
-> # Test connectivity to configured bootstrap nodes
 > infomesh peer test
 > ```
-> Or configure directly in `~/.infomesh/config.toml`:
-> ```toml
-> [network]
-> bootstrap_nodes = ["/ip4/<IP>/tcp/4001/p2p/<PEER_ID>"]
-> ```
-> This will be resolved shortly. Local crawling, indexing, and MCP search work fully without P2P.
 
 ---
 

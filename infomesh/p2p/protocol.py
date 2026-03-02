@@ -32,6 +32,7 @@ PROTOCOL_REPLICATE = "/infomesh/replicate/1.0.0"
 PROTOCOL_PING = "/infomesh/ping/1.0.0"
 PROTOCOL_CREDIT = "/infomesh/credit/1.0.0"
 PROTOCOL_INDEX_SUBMIT = "/infomesh/index-submit/1.0.0"
+PROTOCOL_PEX = "/infomesh/pex/1.0.0"
 
 # ─── Message Types ─────────────────────────────────────────
 
@@ -79,6 +80,10 @@ class MessageType(IntEnum):
     # Index submit (DMZ crawler → private indexer)
     INDEX_SUBMIT = 80
     INDEX_SUBMIT_ACK = 81
+
+    # Peer Exchange (PEX)
+    PEX_REQUEST = 90
+    PEX_RESPONSE = 91
 
     # Error
     ERROR = 99

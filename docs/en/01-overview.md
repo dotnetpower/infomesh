@@ -182,7 +182,7 @@ The latest release adds **100+ features** organized into:
 - **Security & API** — API key management, role-based access, audit logging, webhook signatures, Prometheus metrics
 - **Developer Experience** — Python SDK, plugin system, LangChain/LlamaIndex/Haystack integrations
 - **Deployment** — Helm chart, Docker Compose, systemd service, Terraform modules
-- **15 MCP tools** (up from 9) — including `explain`, `search_rag`, `extract_answer`, `fact_check`, `search_history`
+- **5 consolidated MCP tools** — `web_search`, `fetch_page`, `crawl_url`, `fact_check`, `status` (legacy names still supported)
 
 See the full [CHANGELOG](../../CHANGELOG.md) for details.
 

@@ -40,7 +40,9 @@ from infomesh.mcp.handlers import (
     handle_search,
     handle_search_rag,
     handle_stats,
+    handle_status,
     handle_suggest,
+    handle_web_search,
 )
 from infomesh.mcp.session import (
     AnalyticsTracker,
@@ -130,6 +132,34 @@ def _create_app(
             return [TextContent(type="text", text=auth_err)]
 
         match name:
+            # ── New consolidated tools ─────────────────
+            case "web_search":
+                return await handle_web_search(
+                    arguments,
+                    config=config,
+                    store=store,
+                    vector_store=vector_store,
+                    distributed_index=distributed_index,
+                    link_graph=link_graph,
+                    ledger=ledger,
+                    llm_backend=llm_backend,
+                    query_cache=query_cache,
+                    sessions=sessions,
+                    analytics=analytics,
+                )
+            case "status":
+                return handle_status(
+                    arguments,
+                    store=store,
+                    vector_store=vector_store,
+                    link_graph=link_graph,
+                    ledger=ledger,
+                    scheduler=scheduler,
+                    p2p_node=p2p_node,
+                    distributed_index=distributed_index,
+                    analytics=analytics,
+                )
+            # ── Legacy backward-compatible aliases ─────
             case "search" | "search_local":
                 return await handle_search(
                     name,

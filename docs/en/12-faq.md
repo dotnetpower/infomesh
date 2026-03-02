@@ -158,7 +158,7 @@ If dependencies are missing, install them: `uv sync` (from source) or
 
 ### Can I search offline?
 
-Yes. Use `search_local` (MCP) or `infomesh search --local <query>`.
+Yes. Use `web_search` with `local_only=true` (MCP) or `infomesh search --local <query>`.
 This searches only your locally cached index.
 
 ### What about robots.txt?

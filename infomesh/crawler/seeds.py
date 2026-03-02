@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import sysconfig
 from pathlib import Path
 
 import structlog
 
 logger = structlog.get_logger()
 
-# Bundled seed directory (relative to project root)
-_SEEDS_DIR = Path(__file__).parent.parent.parent / "seeds"
+# Bundled seed directory — try dev checkout first, then installed shared-data
+_SEEDS_DIR_DEV = Path(__file__).parent.parent.parent / "seeds"
+_DATA_PREFIX = sysconfig.get_path("data") or ""
+_SEEDS_DIR_INSTALLED = Path(_DATA_PREFIX) / "share" / "infomesh" / "seeds"
+_SEEDS_DIR = _SEEDS_DIR_DEV if _SEEDS_DIR_DEV.exists() else _SEEDS_DIR_INSTALLED
 
 CATEGORIES = {
     "tech-docs": "Technology documentation",

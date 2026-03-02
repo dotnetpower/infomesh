@@ -97,12 +97,10 @@ def start(
 
     # ── GitHub identity ───────────────────────────────────────
     from infomesh.credits.github_identity import (
-        format_startup_message,
-        resolve_github_email,
+        run_first_start_checks,
     )
 
-    github_email = resolve_github_email(config)
-    click.echo(format_startup_message(github_email))
+    run_first_start_checks(config)
 
     # ── Preflight checks ──────────────────────────────────────────
     from infomesh.resources.preflight import IssueSeverity, run_preflight_checks

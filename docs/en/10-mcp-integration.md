@@ -7,62 +7,57 @@ How to connect AI assistants to InfoMesh via [MCP (Model Context Protocol)](http
 ## What is MCP?
 
 MCP is an open protocol that lets AI assistants (Claude, GitHub Copilot, etc.) call external tools.
-InfoMesh exposes **15 tools** via MCP — search, search_local, fetch_page, crawl_url, network_stats,
-batch_search, suggest, register_webhook, analytics, explain, search_history, search_rag,
-extract_answer, and fact_check —
+InfoMesh exposes **5 tools** via MCP — web_search, fetch_page, crawl_url, fact_check, and status —
 so your AI assistant can search the web through your own decentralized index.
+
+> **v0.3.0 consolidation**: The previous 18 tools have been consolidated into 5 focused tools.
+> Legacy tool names (`search`, `search_local`, `network_stats`, etc.) are still accepted for backward compatibility.
 
 ## Available MCP Tools
 
-### Core Search Tools
+### Search & Intelligence
 
 | Tool | Description | Key Parameters |
 |------|-------------|---------------|
-| `search` | Search the P2P network (local + distributed) | `query`, `limit`, `format`, `language`, `date_from`, `date_to`, `include_domains`, `exclude_domains`, `offset`, `snippet_length`, `session_id` |
-| `search_local` | Search local index only (works offline) | Same as `search` |
-| `batch_search` | Run multiple queries in one call (max 10) | `queries`, `limit`, `format` |
-| `suggest` | Autocomplete / search suggestions | `prefix`, `limit` |
+| `web_search` | Unified web search (P2P + local, RAG, explain, answer extraction) | `query` (required), `top_k`, `recency_days`, `domain_allowlist`, `domain_blocklist`, `language`, `fetch_full_content`, `chunk_size`, `rerank`, `answer_mode`, `local_only`, `explain` |
 
-### Content Access Tools
+### Content Access
 
 | Tool | Description | Key Parameters |
 |------|-------------|---------------|
-| `fetch_page` | Fetch full text of a URL (cached or live) | `url`, `format` |
-| `crawl_url` | Crawl a URL and add to the index | `url`, `depth`, `force`, `webhook_url` |
+| `fetch_page` | Fetch full text of a URL (cached or live, max 100KB) | `url` (required) |
+| `crawl_url` | Crawl a URL and add to the index (60/hr rate limit) | `url` (required), `depth`, `force` |
 
-### Intelligence Tools (NEW in v0.2.0)
-
-| Tool | Description | Key Parameters |
-|------|-------------|---------------|
-| `explain` | Score breakdown per result (BM25, freshness, trust) | `query`, `limit` |
-| `search_rag` | RAG-optimized chunked output with source attribution | `query`, `limit`, `chunk_size` |
-| `extract_answer` | Direct answer extraction with confidence scores | `query`, `limit` |
-| `fact_check` | Cross-reference claims against indexed sources | `claim`, `limit` |
-| `search_history` | View or clear past search queries | `action` (`"list"` or `"clear"`) |
-
-### Infrastructure Tools
+### Verification
 
 | Tool | Description | Key Parameters |
 |------|-------------|---------------|
-| `network_stats` | Node status: index size, peers, credits | `format` |
-| `analytics` | Search analytics (counts, latency) | `format` |
-| `register_webhook` | Register webhook for crawl events | `url` |
+| `fact_check` | Cross-reference claims against indexed sources | `claim` (required), `top_k` |
 
-### Common Search Parameters
+### Status
 
-All search tools (`search`, `search_local`, `batch_search`) support:
+| Tool | Description | Key Parameters |
+|------|-------------|---------------|
+| `status` | Node status: index size, peers, credits, analytics | _(none required)_ |
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `format` | `"text"` \| `"json"` | Output format (default: `"text"`) |
-| `language` | string | ISO 639-1 code filter (e.g. `"en"`, `"ko"`) |
-| `date_from` | number | Unix timestamp — only docs crawled after this |
-| `date_to` | number | Unix timestamp — only docs crawled before this |
-| `include_domains` | string[] | Only include results from these domains |
-| `exclude_domains` | string[] | Exclude results from these domains |
-| `offset` | integer | Skip N results (pagination) |
-| `snippet_length` | integer | Max snippet chars (10–1000, default 200) |
-| `session_id` | string | Session ID for conversational refinement |
+### web_search Parameters
+
+The `web_search` tool replaces 6 previous tools with optional parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | _(required)_ | Search query text |
+| `top_k` | integer | `5` | Number of results to return |
+| `recency_days` | integer | — | Only results from the last N days |
+| `domain_allowlist` | string[] | — | Only include these domains |
+| `domain_blocklist` | string[] | — | Exclude these domains |
+| `language` | string | — | ISO 639-1 code (e.g. `"en"`, `"ko"`) |
+| `fetch_full_content` | boolean | `false` | Include full article text per result |
+| `chunk_size` | integer | — | RAG chunk size (enables chunked output) |
+| `rerank` | boolean | `true` | Apply LLM semantic re-ranking |
+| `answer_mode` | `"snippets"` \| `"summary"` \| `"structured"` | `"snippets"` | Response format mode |
+| `local_only` | boolean | `false` | Search local index only (offline, <10ms) |
+| `explain` | boolean | `false` | Include BM25/freshness/trust score breakdown |
 
 ### JSON Output
 
@@ -324,7 +319,7 @@ async def main():
 
             # Search
             result = await session.call_tool(
-                "search", {"query": "python asyncio", "limit": 5}
+                "web_search", {"query": "python asyncio", "top_k": 5}
             )
             print(result.content[0].text)
 

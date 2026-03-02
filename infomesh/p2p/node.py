@@ -32,12 +32,21 @@ from infomesh.config import Config, NodeRole
 from infomesh.crawler.url_assigner import UrlAssigner
 from infomesh.p2p.dht import InfoMeshDHT
 from infomesh.p2p.mdns import MDNSDiscovery
+from infomesh.p2p.peer_store import PeerStore
+from infomesh.p2p.pex import (
+    PEX_MAX_PEERS,
+    PEX_MAX_PEERS_PER_ROUND,
+    PEX_ROUND_INTERVAL,
+    PeerExchange,
+)
 from infomesh.p2p.protocol import (
     PROTOCOL_INDEX_SUBMIT,
+    PROTOCOL_PEX,
     PROTOCOL_PING,
     PROTOCOL_REPLICATE,
     PROTOCOL_SEARCH,
     MessageType,
+    decode_message,
     encode_message,
 )
 from infomesh.p2p.replication import Replicator
@@ -114,6 +123,8 @@ class InfoMeshNode:
             else 3,
         )
         self._mdns: MDNSDiscovery | None = None
+        self._peer_store: PeerStore | None = None
+        self._pex: PeerExchange | None = None
         self._throttle = BandwidthThrottle(
             upload_mbps=config.network.upload_limit_mbps,
             download_mbps=config.network.download_limit_mbps,
@@ -428,8 +439,19 @@ class InfoMeshNode:
                 self._started_event.set()
                 self._write_status_file()
 
+                # ── Peer store + PEX: load cached peers for resilience ──
+                self._peer_store = PeerStore(self._config.node.data_dir)
+                self._pex = PeerExchange(peer_id=self._peer_id)
+
                 # Bootstrap — connect to known peers (non-blocking)
                 await self._bootstrap()
+
+                # If bootstrap failed, try cached peers
+                if (
+                    self._bootstrap_results.get("connected", 0) == 0
+                    and self._peer_store is not None
+                ):
+                    await self._connect_cached_peers()
 
                 # ── mDNS: start LAN peer discovery ──
                 self._mdns = MDNSDiscovery(
@@ -448,8 +470,10 @@ class InfoMeshNode:
                 # ── Main loop with periodic routing refresh ──
                 refresh_interval = 300  # refresh routing every 5 min
                 status_interval = 10  # update status file every 10s
+                pex_interval = PEX_ROUND_INTERVAL
                 last_refresh = time.time()
                 last_status = time.time()
+                last_pex = time.time()
 
                 while not self._stop_event.is_set():
                     await trio.sleep(1)
@@ -459,6 +483,15 @@ class InfoMeshNode:
                     if now - last_refresh >= refresh_interval:
                         last_refresh = now
                         await self._refresh_routing_table()
+                        # Save connected peers & prune stale entries
+                        await self._save_connected_peers()
+                        if self._peer_store is not None:
+                            self._peer_store.prune()
+
+                    # Periodic PEX round
+                    if now - last_pex >= pex_interval:
+                        last_pex = now
+                        await self._run_pex_round()
 
                     # Update status file periodically
                     if now - last_status >= status_interval:
@@ -468,7 +501,13 @@ class InfoMeshNode:
                     # Integrate mDNS-discovered peers
                     await self._connect_mdns_peers()
 
-                # Cleanup mDNS
+                # ── Shutdown: save connected peers + cleanup ──
+                await self._save_connected_peers()
+
+                if self._peer_store is not None:
+                    self._peer_store.close()
+                    self._peer_store = None
+
                 if self._mdns:
                     self._mdns.stop()
                     self._mdns = None
@@ -495,6 +534,51 @@ class InfoMeshNode:
                 await stream.close()  # type: ignore[attr-defined]
 
         self._host.set_stream_handler(PROTOCOL_PING, _handle_ping)  # type: ignore[attr-defined]
+
+        # PEX handler — always registered (peer exchange)
+        pex = self._pex
+
+        async def _handle_pex(stream: object) -> None:
+            try:
+                data = await stream.read(4096)  # type: ignore[attr-defined]
+                msg_type, payload = decode_message(data)
+                if msg_type != MessageType.PEX_REQUEST:
+                    return
+
+                remote_id = str(
+                    payload.get("peer_id", "") if isinstance(payload, dict) else ""
+                )
+                if not remote_id:
+                    return
+
+                if pex is not None and not pex.check_rate_limit(remote_id):
+                    return
+
+                max_p = PEX_MAX_PEERS
+                if isinstance(payload, dict):
+                    raw = payload.get("max_peers", PEX_MAX_PEERS)
+                    max_p = min(
+                        int(raw)
+                        if isinstance(raw, (int, float, str))
+                        else PEX_MAX_PEERS,
+                        PEX_MAX_PEERS,
+                    )
+
+                connected = self._get_connected_peer_addrs()
+                peers_list = (
+                    pex.build_response(connected, max_p) if pex is not None else []
+                )
+                resp = encode_message(
+                    MessageType.PEX_RESPONSE,
+                    {"peers": peers_list},
+                )
+                await stream.write(resp)  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("pex_handler_error")
+            finally:
+                await stream.close()  # type: ignore[attr-defined]
+
+        self._host.set_stream_handler(PROTOCOL_PEX, _handle_pex)  # type: ignore[attr-defined]
 
         # Search handler — full + search roles
         if (
@@ -561,7 +645,7 @@ class InfoMeshNode:
     def _get_registered_protocols(self) -> list[str]:
         """Return list of protocol IDs registered for this node's role."""
         role = self._config.node.role
-        protocols = [PROTOCOL_PING]
+        protocols = [PROTOCOL_PING, PROTOCOL_PEX]
         if role in (NodeRole.FULL, NodeRole.SEARCH):
             if self._local_search_fn is not None:
                 protocols.append(PROTOCOL_SEARCH)
@@ -577,7 +661,14 @@ class InfoMeshNode:
         from libp2p.peer.peerinfo import info_from_p2p_addr
         from multiaddr import Multiaddr
 
-        bootstrap_addrs = self._config.network.bootstrap_nodes
+        bootstrap_addrs = list(self._config.network.bootstrap_nodes)
+
+        # Resolve "default" keyword → load bundled bootstrap nodes
+        if "default" in bootstrap_addrs:
+            from infomesh.config import _load_default_bootstrap_nodes
+
+            defaults = _load_default_bootstrap_nodes()
+            bootstrap_addrs = [a for a in bootstrap_addrs if a != "default"] + defaults
 
         if not bootstrap_addrs:
             logger.info("no_bootstrap_nodes", note="running in standalone mode")
@@ -753,6 +844,184 @@ class InfoMeshNode:
                 logger.info("mdns_peer_connected", peer_id=pid[:16], host=peer.host)
             except Exception:
                 logger.debug("mdns_peer_connect_failed", peer_id=pid[:16])
+
+    def _get_connected_peer_addrs(self) -> list[tuple[str, str]]:
+        """Return ``(peer_id, multiaddr)`` tuples for connected peers."""
+        if self._host is None:
+            return []
+        result: list[tuple[str, str]] = []
+        for pid in self.get_connected_peers():
+            try:
+                peerstore = self._host.get_peerstore()  # type: ignore[union-attr]
+                addrs = peerstore.addrs(pid)  # type: ignore[arg-type]
+                if addrs:
+                    maddr = f"{addrs[0]}/p2p/{pid}"
+                    result.append((str(pid), str(maddr)))
+            except Exception:
+                pass
+        return result
+
+    async def _run_pex_round(self) -> None:
+        """Run one PEX round — ask a few peers for their peer lists."""
+        if self._pex is None or self._host is None:
+            return
+
+        connected = self.get_connected_peers()
+        if not connected:
+            return
+
+        import random
+
+        import trio as _trio
+
+        # Pick up to PEX_MAX_PEERS_PER_ROUND peers to exchange with
+        targets = random.sample(
+            connected,
+            min(PEX_MAX_PEERS_PER_ROUND, len(connected)),
+        )
+        known = set(connected) | {self._peer_id}
+        total_new = 0
+
+        for target_pid in targets:
+            try:
+                from libp2p.peer.id import ID as PeerID
+
+                stream = await self._host.new_stream(  # type: ignore[union-attr]
+                    PeerID.from_base58(target_pid),
+                    [PROTOCOL_PEX],
+                )
+                req = encode_message(
+                    MessageType.PEX_REQUEST,
+                    {"peer_id": self._peer_id, "max_peers": PEX_MAX_PEERS},
+                )
+                await stream.write(req)  # type: ignore[attr-defined]
+
+                data = b""
+                timed_out = True
+                with _trio.move_on_after(5):
+                    data = await stream.read(65536)  # type: ignore[attr-defined]
+                    timed_out = False
+                await stream.close()  # type: ignore[attr-defined]
+
+                if timed_out or not data:
+                    continue
+
+                msg_type, payload = decode_message(data)
+                if msg_type != MessageType.PEX_RESPONSE:
+                    continue
+
+                peers_data: list[dict[str, object]] = []
+                if isinstance(payload, dict):
+                    raw = payload.get("peers", [])
+                    if isinstance(raw, list):
+                        peers_data = raw  # type: ignore[assignment]
+
+                new_peers = self._pex.process_response(
+                    target_pid,
+                    peers_data,
+                    known,
+                )
+
+                # Save discovered peers to store + try connecting
+                for p in new_peers:
+                    if self._peer_store is not None:
+                        self._peer_store.upsert(p.peer_id, p.multiaddr)
+                    known.add(p.peer_id)
+                    total_new += 1
+
+            except Exception:
+                logger.debug(
+                    "pex_round_peer_failed",
+                    target=target_pid[:16],
+                )
+
+        if total_new > 0:
+            logger.info("pex_round_complete", new_peers=total_new)
+        # Clean up stale rate limit entries
+        self._pex.cleanup_rate_limits()
+
+    async def _connect_cached_peers(self) -> None:
+        """Try connecting to previously known peers from the peer store.
+
+        Called when bootstrap nodes are unreachable, providing an
+        alternative path to rejoin the network.
+        """
+        if self._peer_store is None or self._host is None:
+            return
+
+        cached = self._peer_store.load_recent(limit=20)
+        if not cached:
+            logger.info("peer_store_empty", note="no cached peers available")
+            return
+
+        logger.info("peer_store_trying_cached", count=len(cached))
+
+        import trio as _trio
+        from libp2p.peer.peerinfo import info_from_p2p_addr
+        from multiaddr import Multiaddr
+
+        connected = 0
+        for entry in cached:
+            if entry.peer_id == self._peer_id:
+                continue
+            try:
+                maddr = Multiaddr(entry.multiaddr)
+                peer_info = info_from_p2p_addr(maddr)
+                timed_out = True
+                with _trio.move_on_after(5):
+                    await self._host.connect(peer_info)  # type: ignore[union-attr]
+                    connected += 1
+                    timed_out = False
+                    self._peer_store.upsert(entry.peer_id, entry.multiaddr)
+                    logger.info(
+                        "cached_peer_connected",
+                        peer_id=entry.peer_id[:16],
+                    )
+                if timed_out:
+                    self._peer_store.record_failure(entry.peer_id)
+            except Exception:
+                self._peer_store.record_failure(entry.peer_id)
+                logger.debug(
+                    "cached_peer_failed",
+                    peer_id=entry.peer_id[:16],
+                )
+
+        logger.info(
+            "peer_store_reconnect_result",
+            tried=len(cached),
+            connected=connected,
+        )
+
+    async def _save_connected_peers(self) -> None:
+        """Save currently connected peers to the persistent store."""
+        if self._peer_store is None or self._host is None:
+            return
+
+        try:
+            peer_ids = self.get_connected_peers()
+            if not peer_ids:
+                return
+
+            peers_to_save: list[tuple[str, str]] = []
+            for pid in peer_ids:
+                # Build multiaddr: /ip4/0.0.0.0/tcp/4001/p2p/<peer_id>
+                # We use the peer's network stream addresses when available
+                try:
+                    peerstore = self._host.get_peerstore()  # type: ignore[union-attr]
+                    peer_addrs = peerstore.addrs(pid)  # type: ignore[arg-type]
+                    if peer_addrs:
+                        maddr = f"{peer_addrs[0]}/p2p/{pid}"
+                        peers_to_save.append((str(pid), str(maddr)))
+                        continue
+                except Exception:
+                    pass
+                # Fallback: store peer_id only with a placeholder addr
+                # — will be skipped on load if addr is unreachable
+                peers_to_save.append((str(pid), f"/p2p/{pid}"))
+
+            self._peer_store.save_connected(peers_to_save)
+        except Exception:
+            logger.debug("peer_store_save_failed")
 
     async def _publish_pending_revocations(self) -> None:
         """Publish any pending key revocation records to the DHT."""

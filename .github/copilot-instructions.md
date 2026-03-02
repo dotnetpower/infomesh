@@ -72,6 +72,8 @@ infomesh/
 │   │   ├── replication.py   #   Document/index replication
 │   │   ├── protocol.py      #   Message protocol definitions (msgpack)
 │   │   ├── peer_profile.py  #   Peer latency tracking & bandwidth classification
+│   │   ├── peer_store.py    #   Persistent peer cache (SQLite, survives restarts)
+│   │   ├── pex.py           #   PEX (Peer Exchange) gossip protocol for peer discovery
 │   │   ├── sybil.py         #   Sybil defense (PoW node ID + subnet limiting)
 │   │   ├── load_guard.py    #   NodeLoadGuard (QPM + concurrency limiting)
 │   │   ├── mdns.py          #   mDNS local peer discovery (multicast UDP)
@@ -420,28 +422,20 @@ Every code change that affects **user-facing behavior, API surface, or configura
 
 ### MCP Tools
 
-The MCP server exposes these tools:
+The MCP server exposes 5 consolidated tools (v0.3.0 — legacy names still supported for backward compatibility):
 
 | Tool | Description |
 |------|-------------|
-| `search(query, limit, format, language, ...)` | Full network search, merges local + remote results. Supports filters, pagination, JSON output. |
-| `search_local(query, limit, format, language, ...)` | Local-only search (works offline). Same filter params as `search`. |
-| `fetch_page(url, format)` | Return full text for a URL (from index or live crawl) |
-| `crawl_url(url, depth, force, webhook_url)` | Add a URL to the network and crawl it. `force=True` bypasses dedup. |
-| `network_stats(format)` | Network status: peer count, index size, credits |
-| `batch_search(queries, limit, format)` | Run multiple search queries in one call (max 10) |
-| `suggest(prefix, limit)` | Search suggestions / autocomplete for a partial query |
-| `register_webhook(url)` | Register a webhook URL for crawl completion notifications |
-| `analytics(format)` | Search analytics: total searches, crawls, fetches, avg latency |
-| `explain(query, limit)` | Score breakdown per result: BM25, freshness, trust, authority components |
-| `search_history(action)` | View (`"list"`) or clear (`"clear"`) past search queries with latency stats |
-| `search_rag(query, limit, chunk_size)` | RAG-optimized chunked output with source attribution |
-| `extract_answer(query, limit)` | Direct answer extraction with confidence scores and source URLs |
-| `fact_check(claim, limit)` | Cross-reference claims against multiple indexed sources |
+| `web_search(query, top_k, ...)` | Unified web search — P2P + local, RAG, explain, answer extraction. Set `local_only=true` for offline. |
+| `fetch_page(url)` | Return full text for a URL (from index or live crawl, max 100KB) |
+| `crawl_url(url, depth, force)` | Add a URL to the network and crawl it. `force=True` bypasses dedup. |
+| `fact_check(claim, top_k)` | Cross-reference claims against multiple indexed sources |
+| `status()` | Node status: index size, peer count, credits, analytics |
 
-**Search filters** (available on `search`, `search_local`, `batch_search`):
-`language` (ISO 639-1), `date_from`/`date_to` (Unix timestamp), `include_domains`/`exclude_domains`,
-`offset` (pagination), `snippet_length`, `session_id`, `format` ("text"/"json").
+**`web_search` parameters**: `query` (required), `top_k` (default 5), `recency_days`,
+`domain_allowlist`/`domain_blocklist`, `language` (ISO 639-1), `fetch_full_content`,
+`chunk_size` (enables RAG output), `rerank`, `answer_mode` ("snippets"/"summary"/"structured"),
+`local_only`, `explain` (adds score breakdown).
 
 **Authentication**: Set `INFOMESH_API_KEY` env var → all tool calls require `api_key` parameter.
 
@@ -601,20 +595,11 @@ integrate with. It is a real-time, open-source alternative to paid web search AP
 
 | MCP Tool Name | HTTP-like Analogy | Input | Output |
 |---------------|-------------------|-------|--------|
-| `search` | `GET /search?q=...&limit=10&format=json` | `query`, `limit`, `format`, `language`, `date_from`, `date_to`, `include_domains`, `exclude_domains`, `offset`, `snippet_length`, `session_id` | Ranked results (text or JSON with quota) |
-| `search_local` | `GET /search/local?q=...` | Same as `search` | Local-only ranked results |
-| `fetch_page` | `GET /fetch?url=...` | `url`, `format` | Full extracted text (max 100KB) |
-| `crawl_url` | `POST /crawl` | `url`, `depth`, `force`, `webhook_url` | Crawl confirmation + page metadata |
-| `network_stats` | `GET /stats` | `format` | JSON: peers, index size, credits, analytics |
-| `batch_search` | `POST /search/batch` | `queries[]`, `limit`, `format` | Multiple query results (max 10) |
-| `suggest` | `GET /suggest?prefix=...` | `prefix`, `limit` | JSON: autocomplete suggestions |
-| `register_webhook` | `POST /webhooks` | `url` | Webhook registration confirmation |
-| `analytics` | `GET /analytics` | `format` | Search/crawl/fetch counts, avg latency |
-| `explain` | `GET /explain?q=...` | `query`, `limit` | Score breakdown per result |
-| `search_history` | `GET /search/history` | `action` | Past queries with latency stats |
-| `search_rag` | `GET /search/rag?q=...` | `query`, `limit`, `chunk_size` | RAG-optimized chunked output |
-| `extract_answer` | `GET /extract?q=...` | `query`, `limit` | Direct answer + confidence + sources |
-| `fact_check` | `POST /fact-check` | `claim`, `limit` | Multi-source verification results |
+| `web_search` | `GET /search?q=...&top_k=5` | `query`, `top_k`, `recency_days`, `domain_allowlist`, `domain_blocklist`, `language`, `fetch_full_content`, `chunk_size`, `rerank`, `answer_mode`, `local_only`, `explain` | Ranked results (JSON with quota) |
+| `fetch_page` | `GET /fetch?url=...` | `url` | Full extracted text (max 100KB) |
+| `crawl_url` | `POST /crawl` | `url`, `depth`, `force` | Crawl confirmation + page metadata |
+| `fact_check` | `POST /fact-check` | `claim`, `top_k` | Multi-source verification results |
+| `status` | `GET /status` | _(none)_ | JSON: index size, peers, credits, analytics |
 
 ### IDE / Client Integration
 

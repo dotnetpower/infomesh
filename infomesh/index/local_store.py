@@ -77,6 +77,10 @@ class LocalStore:
     ) -> None:
         self._db_path = str(db_path) if db_path else ":memory:"
 
+        # Ensure parent directory exists for file-based databases
+        if self._db_path != ":memory:":
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+
         # Validate tokenizer against whitelist to prevent SQL injection
         if tokenizer not in _ALLOWED_TOKENIZERS:
             raise ValueError(

@@ -59,6 +59,9 @@ class SQLiteStore:
     ) -> None:
         path = str(db_path) if db_path else ":memory:"
         self._db_path = path
+        # Ensure parent directory exists for file-based databases
+        if path != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=check_same_thread)
 
         if row_factory is not None:

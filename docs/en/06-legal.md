@@ -164,7 +164,7 @@ In a P2P network, deletion requests must propagate to all nodes holding the data
 |------|--------|
 | URL lists | Freely usable under Common Crawl Terms of Use |
 | Full content | Subject to original site's copyright — use only for indexing, not redistribution |
-| Attribution | Credit Common Crawl as data source in documentation and `network_stats()` |
+| Attribution | Credit Common Crawl as data source in documentation and `status()` |
 | Filtering | Apply blocklist and personal data filters to Common Crawl imports |
 
 ---

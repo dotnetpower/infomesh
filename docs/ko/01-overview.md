@@ -182,7 +182,7 @@ Copilot Chat에서 바로 사용:
 - **보안 & API** — API 키 관리, 역할 기반 접근 제어, 감사 로깅, 웹훅 서명, Prometheus 메트릭
 - **개발자 경험** — Python SDK, 플러그인 시스템, LangChain/LlamaIndex/Haystack 통합
 - **배포** — Helm 차트, Docker Compose, systemd 서비스, Terraform 모듈
-- **15개 MCP 도구** (기존 9개에서 증가) — `explain`, `search_rag`, `extract_answer`, `fact_check`, `search_history` 포함
+- **5개 통합 MCP 도구** — `web_search`, `fetch_page`, `crawl_url`, `fact_check`, `status` (레거시 이름도 계속 지원)
 
 전체 변경 사항은 [CHANGELOG](../../CHANGELOG.md)를 참조하세요.
 

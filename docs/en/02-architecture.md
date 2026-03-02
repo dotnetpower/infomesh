@@ -192,22 +192,40 @@ Minimum spec: 3B Q4 quantized model on CPU with 8GB RAM.
 ### Join
 
 ```
-1. Connect to bootstrap node list (hardcoded or DNS)
+1. Load cached peers from persistent peer store (~/.infomesh/peer_store.db)
+2. Connect to bootstrap node list (hardcoded or DNS)
    ※ Bootstrap ≠ Hub. Any existing peer can be one.
-2. Kademlia JOIN → discover neighbor nodes
-3. Receive assigned URL range based on node ID
-4. Download Common Crawl initial data (optional)
-5. Start crawling assigned URLs
-6. Sync index data from neighbors
+3. If bootstrap fails → retry cached peers from previous sessions
+4. mDNS: discover peers on the local network (LAN)
+5. PEX (Peer Exchange): ask connected peers for their known peers
+6. Kademlia JOIN → discover neighbor nodes
+7. Receive assigned URL range based on node ID
+8. Download Common Crawl initial data (optional)
+9. Start crawling assigned URLs
+10. Sync index data from neighbors
 ```
 
 ### Leave
 
 ```
-1. Neighbor nodes detect heartbeat failure
-2. Departed node's range → automatically inherited by DHT-adjacent nodes
-3. No data loss due to replicas (N=3~5)
+1. Save connected peers to persistent peer store
+2. Neighbor nodes detect heartbeat failure
+3. Departed node's range → automatically inherited by DHT-adjacent nodes
+4. No data loss due to replicas (N=3~5)
 ```
+
+### Peer Discovery Fallback Chain
+
+When bootstrap servers are unavailable, nodes use multiple fallback
+mechanisms to reconnect:
+
+| Priority | Mechanism | Scope | Description |
+|----------|-----------|-------|-------------|
+| 1 | **Persistent Peer Store** | Internet | Reconnect to peers from previous sessions (SQLite cache) |
+| 2 | **PEX (Peer Exchange)** | Internet | Ask connected peers for their known peers (gossip protocol, every 5 min) |
+| 3 | **mDNS** | LAN | Auto-discover peers on the same local network |
+| 4 | **Manual Config** | Internet | User-configured peer addresses in `config.toml` |
+| 5 | **DHT Routing Table** | Memory | In-memory routing table (lost on restart) |
 
 ### Malicious Node Defense
 
@@ -259,12 +277,8 @@ Three-layer deduplication prevents wasted crawling and storage:
 
 ```python
 @mcp.tool()
-def search(query: str, limit: int = 10) -> list[SearchResult]:
-    """Full network search. Merges local + remote results."""
-
-@mcp.tool()
-def search_local(query: str, limit: int = 10) -> list[SearchResult]:
-    """Local index only search (works offline)."""
+def web_search(query: str, top_k: int = 5, local_only: bool = False) -> list[SearchResult]:
+    """Unified web search. Merges local + remote results. Set local_only=True for offline."""
 
 @mcp.tool()
 def fetch_page(url: str) -> PageContent:
@@ -275,8 +289,12 @@ def crawl_url(url: str, depth: int = 1) -> CrawlResult:
     """Add a URL to the network and crawl it."""
 
 @mcp.tool()
-def network_stats() -> NetworkStats:
-    """Network status: peer count, index size, credits, etc."""
+def fact_check(claim: str, top_k: int = 5) -> FactCheckResult:
+    """Cross-reference a claim against indexed sources."""
+
+@mcp.tool()
+def status() -> NodeStatus:
+    """Node status: peer count, index size, credits, analytics."""
 ```
 
 ---

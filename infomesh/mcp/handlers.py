@@ -1208,3 +1208,236 @@ def handle_remove_url(
             ErrorCode.INTERNAL,
             f"Failed to remove {url}",
         )
+
+
+# ── Consolidated handlers (v2 — 5-tool API) ──────────────
+
+
+async def handle_web_search(
+    arguments: dict[str, Any],
+    *,
+    config: Config,
+    store: Any,
+    vector_store: Any,
+    distributed_index: Any | None,
+    link_graph: Any,
+    ledger: Any,
+    llm_backend: Any,
+    query_cache: QueryCache,
+    sessions: SessionStore,
+    analytics: AnalyticsTracker,
+) -> list[TextContent]:
+    """Unified web search — replaces 6 legacy search tools.
+
+    Behaviour is controlled by optional params:
+
+    * ``local_only`` — search local index only
+    * ``explain`` — include BM25/freshness/trust breakdown
+    * ``chunk_size`` — RAG-optimised chunked output
+    * ``answer_mode`` — snippets (default) / summary / structured
+    * ``recency_days`` — human-friendly time filter
+    * ``fetch_full_content`` — include full article text
+    """
+    query = arguments.get("query", "")
+    if not isinstance(query, str) or not query.strip():
+        return _error(
+            ErrorCode.INVALID_PARAM,
+            "query must be a non-empty string",
+        )
+
+    top_k = arguments.get("top_k", 5)
+    local_only = bool(arguments.get("local_only", False))
+    explain_flag = bool(arguments.get("explain", False))
+    chunk_size = arguments.get("chunk_size")
+    answer_mode = arguments.get("answer_mode", "snippets")
+    fetch_full = bool(
+        arguments.get("fetch_full_content", False),
+    )
+    rerank = bool(arguments.get("rerank", True))
+
+    # ── Map new params → legacy params ─────────────────
+    legacy: dict[str, Any] = {
+        "query": query,
+        "limit": int(top_k),
+        "format": "json",
+    }
+    # Propagate filters via extract_filters (supports
+    # both recency_days and legacy date_from/date_to)
+    filters = extract_filters(arguments)
+    legacy.update(filters)
+
+    # ── Explain mode ───────────────────────────────────
+    if explain_flag:
+        return await handle_explain(
+            {"query": query, "limit": int(top_k), "format": "json"},
+            store=store,
+            link_graph=link_graph,
+        )
+
+    # ── RAG chunk mode ─────────────────────────────────
+    if chunk_size is not None:
+        return await handle_search_rag(
+            {
+                "query": query,
+                "limit": int(top_k),
+                "chunk_size": int(chunk_size),
+                **filters,
+            },
+            store=store,
+            link_graph=link_graph,
+            analytics=analytics,
+            ledger=ledger,
+        )
+
+    # ── Answer extraction modes ────────────────────────
+    if answer_mode == "summary" or answer_mode == "structured":
+        return await handle_extract_answer(
+            {"query": query, "limit": int(top_k), **filters},
+            store=store,
+            link_graph=link_graph,
+            ledger=ledger,
+        )
+
+    # ── Default: ranked search (snippets mode) ─────────
+    name = "search_local" if local_only else "search"
+
+    # Disable LLM reranking if caller opts out
+    effective_llm = llm_backend if rerank else None
+
+    result = await handle_search(
+        name,
+        legacy,
+        config=config,
+        store=store,
+        vector_store=vector_store,
+        distributed_index=distributed_index,
+        link_graph=link_graph,
+        ledger=ledger,
+        llm_backend=effective_llm,
+        query_cache=query_cache,
+        sessions=sessions,
+        analytics=analytics,
+    )
+
+    # ── Optionally fetch full content for each result ──
+    if fetch_full and result:
+        text = result[0].text
+        try:
+            data = json.loads(text)
+            results_list = data.get("results", [])
+            for r in results_list:
+                url = r.get("url", "")
+                if url:
+                    doc = store.get_document_by_url(url)
+                    if doc:
+                        r["full_text"] = (
+                            doc.text[:10000]
+                            if hasattr(doc, "text")
+                            else str(doc.get("text", ""))[:10000]
+                        )
+            text = json.dumps(data, ensure_ascii=False)
+            return [TextContent(type="text", text=text)]
+        except (json.JSONDecodeError, Exception):
+            pass  # fall through with original result
+
+    return result
+
+
+def handle_status(
+    arguments: dict[str, Any],
+    *,
+    store: Any,
+    vector_store: Any,
+    link_graph: Any,
+    ledger: Any,
+    scheduler: Any,
+    p2p_node: Any,
+    distributed_index: Any,
+    analytics: AnalyticsTracker,
+) -> list[TextContent]:
+    """Unified status — merges network_stats + credit + index + ping.
+
+    Always returns JSON for consistency.
+    """
+    stats = store.get_stats()
+
+    data: dict[str, object] = {
+        "status": "ok",
+        "server": "infomesh",
+        "version": SERVER_VERSION,
+        "api_version": MCP_API_VERSION,
+        "phase": "4 (Production)",
+        "documents_indexed": stats.get("document_count", 0),
+        "pending_crawl_urls": (scheduler.pending_count if scheduler else 0),
+        "ranking": ("BM25 + freshness + trust + authority"),
+        "analytics": analytics.to_dict(),
+    }
+
+    # Vector store
+    if vector_store is not None:
+        vs = vector_store.get_stats()
+        data["vector"] = {
+            "documents": vs.get("document_count", 0),
+            "model": vs.get("model", "unknown"),
+        }
+    else:
+        data["vector"] = {"enabled": False}
+
+    # Link graph
+    if link_graph:
+        lg = link_graph.get_stats()
+        data["link_graph"] = {
+            "links": lg.get("link_count", 0),
+            "domains_scored": lg.get("domain_count", 0),
+        }
+    else:
+        data["link_graph"] = {"enabled": False}
+
+    # Credits
+    if ledger is not None:
+        al = ledger.search_allowance()
+        cr: dict[str, object] = {
+            "balance": round(ledger.balance(), 2),
+            "state": al.state.value,
+            "search_cost": round(al.search_cost, 3),
+            "tier": (
+                3 if ledger.balance() >= 1000 else 2 if ledger.balance() >= 100 else 1
+            ),
+        }
+        if al.state.value == "grace":
+            cr["grace_remaining_hours"] = round(al.grace_remaining_hours, 1)
+        elif al.state.value == "debt":
+            cr["debt_amount"] = round(al.debt_amount, 2)
+        data["credits"] = cr
+
+    # P2P
+    if p2p_node is not None:
+        try:
+            pc = len(p2p_node.connected_peers)
+            p2p_data: dict[str, object] = {"peers": pc}
+            if distributed_index is not None:
+                di = distributed_index.stats
+                p2p_data["dht"] = {
+                    "published": di.documents_published,
+                    "keywords": di.keywords_published,
+                    "queries": di.queries_performed,
+                }
+            data["p2p"] = p2p_data
+        except Exception:  # noqa: BLE001
+            data["p2p"] = {"error": "status unavailable"}
+    else:
+        data["p2p"] = {"peers": 0, "mode": "local"}
+
+    # Top domains
+    try:
+        domains = store.get_top_domains(limit=5)
+        data["top_domains"] = [{"domain": d, "count": c} for d, c in domains]
+    except Exception:  # noqa: BLE001
+        pass
+
+    return [
+        TextContent(
+            type="text",
+            text=json.dumps(data, ensure_ascii=False),
+        )
+    ]

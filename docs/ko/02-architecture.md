@@ -192,22 +192,40 @@ URL도 DHT로 관리:
 ### 참여 (Join)
 
 ```
-1. Bootstrap 노드 목록에 접속 (하드코딩 or DNS)
+1. 영속 피어 저장소에서 캐시된 피어 로드 (~/.infomesh/peer_store.db)
+2. Bootstrap 노드 목록에 접속 (하드코딩 or DNS)
    ※ Bootstrap ≠ Hub. 기존 피어 중 아무나 가능
-2. Kademlia JOIN → 이웃 노드 발견
-3. 자기 ID 기준 담당 URL 범위 수신
-4. Common Crawl 초기 데이터 다운로드 (선택)
-5. 담당 URL 크롤링 시작
-6. 인덱스 데이터 이웃에서 동기화
+3. Bootstrap 실패 시 → 이전 세션의 캐시된 피어에 재연결
+4. mDNS: 로컬 네트워크(LAN)에서 피어 자동 발견
+5. PEX (Peer Exchange): 연결된 피어에게 알고 있는 피어 목록 요청
+6. Kademlia JOIN → 이웃 노드 발견
+7. 자기 ID 기준 담당 URL 범위 수신
+8. Common Crawl 초기 데이터 다운로드 (선택)
+9. 담당 URL 크롤링 시작
+10. 인덱스 데이터 이웃에서 동기화
 ```
 
 ### 이탈 (Leave)
 
 ```
-1. 이웃 노드가 heartbeat 실패 감지
-2. 이탈 노드의 담당 범위 → DHT 인접 노드가 자동 승계
-3. 복제본(N=3~5)이 있으므로 데이터 손실 없음
+1. 연결된 피어 목록을 영속 피어 저장소에 저장
+2. 이웃 노드가 heartbeat 실패 감지
+3. 이탈 노드의 담당 범위 → DHT 인접 노드가 자동 승계
+4. 복제본(N=3~5)이 있으므로 데이터 손실 없음
 ```
+
+### 피어 발견 폴백 체인
+
+부트스트랩 서버를 사용할 수 없을 때, 노드는 여러 대체 메커니즘을
+사용하여 재연결합니다:
+
+| 우선순위 | 메커니즘 | 범위 | 설명 |
+|----------|----------|------|------|
+| 1 | **영속 피어 저장소** | 인터넷 | 이전 세션의 피어에 재연결 (SQLite 캐시) |
+| 2 | **PEX (Peer Exchange)** | 인터넷 | 연결된 피어에게 알고 있는 피어 목록 요청 (가십 프로토콜, 5분마다) |
+| 3 | **mDNS** | LAN | 같은 로컬 네트워크의 피어 자동 발견 |
+| 4 | **수동 설정** | 인터넷 | `config.toml`에 사용자가 직접 지정한 피어 주소 |
+| 5 | **DHT 라우팅 테이블** | 메모리 | 인-메모리 라우팅 테이블 (재시작 시 소실) |
 
 ### 악성 노드 대응
 
@@ -259,12 +277,8 @@ InfoMesh는 레벨 조절 가능한 **zstd**를 모든 데이터 압축에 사�
 
 ```python
 @mcp.tool()
-def search(query: str, limit: int = 10) -> list[SearchResult]:
-    """네트워크 전체에서 검색. 로컬 + 원격 결과 병합."""
-
-@mcp.tool()
-def search_local(query: str, limit: int = 10) -> list[SearchResult]:
-    """로컬 인덱스만 검색 (오프라인 가능)."""
+def web_search(query: str, top_k: int = 5, local_only: bool = False) -> list[SearchResult]:
+    """통합 웹 검색. 로컬 + 원격 결과 병합. local_only=True로 오프라인 검색."""
 
 @mcp.tool()
 def fetch_page(url: str) -> PageContent:
@@ -275,7 +289,11 @@ def crawl_url(url: str, depth: int = 1) -> CrawlResult:
     """새 URL을 네트워크에 추가하고 크롤링."""
 
 @mcp.tool()
-def network_stats() -> NetworkStats:
+def fact_check(claim: str, top_k: int = 5) -> FactCheckResult:
+    """인덱싱된 소스와 교차 검증."""
+
+@mcp.tool()
+def status() -> NodeStatus:
     """네트워크 현황: 피어 수, 인덱스 크기, 내 크레딧 등."""
 ```
 

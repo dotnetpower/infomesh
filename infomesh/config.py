@@ -5,10 +5,13 @@ Loads settings from ~/.infomesh/config.toml with environment variable overrides.
 
 from __future__ import annotations
 
+import json
 import os
+import sysconfig
 import tomllib
 from dataclasses import dataclass, field
 from dataclasses import fields as dataclass_fields
+from dataclasses import replace as dc_replace
 from pathlib import Path
 
 import structlog
@@ -280,6 +283,48 @@ def _build_section[T](
     return cls(**kwargs)
 
 
+def _load_default_bootstrap_nodes() -> list[str]:
+    """Load bundled bootstrap nodes from nodes.json.
+
+    The file is shipped with the PyPI package via hatch shared-data
+    (installed to ``<prefix>/share/infomesh/bootstrap/nodes.json``).
+    When running from a development checkout the repo-relative path
+    is also tried.
+
+    Returns:
+        List of multiaddr strings, or empty list if the file is
+        missing / unreadable.
+    """
+    # 1) Development checkout: <repo>/bootstrap/nodes.json
+    dev_path = Path(__file__).parent.parent / "bootstrap" / "nodes.json"
+    # 2) Installed shared-data path
+    data_prefix = sysconfig.get_path("data") or ""
+    installed_path = (
+        Path(data_prefix) / "share" / "infomesh" / "bootstrap" / "nodes.json"
+    )
+
+    for candidate in (dev_path, installed_path):
+        if candidate.exists():
+            try:
+                entries = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(entries, list):
+                    addrs = [
+                        e["addr"]
+                        for e in entries
+                        if isinstance(e, dict) and "addr" in e
+                    ]
+                    if addrs:
+                        logger.info(
+                            "bootstrap_nodes_loaded",
+                            source=str(candidate),
+                            count=len(addrs),
+                        )
+                        return addrs
+            except (json.JSONDecodeError, OSError, KeyError):
+                pass
+    return []
+
+
 def load_config(config_path: Path | None = None) -> Config:
     """Load configuration from TOML file with environment variable overrides.
 
@@ -322,6 +367,29 @@ def load_config(config_path: Path | None = None) -> Config:
         dashboard=dashboard,
         mcp=mcp_cfg,
     )
+
+    # If no bootstrap nodes configured, load bundled defaults from nodes.json
+    if not config.network.bootstrap_nodes:
+        default_nodes = _load_default_bootstrap_nodes()
+        if default_nodes:
+            config = dc_replace(
+                config,
+                network=dc_replace(config.network, bootstrap_nodes=default_nodes),
+            )
+
+    # When data_dir is overridden but index.db_path still points to the
+    # original default, re-derive db_path relative to the new data_dir.
+    if (
+        config.node.data_dir != DEFAULT_DATA_DIR
+        and config.index.db_path == DEFAULT_DATA_DIR / "index.db"
+    ):
+        config = dc_replace(
+            config,
+            index=dc_replace(
+                config.index,
+                db_path=config.node.data_dir / "index.db",
+            ),
+        )
 
     # Ensure data directory exists (resolve to prevent traversal)
     data_dir = config.node.data_dir.resolve()

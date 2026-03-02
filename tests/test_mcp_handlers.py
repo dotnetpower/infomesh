@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +18,9 @@ from infomesh.mcp.handlers import (
     handle_fact_check,
     handle_search_rag,
     handle_stats,
+    handle_status,
     handle_suggest,
+    handle_web_search,
 )
 from infomesh.mcp.session import AnalyticsTracker, WebhookRegistry
 
@@ -480,3 +483,192 @@ class TestHandleFactCheck:
         assert data["claim"] == "Python is a programming language"
         assert "verdict" in data
         assert "confidence" in data
+
+
+# ─── handle_web_search (unified) ─────────────────────────
+
+
+def _web_search_deps() -> dict[str, Any]:
+    """Common kwargs for handle_web_search."""
+    return {
+        "config": MagicMock(
+            mcp=MagicMock(
+                show_attribution=True,
+                max_response_chars=0,
+            ),
+        ),
+        "store": _mock_store(),
+        "vector_store": None,
+        "distributed_index": None,
+        "link_graph": None,
+        "ledger": None,
+        "llm_backend": None,
+        "query_cache": MagicMock(
+            get=MagicMock(return_value=None),
+            put=MagicMock(),
+        ),
+        "sessions": MagicMock(),
+        "analytics": AnalyticsTracker(),
+    }
+
+
+class TestHandleWebSearch:
+    @pytest.mark.asyncio
+    async def test_empty_query(self) -> None:
+        result = await handle_web_search(
+            {"query": ""},
+            **_web_search_deps(),
+        )
+        assert "Error" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_snippets_mode(self) -> None:
+        deps = _web_search_deps()
+        mock_result = _mock_search_result()
+        with patch(
+            "infomesh.mcp.handlers.search_local",
+            return_value=mock_result,
+        ):
+            result = await handle_web_search(
+                {"query": "python", "top_k": 3},
+                **deps,
+            )
+        assert len(result) == 1
+        assert result[0].text  # non-empty
+
+    @pytest.mark.asyncio
+    async def test_explain_mode(self) -> None:
+        deps = _web_search_deps()
+        mock_result = _mock_search_result()
+        with patch(
+            "infomesh.mcp.handlers.search_local",
+            return_value=mock_result,
+        ):
+            result = await handle_web_search(
+                {
+                    "query": "python",
+                    "explain": True,
+                },
+                **deps,
+            )
+        data = json.loads(result[0].text)
+        assert "results" in data
+        assert data["query"] == "python"
+
+    @pytest.mark.asyncio
+    async def test_rag_chunk_mode(self) -> None:
+        deps = _web_search_deps()
+        mock_result = _mock_search_result()
+        with patch(
+            "infomesh.mcp.handlers.search_local",
+            return_value=mock_result,
+        ):
+            result = await handle_web_search(
+                {
+                    "query": "python",
+                    "chunk_size": 500,
+                },
+                **deps,
+            )
+        data = json.loads(result[0].text)
+        assert "context_chunks" in data
+
+    @pytest.mark.asyncio
+    async def test_summary_mode(self) -> None:
+        deps = _web_search_deps()
+        mock_result = _mock_search_result()
+        with patch(
+            "infomesh.mcp.handlers.search_local",
+            return_value=mock_result,
+        ):
+            result = await handle_web_search(
+                {
+                    "query": "python",
+                    "answer_mode": "summary",
+                },
+                **deps,
+            )
+        data = json.loads(result[0].text)
+        assert "answers" in data
+
+    @pytest.mark.asyncio
+    async def test_local_only(self) -> None:
+        deps = _web_search_deps()
+        mock_result = _mock_search_result()
+        with patch(
+            "infomesh.mcp.handlers.search_local",
+            return_value=mock_result,
+        ):
+            result = await handle_web_search(
+                {
+                    "query": "python",
+                    "local_only": True,
+                },
+                **deps,
+            )
+        assert len(result) == 1
+
+
+# ─── handle_status (unified) ─────────────────────────────
+
+
+class TestHandleStatus:
+    def test_returns_json(self) -> None:
+        store = _mock_store()
+        result = handle_status(
+            {},
+            store=store,
+            vector_store=None,
+            link_graph=None,
+            ledger=None,
+            scheduler=None,
+            p2p_node=None,
+            distributed_index=None,
+            analytics=AnalyticsTracker(),
+        )
+        data = json.loads(result[0].text)
+        assert data["status"] == "ok"
+        assert data["api_version"] == MCP_API_VERSION
+        assert data["documents_indexed"] == 100
+
+    def test_includes_credits(self) -> None:
+        store = _mock_store()
+        ledger = MagicMock()
+        ledger.balance.return_value = 42.5
+        allowance = MagicMock()
+        allowance.search_cost = 0.05
+        allowance.state = MagicMock()
+        allowance.state.value = "normal"
+        ledger.search_allowance.return_value = allowance
+
+        result = handle_status(
+            {},
+            store=store,
+            vector_store=None,
+            link_graph=None,
+            ledger=ledger,
+            scheduler=None,
+            p2p_node=None,
+            distributed_index=None,
+            analytics=AnalyticsTracker(),
+        )
+        data = json.loads(result[0].text)
+        assert data["credits"]["balance"] == 42.5
+        assert data["credits"]["tier"] == 1
+
+    def test_includes_ping_fields(self) -> None:
+        store = _mock_store()
+        result = handle_status(
+            {},
+            store=store,
+            vector_store=None,
+            link_graph=None,
+            ledger=None,
+            scheduler=None,
+            p2p_node=None,
+            distributed_index=None,
+            analytics=AnalyticsTracker(),
+        )
+        data = json.loads(result[0].text)
+        assert data["server"] == "infomesh"
+        assert data["version"]

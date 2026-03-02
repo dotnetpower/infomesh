@@ -25,6 +25,8 @@ class PersistentStore:
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         self._db_path = str(db_path) if db_path else ":memory:"
+        if self._db_path != ":memory:":
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")

@@ -12,7 +12,8 @@
 | 2 | [Architecture](en/02-architecture.md) | Network structure, DHT, crawling, indexing, search, LLM summarization |
 | 3 | [Credit System](en/03-credit-system.md) | Incentive formula, resource weights, fairness guarantees |
 | 4 | [Tech Stack](en/04-tech-stack.md) | Technology choices, project structure, coding conventions |
-| 5 | [Legal](en/06-legal.md) | robots.txt, copyright, GDPR, ToS |
+| 5 | [Getting Started](en/05-getting-started.md) | First run guide: install, git check, GitHub linking, peering |
+| 6 | [Legal](en/06-legal.md) | robots.txt, copyright, GDPR, ToS |
 | 6 | [Trust & Integrity](en/07-trust-integrity.md) | Deduplication, LLM verification, tampering prevention, crawler seeds |
 | 7 | [Security Audit](en/08-security-audit.md) | Vulnerability analysis, enterprise deployment, hardening plan |
 | 8 | [Console Dashboard](en/09-console-dashboard.md) | Textual TUI dashboard, tabs, widgets, keyboard shortcuts |
@@ -29,7 +30,8 @@
 | 2 | [아키텍처](ko/02-architecture.md) | 네트워크 구조, DHT, 크롤링, 인덱싱, 검색, LLM 요약 |
 | 3 | [크레딧 시스템](ko/03-credit-system.md) | 인센티브 공식, 자원 가중치, 공정성 보장 |
 | 4 | [기술 스택](ko/04-tech-stack.md) | 기술 선택, 프로젝트 구조, 코딩 규칙 |
-| 5 | [법적 고려사항](ko/06-legal.md) | robots.txt, 저작권, GDPR, ToS |
+| 5 | [시작 가이드](ko/05-getting-started.md) | 첫 실행 안내: 설치, git 확인, GitHub 연결, 피어링 |
+| 6 | [법적 고려사항](ko/06-legal.md) | robots.txt, 저작권, GDPR, ToS |
 | 6 | [신뢰 & 무결성](ko/07-trust-integrity.md) | 중복 제거, LLM 검증, 조작 방지, 크롤러 시드 |
 | 7 | [보안 감사](ko/08-security-audit.md) | 취약점 분석, 엔터프라이즈 배포, 보안 강화 계획 |
 | 8 | [콘솔 대시보드](ko/09-console-dashboard.md) | Textual TUI 대시보드, 탭, 위젯, 키보드 단축키 |

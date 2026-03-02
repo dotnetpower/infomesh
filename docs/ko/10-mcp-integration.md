@@ -7,62 +7,57 @@
 ## MCP란?
 
 MCP는 AI 어시스턴트(Claude, GitHub Copilot 등)가 외부 도구를 호출할 수 있게 하는 오픈 프로토콜입니다.
-InfoMesh는 **15개의 도구**를 MCP로 제공합니다 — search, search_local, fetch_page, crawl_url, network_stats,
-batch_search, suggest, register_webhook, analytics, explain, search_history, search_rag,
-extract_answer, fact_check —
+InfoMesh는 **5개의 도구**를 MCP로 제공합니다 — web_search, fetch_page, crawl_url, fact_check, status —
 AI 어시스턴트가 여러분의 분산 인덱스를 통해 웹 검색을 수행할 수 있습니다.
+
+> **v0.3.0 통합**: 기존 18개 도구가 5개의 핵심 도구로 통합되었습니다.
+> 레거시 도구 이름(`search`, `search_local`, `network_stats` 등)은 하위 호환성을 위해 계속 지원됩니다.
 
 ## 사용 가능한 MCP 도구
 
-### 핵심 검색 도구
+### 검색 & 인텔리전스
 
 | 도구 | 설명 | 주요 매개변수 |
 |------|------|-------------|
-| `search` | P2P 네트워크 검색 (로컬 + 분산) | `query`, `limit`, `format`, `language`, `date_from`, `date_to`, `include_domains`, `exclude_domains`, `offset`, `snippet_length`, `session_id` |
-| `search_local` | 로컬 인덱스만 검색 (오프라인 가능) | `search`와 동일 |
-| `batch_search` | 여러 쿼리를 한 번에 실행 (최대 10개) | `queries`, `limit`, `format` |
-| `suggest` | 자동완성 / 검색 제안 | `prefix`, `limit` |
+| `web_search` | 통합 웹 검색 (P2P + 로컬, RAG, 설명, 답변 추출) | `query` (필수), `top_k`, `recency_days`, `domain_allowlist`, `domain_blocklist`, `language`, `fetch_full_content`, `chunk_size`, `rerank`, `answer_mode`, `local_only`, `explain` |
 
-### 콘텐츠 접근 도구
+### 콘텐츠 접근
 
 | 도구 | 설명 | 주요 매개변수 |
 |------|------|-------------|
-| `fetch_page` | URL의 전체 텍스트 가져오기 (캐시 또는 실시간) | `url`, `format` |
-| `crawl_url` | URL을 크롤링하여 인덱스에 추가 | `url`, `depth`, `force`, `webhook_url` |
+| `fetch_page` | URL의 전체 텍스트 가져오기 (캐시 또는 실시간, 최대 100KB) | `url` (필수) |
+| `crawl_url` | URL을 크롤링하여 인덱스에 추가 (60회/시간 제한) | `url` (필수), `depth`, `force` |
 
-### 인텔리전스 도구 (v0.2.0 신규)
-
-| 도구 | 설명 | 주요 매개변수 |
-|------|------|-------------|
-| `explain` | 결과별 점수 분석 (BM25, 신선도, 신뢰도) | `query`, `limit` |
-| `search_rag` | RAG 최적화 청크 출력 + 출처 표시 | `query`, `limit`, `chunk_size` |
-| `extract_answer` | 신뢰도 점수가 포함된 직접 답변 추출 | `query`, `limit` |
-| `fact_check` | 인덱싱된 소스와 교차 검증 | `claim`, `limit` |
-| `search_history` | 검색 기록 조회 또는 삭제 | `action` (`"list"` 또는 `"clear"`) |
-
-### 인프라 도구
+### 검증
 
 | 도구 | 설명 | 주요 매개변수 |
 |------|------|-------------|
-| `network_stats` | 노드 상태: 인덱스 크기, 피어 수, 크레딧 | `format` |
-| `analytics` | 검색 분석 (횟수, 지연시간) | `format` |
-| `register_webhook` | 크롤 완료 웹훅 등록 | `url` |
+| `fact_check` | 인덱싱된 소스와 교차 검증 | `claim` (필수), `top_k` |
 
-### 공통 검색 매개변수
+### 상태
 
-모든 검색 도구 (`search`, `search_local`, `batch_search`)에서 지원:
+| 도구 | 설명 | 주요 매개변수 |
+|------|------|-------------|
+| `status` | 노드 상태: 인덱스 크기, 피어 수, 크레딧, 분석 | _(필수 없음)_ |
 
-| 매개변수 | 타입 | 설명 |
-|---------|------|------|
-| `format` | `"text"` \| `"json"` | 출력 형식 (기본값: `"text"`) |
-| `language` | string | ISO 639-1 언어 코드 필터 (예: `"en"`, `"ko"`) |
-| `date_from` | number | Unix 타임스탬프 — 이후 크롤된 문서만 |
-| `date_to` | number | Unix 타임스탬프 — 이전 크롤된 문서만 |
-| `include_domains` | string[] | 이 도메인의 결과만 포함 |
-| `exclude_domains` | string[] | 이 도메인의 결과 제외 |
-| `offset` | integer | N개 결과 건너뛰기 (페이지네이션) |
-| `snippet_length` | integer | 최대 스니펫 문자 수 (10–1000, 기본값 200) |
-| `session_id` | string | 대화형 검색용 세션 ID |
+### web_search 매개변수
+
+`web_search` 도구는 선택적 매개변수로 기존 6개 도구를 대체합니다:
+
+| 매개변수 | 타입 | 기본값 | 설명 |
+|---------|------|--------|------|
+| `query` | string | _(필수)_ | 검색 쿼리 텍스트 |
+| `top_k` | integer | `5` | 반환할 결과 수 |
+| `recency_days` | integer | — | 최근 N일 이내의 결과만 |
+| `domain_allowlist` | string[] | — | 이 도메인의 결과만 포함 |
+| `domain_blocklist` | string[] | — | 이 도메인의 결과 제외 |
+| `language` | string | — | ISO 639-1 코드 (예: `"en"`, `"ko"`) |
+| `fetch_full_content` | boolean | `false` | 결과별 전체 기사 텍스트 포함 |
+| `chunk_size` | integer | — | RAG 청크 크기 (청크 출력 활성화) |
+| `rerank` | boolean | `true` | LLM 시맨틱 재순위 적용 |
+| `answer_mode` | `"snippets"` \| `"summary"` \| `"structured"` | `"snippets"` | 응답 형식 모드 |
+| `local_only` | boolean | `false` | 로컬 인덱스만 검색 (오프라인, <10ms) |
+| `explain` | boolean | `false` | BM25/신선도/신뢰도 점수 분석 포함 |
 
 ### JSON 출력
 
@@ -301,7 +296,7 @@ async def main():
 
             # 검색
             result = await session.call_tool(
-                "search", {"query": "python asyncio", "limit": 5}
+                "web_search", {"query": "python asyncio", "top_k": 5}
             )
             print(result.content[0].text)
 

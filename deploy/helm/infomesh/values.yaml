@@ -47,8 +47,9 @@ config:
   profile: balanced
   # Enable MCP HTTP transport
   mcpHttp: true
-  # Bootstrap nodes
-  bootstrapNodes: []
+  # Bootstrap nodes (multiaddr format)
+  bootstrapNodes:
+    - "/ip4/20.42.12.161/tcp/4001/p2p/12D3KooWEXwYVk9amWHKkNAPHsZEpmZ6H811RKrN6aBY3ayEEdty"
   # Seed categories to crawl
   seedCategories:
     - tech-docs

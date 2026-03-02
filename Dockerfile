@@ -1,16 +1,22 @@
 # ── Build stage ──────────────────────────────────────────────────────────
 FROM python:3.13-slim AS builder
 
+# Install build tools for native extensions (fastecdsa, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libgmp-dev libffi-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
 # Copy dependency files first (layer caching)
-COPY pyproject.toml uv.lock ./
+# README.md is needed because hatchling validates metadata during resolution
+COPY pyproject.toml uv.lock README.md ./
 
-# Install production dependencies only
-RUN uv sync --frozen --no-dev --no-install-project
+# Install production dependencies only (including P2P support)
+RUN uv sync --frozen --no-dev --no-install-project --extra p2p
 
 # Copy source code
 COPY infomesh/ infomesh/
@@ -18,7 +24,7 @@ COPY seeds/ seeds/
 COPY bootstrap/ bootstrap/
 
 # Install the project itself
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra p2p
 
 
 # ── Runtime stage ────────────────────────────────────────────────────────

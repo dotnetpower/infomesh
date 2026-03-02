@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "infomesh.fullname" . }}-config
+  labels:
+    app.kubernetes.io/name: {{ include "infomesh.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  config.toml: |
+    [node]
+    name = "{{ include "infomesh.fullname" . }}"
+    log_level = "info"
+
+    [crawl]
+    max_depth = 2
+    politeness_delay = 1.0
+    max_concurrent = 5
+
+    [network]
+    max_upload_mbps = 5
+    max_download_mbps = 10
+    {{- if .Values.config.bootstrapNodes }}
+    bootstrap_nodes = [{{ range $i, $addr := .Values.config.bootstrapNodes }}{{ if $i }}, {{ end }}"{{ $addr }}"{{ end }}]
+    {{- end }}
+
+    {{- if .Values.config.summarizer.enabled }}
+    [summarizer]
+    runtime = "{{ .Values.config.summarizer.runtime }}"
+    model = "{{ .Values.config.summarizer.model }}"
+    {{- end }}

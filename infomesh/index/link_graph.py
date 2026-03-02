@@ -9,6 +9,7 @@ alongside BM25 and freshness in the search pipeline.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from urllib.parse import urlparse
 
 import structlog
@@ -40,6 +41,8 @@ class LinkGraph:
 
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path or ":memory:"
+        if self._db_path != ":memory:":
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()

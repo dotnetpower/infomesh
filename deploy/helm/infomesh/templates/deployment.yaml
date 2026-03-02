@@ -48,6 +48,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /root/.infomesh
+            - name: config
+              mountPath: /root/.infomesh/config.toml
+              subPath: config.toml
+              readOnly: true
       volumes:
         - name: data
           {{- if .Values.persistence.enabled }}
@@ -56,6 +60,9 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "infomesh.fullname" . }}-config
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
