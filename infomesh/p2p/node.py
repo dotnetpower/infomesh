@@ -56,6 +56,7 @@ from infomesh.p2p.replication import Replicator
 from infomesh.p2p.routing import QueryRouter
 from infomesh.p2p.sybil import SubnetLimiter, compute_pow_hash, generate_pow
 from infomesh.p2p.throttle import BandwidthThrottle
+from infomesh.version_check import PeerVersionTracker
 
 logger = structlog.get_logger()
 
@@ -145,6 +146,9 @@ class InfoMeshNode:
         # Bootstrap status tracking
         self._bootstrap_results: dict[str, object] = {}
 
+        # Peer version tracking (for update notifications)
+        self._peer_version_tracker = PeerVersionTracker()
+
         # Background thread for trio
         self._trio_thread: threading.Thread | None = None
         self._trio_cancel_scope: object | None = None
@@ -156,6 +160,11 @@ class InfoMeshNode:
     def state(self) -> NodeState:
         """Current node state."""
         return self._state
+
+    @property
+    def version_tracker(self) -> PeerVersionTracker:
+        """Peer version tracker for update notifications."""
+        return self._peer_version_tracker
 
     def _write_status_file(
         self,
@@ -218,6 +227,7 @@ class InfoMeshNode:
                 "dht": dht_data,
                 "bandwidth": bw_data,
                 "bootstrap": self._bootstrap_results,
+                "peer_versions": self._peer_version_tracker.peer_versions,
             }
             status_path.write_text(json.dumps(data))
         except OSError:
@@ -601,6 +611,8 @@ class InfoMeshNode:
         last_status = time.time()
         last_pex = time.time()
         last_credit_sync = time.time()
+        last_version_check = time.time()
+        _VERSION_CHECK_INTERVAL = 3600  # Check peer versions hourly
 
         while not self._stop_event.is_set():
             await trio.sleep(1)
@@ -645,6 +657,21 @@ class InfoMeshNode:
             except Exception:  # noqa: BLE001
                 logger.debug("mdns_connect_failed")
 
+            # Periodic peer version check — log if peers run newer
+            if now - last_version_check >= _VERSION_CHECK_INTERVAL:
+                last_version_check = now
+                _peer_update = self._peer_version_tracker.check_peer_update()
+                if _peer_update is not None:
+                    logger.info(
+                        "update_available_from_peers",
+                        current=_peer_update.current,
+                        latest=_peer_update.latest,
+                        msg=(
+                            "A connected peer is running a newer "
+                            "version. Run: infomesh update"
+                        ),
+                    )
+
         # ── Shutdown: save connected peers + cleanup ──
         await self._save_connected_peers()
 
@@ -669,8 +696,24 @@ class InfoMeshNode:
         # Ping handler — always registered
         async def _handle_ping(stream: object) -> None:
             try:
-                _ = await stream.read(1024)  # type: ignore[attr-defined]
-                pong = encode_message(MessageType.PONG, {"peer_id": self._peer_id})
+                raw = await stream.read(1024)  # type: ignore[attr-defined]
+                # Extract sender version if present
+                try:
+                    _, ping_payload = decode_message(raw)
+                    sender_pid = ping_payload.get("peer_id", "")
+                    sender_ver = ping_payload.get("version", "")
+                    if sender_pid and sender_ver:
+                        self._peer_version_tracker.record(
+                            str(sender_pid), str(sender_ver)
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                from infomesh import __version__
+
+                pong = encode_message(
+                    MessageType.PONG,
+                    {"peer_id": self._peer_id, "version": __version__},
+                )
                 await stream.write(pong)  # type: ignore[attr-defined]
             except Exception:
                 logger.debug("ping_handler_error")
@@ -695,6 +738,12 @@ class InfoMeshNode:
                 if not remote_id:
                     return
 
+                # Track sender's version
+                if isinstance(payload, dict):
+                    remote_ver = str(payload.get("version", ""))
+                    if remote_ver:
+                        self._peer_version_tracker.record(remote_id, remote_ver)
+
                 if pex is not None and not pex.check_rate_limit(remote_id):
                     return
 
@@ -712,9 +761,11 @@ class InfoMeshNode:
                 peers_list = (
                     pex.build_response(connected, max_p) if pex is not None else []
                 )
+                from infomesh import __version__
+
                 resp = encode_message(
                     MessageType.PEX_RESPONSE,
-                    {"peers": peers_list},
+                    {"peers": peers_list, "version": __version__},
                 )
                 await stream.write(resp)  # type: ignore[attr-defined]
             except Exception:
@@ -1162,9 +1213,15 @@ class InfoMeshNode:
                     PeerID.from_base58(target_pid),
                     [PROTOCOL_PEX],
                 )
+                from infomesh import __version__ as _ver
+
                 req = encode_message(
                     MessageType.PEX_REQUEST,
-                    {"peer_id": self._peer_id, "max_peers": PEX_MAX_PEERS},
+                    {
+                        "peer_id": self._peer_id,
+                        "max_peers": PEX_MAX_PEERS,
+                        "version": _ver,
+                    },
                 )
                 await stream.write(req)
 
@@ -1187,6 +1244,10 @@ class InfoMeshNode:
                     raw = payload.get("peers", [])
                     if isinstance(raw, list):
                         peers_data = raw
+                    # Track responder's version
+                    resp_ver = str(payload.get("version", ""))
+                    if resp_ver:
+                        self._peer_version_tracker.record(target_pid, resp_ver)
 
                 new_peers = self._pex.process_response(
                     target_pid,

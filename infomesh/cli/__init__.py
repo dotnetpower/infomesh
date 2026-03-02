@@ -44,10 +44,11 @@ from infomesh.cli.index import index_group  # noqa: E402
 from infomesh.cli.keys import keys_group  # noqa: E402
 from infomesh.cli.peer import peer_group  # noqa: E402
 from infomesh.cli.search import search  # noqa: E402
-from infomesh.cli.serve import serve, start, status, stop  # noqa: E402
+from infomesh.cli.serve import serve, start, status, stop, update  # noqa: E402
 
 cli.add_command(start)
 cli.add_command(stop)
+cli.add_command(update)
 cli.add_command(serve)
 cli.add_command(status)
 cli.add_command(crawl)

@@ -95,6 +95,13 @@ def start(
     click.echo(f"  Peer ID: {keys.peer_id}")
     click.echo(f"  Data dir: {config.node.data_dir}")
 
+    # ── Update check (non-blocking) ───────────────────────────
+    from infomesh.version_check import check_pypi_update, format_update_banner
+
+    _update_info = check_pypi_update(config.node.data_dir)
+    if _update_info is not None:
+        click.secho(format_update_banner(_update_info), fg="yellow", bold=True)
+
     # ── GitHub identity ───────────────────────────────────────
     from infomesh.credits.github_identity import (
         run_first_start_checks,
@@ -315,6 +322,87 @@ def _kill_bgm_processes() -> None:
     from infomesh.dashboard.bgm import kill_orphaned_bgm
 
     kill_orphaned_bgm()
+
+
+# ---------------------------------------------------------------------------
+# infomesh update
+# ---------------------------------------------------------------------------
+@click.command()
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Only check for updates without installing",
+)
+def update(check: bool) -> None:
+    """Check for and install InfoMesh updates.
+
+    \b
+    By default, upgrades infomesh to the latest PyPI release and
+    restarts any running node process.
+
+    With --check, only shows whether an update is available.
+    """
+    import shutil
+    import subprocess
+
+    from infomesh.version_check import check_pypi_update, format_update_banner
+
+    config = load_config()
+
+    click.echo(f"Current version: v{__version__}")
+
+    info = check_pypi_update(config.node.data_dir)
+    if info is None:
+        click.secho("✔ Already up to date.", fg="green")
+        return
+
+    click.secho(format_update_banner(info), fg="yellow", bold=True)
+
+    if check:
+        return
+
+    # Determine installer (prefer uv, fallback to pip)
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        upgrade_cmd = [uv_bin, "pip", "install", "--upgrade", "infomesh"]
+    else:
+        upgrade_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "infomesh"]
+
+    click.echo(f"  Running: {' '.join(upgrade_cmd)}")
+    result = subprocess.run(upgrade_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        click.secho("  ✖ Upgrade failed:", fg="red")
+        click.echo(result.stderr or result.stdout)
+        raise SystemExit(1)
+
+    click.secho(f"  ✔ Upgraded to v{info.latest}", fg="green")
+
+    # Restart running node if any
+    pid_file = _pid_path(config.node.data_dir)
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            click.echo(f"  ↻ Restarting node (sent SIGTERM to PID {pid})...")
+            # Give old process time to exit
+            import time
+
+            time.sleep(2)
+            # Re-launch
+            serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
+            subprocess.Popen(
+                serve_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            click.secho("  ✔ Node restarted with new version.", fg="green")
+        except (ProcessLookupError, ValueError):
+            click.echo("  Node was not running.")
+    else:
+        click.echo("  Node is not running (start with: infomesh start)")
 
 
 # ---------------------------------------------------------------------------
@@ -612,3 +700,13 @@ def status() -> None:
             click.echo(f"Peer ID:         {pair.peer_id}")
         else:
             click.echo("Peer ID:         (not generated yet — run 'infomesh start')")
+
+        # ── Update check ──────────────────────────────────────
+        from infomesh.version_check import (
+            check_pypi_update,
+            format_update_banner,
+        )
+
+        _update_info = check_pypi_update(config.node.data_dir)
+        if _update_info is not None:
+            click.secho(format_update_banner(_update_info), fg="yellow", bold=True)
