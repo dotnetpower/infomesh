@@ -371,3 +371,67 @@ class TestSybilValidator:
         # All should complete in reasonable time
         for bits, elapsed, _ in results:
             assert elapsed < 30, f"{bits}-bit PoW took {elapsed:.1f}s (too slow)"
+
+
+# ─── PoW Cache Tests ──────────────────────────────────────
+
+
+class TestPoWCache:
+    """Test PoW result caching for fast restarts."""
+
+    def test_cache_roundtrip(self, tmp_path: object) -> None:
+        """Save and load PoW cache should return same nonce."""
+        from pathlib import Path
+
+        from infomesh.p2p.node import InfoMeshNode
+
+        cache_path = Path(str(tmp_path)) / "pow_cache.bin"
+        pub_key = os.urandom(32)
+
+        # Generate a real PoW for this key
+        pow_result = generate_pow(pub_key, difficulty_bits=8)
+
+        InfoMeshNode._save_cached_pow(
+            cache_path, pub_key, pow_result.nonce, difficulty=8
+        )
+        loaded = InfoMeshNode._load_cached_pow(cache_path, pub_key)
+        assert loaded == pow_result.nonce
+
+    def test_cache_rejects_wrong_key(self, tmp_path: object) -> None:
+        """Cache must reject if the public key changed."""
+        from pathlib import Path
+
+        from infomesh.p2p.node import InfoMeshNode
+
+        cache_path = Path(str(tmp_path)) / "pow_cache.bin"
+        pub_key_1 = os.urandom(32)
+        pub_key_2 = os.urandom(32)
+
+        pow_result = generate_pow(pub_key_1, difficulty_bits=8)
+        InfoMeshNode._save_cached_pow(
+            cache_path, pub_key_1, pow_result.nonce, difficulty=8
+        )
+
+        loaded = InfoMeshNode._load_cached_pow(cache_path, pub_key_2)
+        assert loaded is None
+
+    def test_cache_missing_file(self, tmp_path: object) -> None:
+        """Cache returns None if file doesn't exist."""
+        from pathlib import Path
+
+        from infomesh.p2p.node import InfoMeshNode
+
+        cache_path = Path(str(tmp_path)) / "nonexistent.bin"
+        loaded = InfoMeshNode._load_cached_pow(cache_path, os.urandom(32))
+        assert loaded is None
+
+    def test_cache_corrupt_file(self, tmp_path: object) -> None:
+        """Cache returns None for corrupted data."""
+        from pathlib import Path
+
+        from infomesh.p2p.node import InfoMeshNode
+
+        cache_path = Path(str(tmp_path)) / "pow_cache.bin"
+        cache_path.write_bytes(b"corrupt")
+        loaded = InfoMeshNode._load_cached_pow(cache_path, os.urandom(32))
+        assert loaded is None

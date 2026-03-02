@@ -21,10 +21,12 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 import structlog
 
@@ -51,7 +53,7 @@ from infomesh.p2p.protocol import (
 )
 from infomesh.p2p.replication import Replicator
 from infomesh.p2p.routing import QueryRouter
-from infomesh.p2p.sybil import SubnetLimiter, generate_pow
+from infomesh.p2p.sybil import SubnetLimiter, compute_pow_hash, generate_pow
 from infomesh.p2p.throttle import BandwidthThrottle
 
 logger = structlog.get_logger()
@@ -313,8 +315,10 @@ class InfoMeshNode:
                 daemon=True,
             )
             self._trio_thread.start()
-            # Wait for node to be ready
-            self._started_event.wait(timeout=30)
+            # Wait for node to be ready.
+            # 120s allows time for libp2p import + PoW generation
+            # on low-spec VMs (e.g. Azure B1s with 1 vCPU).
+            self._started_event.wait(timeout=120)
             if self._state != NodeState.RUNNING:
                 raise RuntimeError(f"Node failed to start: {self._state}")
 
@@ -365,18 +369,32 @@ class InfoMeshNode:
         # which is critical for DHT continuity and peer trust.
         key_pair = self._load_or_create_libp2p_key()
 
-        # ── Sybil PoW: generate proof-of-work for node identity ──
+        # ── Sybil PoW: use cached proof or generate new one ──
         pub_key_bytes = key_pair.public_key.to_bytes()  # type: ignore[attr-defined]
-        logger.info("pow_generating", difficulty=20)
-        pow_result = generate_pow(pub_key_bytes, difficulty_bits=20)
-        self._pow_nonce = pow_result.nonce
-        node_id = pow_result.hash_hex[:40]
-        logger.info(
-            "pow_complete",
-            nonce=pow_result.nonce,
-            node_id=node_id,
-            elapsed=round(pow_result.elapsed_seconds, 1),
-        )
+        pow_cache_path = self._config.node.data_dir / "keys" / "pow_cache.bin"
+        cached_nonce = self._load_cached_pow(pow_cache_path, pub_key_bytes)
+
+        if cached_nonce is not None:
+            pow_hash = compute_pow_hash(pub_key_bytes, cached_nonce)
+            self._pow_nonce = cached_nonce
+            node_id = pow_hash.hex()[:40]
+            logger.info(
+                "pow_cached",
+                nonce=cached_nonce,
+                node_id=node_id,
+            )
+        else:
+            logger.info("pow_generating", difficulty=20)
+            pow_result = generate_pow(pub_key_bytes, difficulty_bits=20)
+            self._pow_nonce = pow_result.nonce
+            node_id = pow_result.hash_hex[:40]
+            logger.info(
+                "pow_complete",
+                nonce=pow_result.nonce,
+                node_id=node_id,
+                elapsed=round(pow_result.elapsed_seconds, 1),
+            )
+            self._save_cached_pow(pow_cache_path, pub_key_bytes, pow_result.nonce)
 
         # Create host
         listen_addr = Multiaddr(
@@ -730,6 +748,67 @@ class InfoMeshNode:
                     "Check with: nc -zv <ip> 4001"
                 ),
             )
+
+    # ─── PoW cache ──────────────────────────────────────────
+
+    @staticmethod
+    def _load_cached_pow(
+        cache_path: Path,
+        pub_key_bytes: bytes,
+    ) -> int | None:
+        """Load cached PoW nonce if it matches the current public key.
+
+        The cache file stores:
+        ``pub_key_hash (32 bytes) + nonce (8 bytes LE) + difficulty (1 byte)``.
+        Falls back to 40-byte legacy format (assumes difficulty=20).
+        Returns the nonce if valid, None otherwise.
+        """
+        import struct
+
+        if not cache_path.exists():
+            return None
+        try:
+            data = cache_path.read_bytes()
+            if len(data) == 41:
+                stored_hash = data[:32]
+                nonce = struct.unpack("<Q", data[32:40])[0]
+                difficulty = data[40]
+            elif len(data) == 40:
+                stored_hash = data[:32]
+                nonce = struct.unpack("<Q", data[32:])[0]
+                difficulty = 20
+            else:
+                return None
+            expected_hash = hashlib.sha256(pub_key_bytes).digest()
+            if stored_hash != expected_hash:
+                return None
+            # Verify the cached nonce is still valid
+            pow_hash = compute_pow_hash(pub_key_bytes, nonce)
+            from infomesh.p2p.sybil import _count_leading_zero_bits_fast
+
+            if _count_leading_zero_bits_fast(pow_hash) >= difficulty:
+                return nonce
+            return None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _save_cached_pow(
+        cache_path: Path,
+        pub_key_bytes: bytes,
+        nonce: int,
+        difficulty: int = 20,
+    ) -> None:
+        """Persist PoW nonce to disk for fast restart."""
+        import struct
+
+        try:
+            key_hash = hashlib.sha256(pub_key_bytes).digest()
+            cache_path.write_bytes(
+                key_hash + struct.pack("<Q", nonce) + bytes([difficulty])
+            )
+        except Exception:
+            logger.debug("pow_cache_save_failed", path=str(cache_path))
 
     # ─── Public API (thread-safe) ──────────────────────────
 
