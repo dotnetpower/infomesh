@@ -490,3 +490,7 @@ class CreditSyncManager:
     def purge_stale(self) -> int:
         """Remove stale peer summaries from the store."""
         return self._store.purge_stale()
+
+    def close(self) -> None:
+        """Release underlying store resources."""
+        self._store.close()

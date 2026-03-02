@@ -16,7 +16,7 @@ Usage::
     node.start()          # Starts trio loop in background thread
     node.stop()           # Cleanly shuts down
     node.peer_id          # This node's peer ID
-    node.connected_peers  # Currently connected peers
+    node.connected_peers  # Currently connected peers (list)
 """
 
 from __future__ import annotations
@@ -58,6 +58,11 @@ from infomesh.p2p.sybil import SubnetLimiter, compute_pow_hash, generate_pow
 from infomesh.p2p.throttle import BandwidthThrottle
 
 logger = structlog.get_logger()
+
+# ── Module-level constants ─────────────────────────────────────────
+_ROUTING_REFRESH_INTERVAL = 300  # Refresh routing table every 5 min
+_STATUS_WRITE_INTERVAL = 10  # Write status file every 10 s
+_CREDIT_SYNC_INTERVAL = 300  # Credit sync every 5 min
 
 
 class NodeState(StrEnum):
@@ -143,6 +148,7 @@ class InfoMeshNode:
         # Background thread for trio
         self._trio_thread: threading.Thread | None = None
         self._trio_cancel_scope: object | None = None
+        self._trio_token: object | None = None
         self._started_event = threading.Event()
         self._stop_event = threading.Event()
 
@@ -276,6 +282,65 @@ class InfoMeshNode:
                 info.dht_keys_stored = self._dht.stats.keys_stored
         return info
 
+    # ─── Asyncio ↔ Trio bridge ─────────────────────────────
+
+    async def search_network(
+        self,
+        query: str,
+        keywords: list[str],
+        limit: int = 10,
+    ) -> list[dict[str, object]]:
+        """Search the P2P network for results (asyncio-safe).
+
+        Bridges from the caller's asyncio event loop into the trio
+        event loop running the P2P node.  Returns a list of result
+        dicts with url, title, snippet, score, peer_id, doc_id.
+
+        Safe to call from asyncio — internally uses
+        ``trio.from_thread.run()`` via ``asyncio.to_thread()``.
+
+        Returns an empty list when P2P is not running.
+        """
+        if (
+            self._router is None
+            or self._trio_token is None
+            or self._state != NodeState.RUNNING
+        ):
+            return []
+
+        import asyncio
+
+        def _sync_bridge() -> list[dict[str, object]]:
+            import trio
+
+            from infomesh.p2p.routing import RemoteSearchResult
+
+            async def _do() -> list[RemoteSearchResult]:
+                assert self._router is not None  # noqa: S101
+                return await self._router.route_query(
+                    query,
+                    keywords,
+                    limit,
+                )
+
+            results: list[RemoteSearchResult] = trio.from_thread.run(
+                _do,
+                trio_token=self._trio_token,  # type: ignore[arg-type]
+            )
+            return [
+                {
+                    "url": r.url,
+                    "title": r.title,
+                    "snippet": r.snippet,
+                    "score": r.score,
+                    "peer_id": r.peer_id,
+                    "doc_id": r.doc_id,
+                }
+                for r in results
+            ]
+
+        return await asyncio.to_thread(_sync_bridge)
+
     # ─── Lifecycle ─────────────────────────────────────────
 
     def start(self, *, blocking: bool = False) -> None:
@@ -365,44 +430,13 @@ class InfoMeshNode:
         from libp2p.kad_dht.kad_dht import DHTMode
         from libp2p.records.validator import NamespacedValidator, Validator
         from libp2p.tools.async_service.trio_service import background_trio_service
-        from multiaddr import Multiaddr
 
-        # Load or create Ed25519 key pair for libp2p identity.
-        # Persisting the key ensures the peer ID is stable across restarts,
-        # which is critical for DHT continuity and peer trust.
-        key_pair = self._load_or_create_libp2p_key()
+        # Save trio token so asyncio code can submit work to this loop.
+        self._trio_token = trio.lowlevel.current_trio_token()
 
-        # ── Sybil PoW: use cached proof or generate new one ──
-        pub_key_bytes = key_pair.public_key.to_bytes()  # type: ignore[attr-defined]
-        pow_cache_path = self._config.node.data_dir / "keys" / "pow_cache.bin"
-        cached_nonce = self._load_cached_pow(pow_cache_path, pub_key_bytes)
+        # ── Sybil PoW + host creation ──
+        key_pair, listen_addr = self._prepare_identity()
 
-        if cached_nonce is not None:
-            pow_hash = compute_pow_hash(pub_key_bytes, cached_nonce)
-            self._pow_nonce = cached_nonce
-            node_id = pow_hash.hex()[:40]
-            logger.info(
-                "pow_cached",
-                nonce=cached_nonce,
-                node_id=node_id,
-            )
-        else:
-            logger.info("pow_generating", difficulty=20)
-            pow_result = generate_pow(pub_key_bytes, difficulty_bits=20)
-            self._pow_nonce = pow_result.nonce
-            node_id = pow_result.hash_hex[:40]
-            logger.info(
-                "pow_complete",
-                nonce=pow_result.nonce,
-                node_id=node_id,
-                elapsed=round(pow_result.elapsed_seconds, 1),
-            )
-            self._save_cached_pow(pow_cache_path, pub_key_bytes, pow_result.nonce)
-
-        # Create host
-        listen_addr = Multiaddr(
-            f"/ip4/{self._config.node.listen_address}/tcp/{self._config.node.listen_port}"
-        )
         self._host = new_host(key_pair=key_pair)  # type: ignore[arg-type]
 
         async with self._host.run([listen_addr]):
@@ -438,18 +472,7 @@ class InfoMeshNode:
             )
 
             async with background_trio_service(kad_dht):
-                # Initialize subsystems
-                self._dht = InfoMeshDHT(kad_dht, self._peer_id)
-                self._router = QueryRouter(self._dht, self._host, self._peer_id)
-                self._replicator = Replicator(
-                    self._host,
-                    self._dht,
-                    self._peer_id,
-                    replication_factor=self._config.network.replication_factor,
-                )
-                self._url_assigner = UrlAssigner(self._peer_id)
-
-                # Register protocol handlers
+                self._init_subsystems(kad_dht)
                 self._register_handlers()
 
                 # Mark node as RUNNING before bootstrap — bootstrap is
@@ -460,91 +483,148 @@ class InfoMeshNode:
                 self._started_event.set()
                 self._write_status_file()
 
-                # ── Peer store + PEX: load cached peers for resilience ──
-                self._peer_store = PeerStore(self._config.node.data_dir)
-                self._pex = PeerExchange(peer_id=self._peer_id)
+                await self._post_bootstrap_setup()
+                await self._run_main_loop()
 
-                # Bootstrap — connect to known peers (non-blocking)
-                await self._bootstrap()
+    def _prepare_identity(self) -> tuple[object, object]:
+        """Load keys, compute PoW, and return (key_pair, listen_addr).
 
-                # If bootstrap failed, try cached peers
-                if (
-                    self._bootstrap_results.get("connected", 0) == 0
-                    and self._peer_store is not None
-                ):
-                    await self._connect_cached_peers()
+        Called at the beginning of ``_trio_main`` to keep that method
+        focused on the host/DHT lifecycle.
+        """
+        from multiaddr import Multiaddr
 
-                # ── mDNS: start LAN peer discovery ──
-                self._mdns = MDNSDiscovery(
-                    peer_id=self._peer_id,
-                    port=self._config.node.listen_port,
-                )
-                self._mdns.start()
-                logger.info("mdns_integration_started")
+        key_pair = self._load_or_create_libp2p_key()
 
-                # ── Publish pending key revocations to DHT ──
-                await self._publish_pending_revocations()
+        pub_key_bytes = key_pair.public_key.to_bytes()  # type: ignore[attr-defined]
+        pow_cache_path = self._config.node.data_dir / "keys" / "pow_cache.bin"
+        cached_nonce = self._load_cached_pow(pow_cache_path, pub_key_bytes)
 
-                # ── Announce credit identity to connected peers ──
-                await self._announce_credit_sync()
+        if cached_nonce is not None:
+            pow_hash = compute_pow_hash(pub_key_bytes, cached_nonce)
+            self._pow_nonce = cached_nonce
+            node_id = pow_hash.hex()[:40]
+            logger.info(
+                "pow_cached",
+                nonce=cached_nonce,
+                node_id=node_id,
+            )
+        else:
+            logger.info("pow_generating", difficulty=20)
+            pow_result = generate_pow(pub_key_bytes, difficulty_bits=20)
+            self._pow_nonce = pow_result.nonce
+            node_id = pow_result.hash_hex[:40]
+            logger.info(
+                "pow_complete",
+                nonce=pow_result.nonce,
+                node_id=node_id,
+                elapsed=round(pow_result.elapsed_seconds, 1),
+            )
+            self._save_cached_pow(pow_cache_path, pub_key_bytes, pow_result.nonce)
 
-                # Update status after bootstrap (peer count may have changed)
+        listen_addr = Multiaddr(
+            f"/ip4/{self._config.node.listen_address}"
+            f"/tcp/{self._config.node.listen_port}"
+        )
+        return key_pair, listen_addr
+
+    def _init_subsystems(self, kad_dht: object) -> None:
+        """Initialize DHT, router, replicator, and URL assigner."""
+        self._dht = InfoMeshDHT(kad_dht, self._peer_id)
+        self._router = QueryRouter(self._dht, self._host, self._peer_id)
+        self._replicator = Replicator(
+            self._host,
+            self._dht,
+            self._peer_id,
+            replication_factor=self._config.network.replication_factor,
+        )
+        self._url_assigner = UrlAssigner(self._peer_id)
+
+    async def _post_bootstrap_setup(self) -> None:
+        """Peer store, bootstrap, mDNS, revocations, credit sync."""
+        self._peer_store = PeerStore(self._config.node.data_dir)
+        self._pex = PeerExchange(peer_id=self._peer_id)
+
+        # Bootstrap — connect to known peers (non-blocking)
+        await self._bootstrap()
+
+        # If bootstrap failed, try cached peers
+        if (
+            self._bootstrap_results.get("connected", 0) == 0
+            and self._peer_store is not None
+        ):
+            await self._connect_cached_peers()
+
+        # mDNS: start LAN peer discovery
+        self._mdns = MDNSDiscovery(
+            peer_id=self._peer_id,
+            port=self._config.node.listen_port,
+        )
+        self._mdns.start()
+        logger.info("mdns_integration_started")
+
+        # Publish pending key revocations to DHT
+        await self._publish_pending_revocations()
+
+        # Announce credit identity to connected peers
+        await self._announce_credit_sync()
+
+        # Update status after bootstrap (peer count may have changed)
+        self._write_status_file()
+
+    async def _run_main_loop(self) -> None:
+        """Periodic maintenance loop — routing refresh, PEX, credit sync."""
+        import trio
+
+        last_refresh = time.time()
+        last_status = time.time()
+        last_pex = time.time()
+        last_credit_sync = time.time()
+
+        while not self._stop_event.is_set():
+            await trio.sleep(1)
+
+            now = time.time()
+
+            # Periodic routing table refresh
+            if now - last_refresh >= _ROUTING_REFRESH_INTERVAL:
+                last_refresh = now
+                await self._refresh_routing_table()
+                await self._save_connected_peers()
+                if self._peer_store is not None:
+                    self._peer_store.prune()
+
+            # Periodic PEX round
+            if now - last_pex >= PEX_ROUND_INTERVAL:
+                last_pex = now
+                await self._run_pex_round()
+
+            # Periodic credit sync with same-owner peers
+            if now - last_credit_sync >= _CREDIT_SYNC_INTERVAL:
+                last_credit_sync = now
+                await self._run_credit_sync_round()
+
+            # Update status file periodically
+            if now - last_status >= _STATUS_WRITE_INTERVAL:
+                last_status = now
                 self._write_status_file()
 
-                # ── Main loop with periodic routing refresh ──
-                refresh_interval = 300  # refresh routing every 5 min
-                status_interval = 10  # update status file every 10s
-                pex_interval = PEX_ROUND_INTERVAL
-                credit_sync_interval = 300  # credit sync every 5 min
-                last_refresh = time.time()
-                last_status = time.time()
-                last_pex = time.time()
-                last_credit_sync = time.time()
+            # Integrate mDNS-discovered peers
+            await self._connect_mdns_peers()
 
-                while not self._stop_event.is_set():
-                    await trio.sleep(1)
+        # ── Shutdown: save connected peers + cleanup ──
+        await self._save_connected_peers()
 
-                    # Periodic routing table refresh
-                    now = time.time()
-                    if now - last_refresh >= refresh_interval:
-                        last_refresh = now
-                        await self._refresh_routing_table()
-                        # Save connected peers & prune stale entries
-                        await self._save_connected_peers()
-                        if self._peer_store is not None:
-                            self._peer_store.prune()
+        if self._peer_store is not None:
+            self._peer_store.close()
+            self._peer_store = None
 
-                    # Periodic PEX round
-                    if now - last_pex >= pex_interval:
-                        last_pex = now
-                        await self._run_pex_round()
+        if self._mdns:
+            self._mdns.stop()
+            self._mdns = None
 
-                    # Periodic credit sync with same-owner peers
-                    if now - last_credit_sync >= credit_sync_interval:
-                        last_credit_sync = now
-                        await self._run_credit_sync_round()
-
-                    # Update status file periodically
-                    if now - last_status >= status_interval:
-                        last_status = now
-                        self._write_status_file()
-
-                    # Integrate mDNS-discovered peers
-                    await self._connect_mdns_peers()
-
-                # ── Shutdown: save connected peers + cleanup ──
-                await self._save_connected_peers()
-
-                if self._peer_store is not None:
-                    self._peer_store.close()
-                    self._peer_store = None
-
-                if self._mdns:
-                    self._mdns.stop()
-                    self._mdns = None
-
-                self._write_status_file(state="stopped")
-                logger.info("node_shutting_down", peer_id=self._peer_id)
+        self._write_status_file(state="stopped")
+        logger.info("node_shutting_down", peer_id=self._peer_id)
 
     def _register_handlers(self) -> None:
         """Register libp2p protocol stream handlers based on node role."""
@@ -653,8 +733,6 @@ class InfoMeshNode:
                         chunks.append(chunk)
                         total += len(chunk)
                     data = b"".join(chunks)
-                    from infomesh.p2p.protocol import decode_message
-
                     msg_type, payload = decode_message(data)
                     if msg_type == MessageType.INDEX_SUBMIT:
                         ack = await receiver.handle_submit(payload)  # type: ignore[attr-defined]
@@ -888,6 +966,11 @@ class InfoMeshNode:
             logger.debug("pow_cache_save_failed", path=str(cache_path))
 
     # ─── Public API (thread-safe) ──────────────────────────
+
+    @property
+    def connected_peers(self) -> list[str]:
+        """Currently connected peer IDs (property)."""
+        return self.get_connected_peers()
 
     def get_connected_peers(self) -> list[str]:
         """Get list of connected peer IDs."""

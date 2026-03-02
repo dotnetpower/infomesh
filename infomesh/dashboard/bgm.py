@@ -100,7 +100,7 @@ def _find_player() -> tuple[str, list[str]] | None:
     return None
 
 
-def _kill_orphaned_bgm() -> None:
+def kill_orphaned_bgm() -> None:
     """Kill any orphaned BGM player processes from previous runs.
 
     Uses ``pgrep`` to find ffplay/mpv processes whose command line
@@ -190,7 +190,7 @@ class BGMPlayer:
         self.stop()
 
         # Kill orphaned BGM processes from previous runs
-        _kill_orphaned_bgm()
+        kill_orphaned_bgm()
 
         self._volume = max(0, min(100, volume))
 

@@ -61,6 +61,19 @@ from infomesh.services import AppContext
 
 logger = structlog.get_logger()
 
+# ── HTTP transport CORS headers ─────────────────────────────────────
+_CORS_HEADERS: list[list[bytes]] = [
+    [b"access-control-allow-origin", b"*"],
+    [
+        b"access-control-allow-methods",
+        b"GET, POST, OPTIONS",
+    ],
+    [
+        b"access-control-allow-headers",
+        b"content-type, authorization",
+    ],
+]
+
 # Backward-compatible aliases for external consumers
 _SearchSession = SearchSession
 _AnalyticsTracker = AnalyticsTracker
@@ -103,8 +116,9 @@ def _create_app(
         ctx.close()
         raise
 
-    cache_size = getattr(getattr(config, "search", None), "cache_max_size", 1000)
-    cache_ttl = getattr(getattr(config, "search", None), "cache_ttl_seconds", 300.0)
+    _search_cfg = getattr(config, "search", None)
+    cache_size = getattr(_search_cfg, "cache_max_size", 1000)
+    cache_ttl = getattr(_search_cfg, "cache_ttl_seconds", 300.0)
     query_cache = QueryCache(
         max_size=int(cache_size),
         ttl_seconds=float(cache_ttl),
@@ -141,6 +155,7 @@ def _create_app(
                     store=store,
                     vector_store=vector_store,
                     distributed_index=distributed_index,
+                    p2p_node=p2p_node,
                     link_graph=link_graph,
                     ledger=ledger,
                     llm_backend=llm_backend,
@@ -170,6 +185,7 @@ def _create_app(
                     store=store,
                     vector_store=vector_store,
                     distributed_index=distributed_index,
+                    p2p_node=p2p_node,
                     link_graph=link_graph,
                     ledger=ledger,
                     llm_backend=llm_backend,
@@ -395,16 +411,26 @@ def _env_api_key() -> str | None:
 
 async def run_mcp_server(
     config: Config | None = None,
+    *,
+    distributed_index: Any | None = None,
+    p2p_node: Any | None = None,
 ) -> None:
     """Run the MCP server on stdio transport.
 
     Args:
         config: Configuration. Loads default if None.
+        distributed_index: Optional DistributedIndex for DHT search.
+        p2p_node: Optional P2P Node for network search.
     """
     if config is None:
         config = load_config()
 
-    app, ctx, pstore = _create_app(config, api_key=_env_api_key())
+    app, ctx, pstore = _create_app(
+        config,
+        distributed_index=distributed_index,
+        p2p_node=p2p_node,
+        api_key=_env_api_key(),
+    )
     logger.info("mcp_server_starting", transport="stdio")
 
     async with ctx, stdio_server() as (rs, ws):
@@ -419,6 +445,8 @@ async def run_mcp_http_server(
     *,
     host: str = "127.0.0.1",
     port: int = 8081,
+    distributed_index: Any | None = None,
+    p2p_node: Any | None = None,
 ) -> None:
     """Run the MCP server on HTTP Streamable transport.
 
@@ -429,11 +457,18 @@ async def run_mcp_http_server(
         config: Configuration. Loads default if None.
         host: Bind address (default: localhost only).
         port: HTTP port (default: 8081).
+        distributed_index: Optional DistributedIndex for DHT search.
+        p2p_node: Optional P2P Node for network search.
     """
     if config is None:
         config = load_config()
 
-    app, ctx, pstore = _create_app(config, api_key=_env_api_key())
+    app, ctx, pstore = _create_app(
+        config,
+        distributed_index=distributed_index,
+        p2p_node=p2p_node,
+        api_key=_env_api_key(),
+    )
     logger.info(
         "mcp_server_starting",
         transport="http",
@@ -455,18 +490,6 @@ async def run_mcp_http_server(
     transport = StreamableHTTPServerTransport(
         mcp_session_id=None,
     )
-
-    _CORS_HEADERS: list[list[bytes]] = [
-        [b"access-control-allow-origin", b"*"],
-        [
-            b"access-control-allow-methods",
-            b"GET, POST, OPTIONS",
-        ],
-        [
-            b"access-control-allow-headers",
-            b"content-type, authorization",
-        ],
-    ]
 
     async def _asgi_app(
         scope: dict[str, object],

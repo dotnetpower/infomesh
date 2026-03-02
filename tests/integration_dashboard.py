@@ -29,9 +29,9 @@ async def run_tests() -> list[str]:
     from infomesh.dashboard import bgm as bgm_mod
 
     original_play = bgm_mod.BGMPlayer.play
-    original_kill = bgm_mod._kill_orphaned_bgm
+    original_kill = bgm_mod.kill_orphaned_bgm
     bgm_mod.BGMPlayer.play = lambda *a, **kw: False  # type: ignore
-    bgm_mod._kill_orphaned_bgm = lambda: None  # type: ignore
+    bgm_mod.kill_orphaned_bgm = lambda: None  # type: ignore
 
     try:
         from infomesh.dashboard.app import DashboardApp
@@ -461,7 +461,7 @@ async def run_tests() -> list[str]:
 
     finally:
         bgm_mod.BGMPlayer.play = original_play  # type: ignore
-        bgm_mod._kill_orphaned_bgm = original_kill  # type: ignore
+        bgm_mod.kill_orphaned_bgm = original_kill  # type: ignore
 
     # ─── Report ─────────────────────────────────────────────
     print("\n" + "=" * 60)

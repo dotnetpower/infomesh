@@ -284,6 +284,93 @@ class TestSearchDistributed:
         assert len(shared_urls) == 1
         store.close()
 
+    def test_network_search_fn_provides_real_results(self) -> None:
+        """network_search_fn should be used when provided."""
+        from infomesh.search.query import search_distributed
+
+        store = LocalStore()
+        store.add_document(
+            url="https://example.com/local",
+            title="Local Page",
+            text="Python async programming guide",
+            raw_html_hash="h1",
+            text_hash="t1",
+        )
+
+        async def mock_network_search(
+            query: str, keywords: list[str], limit: int
+        ) -> list[dict[str, object]]:
+            return [
+                {
+                    "url": "https://peer.com/result",
+                    "title": "Peer Result",
+                    "snippet": "Real snippet from peer",
+                    "score": 3.0,
+                    "peer_id": "peer_abc",
+                    "doc_id": 99,
+                },
+            ]
+
+        mock_di = _MockDistributedIndex(pointers=[])
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(
+            search_distributed(
+                store,
+                mock_di,
+                "python",
+                limit=5,
+                network_search_fn=mock_network_search,
+            )  # type: ignore[arg-type]
+        )
+        loop.close()
+
+        assert result.source == "distributed"
+        assert result.remote_count == 1
+        urls = {r.url for r in result.results}
+        assert "https://peer.com/result" in urls
+        # Verify real snippet was preserved
+        peer_r = next(r for r in result.results if r.url == "https://peer.com/result")
+        assert peer_r.snippet == "Real snippet from peer"
+        assert peer_r.peer_id == "peer_abc"
+        store.close()
+
+    def test_network_search_fn_failure_fallback(self) -> None:
+        """If network_search_fn raises, fall back gracefully."""
+        from infomesh.search.query import search_distributed
+
+        store = LocalStore()
+        store.add_document(
+            url="https://example.com/local",
+            title="Local Page",
+            text="Python async programming guide",
+            raw_html_hash="h1",
+            text_hash="t1",
+        )
+
+        async def failing_network_search(
+            query: str, keywords: list[str], limit: int
+        ) -> list[dict[str, object]]:
+            msg = "network error"
+            raise ConnectionError(msg)
+
+        mock_di = _MockDistributedIndex(pointers=[])
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(
+            search_distributed(
+                store,
+                mock_di,
+                "python",
+                limit=5,
+                network_search_fn=failing_network_search,
+            )  # type: ignore[arg-type]
+        )
+        loop.close()
+
+        # Should still have local results, no crash
+        assert result.source == "local_only"
+        assert result.remote_count == 0
+        store.close()
+
 
 # ── Distributed formatter test ───────────────────────────────────
 

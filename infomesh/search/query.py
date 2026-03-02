@@ -69,7 +69,11 @@ def _sanitize_fts_query(query: str) -> str:
     sanitized = re.sub(r"\s+", " ", sanitized).strip()
 
     if not sanitized:
-        return query.strip()[:100]
+        # All meaningful characters were removed — strip to
+        # alphanumeric only to prevent FTS5 syntax errors.
+        fallback = re.sub(r"[^a-zA-Z0-9\s]", " ", query)
+        fallback = re.sub(r"\s+", " ", fallback).strip()[:100]
+        return fallback or "infomesh"
 
     return sanitized
 
@@ -238,6 +242,35 @@ class DistributedResult:
     remote_count: int = 0
 
 
+def _make_remote_result(
+    *,
+    url: str,
+    title: str,
+    snippet: str,
+    score: object,
+    doc_id: object,
+    peer_id: str,
+) -> RankedResult:
+    """Build a ``RankedResult`` from remote search data.
+
+    Shared by the QueryRouter (network_search_fn) path and the
+    DHT pointer-stub fallback to avoid duplicated construction.
+    """
+    return RankedResult(
+        doc_id=int(doc_id if isinstance(doc_id, (int, float, str)) else 0),
+        url=url,
+        title=title,
+        snippet=snippet,
+        bm25_score=0.0,
+        freshness_score=0.0,
+        trust_score=0.0,
+        authority_score=0.0,
+        combined_score=float(score if isinstance(score, (int, float, str)) else 0.0),
+        crawled_at=0.0,
+        peer_id=peer_id,
+    )
+
+
 async def search_distributed(
     store: LocalStore,
     distributed_index: DistributedIndex,
@@ -246,22 +279,29 @@ async def search_distributed(
     limit: int = 10,
     authority_fn: Callable[[str], float] | None = None,
     vector_store: VectorStoreLike | None = None,
+    network_search_fn: (Callable[[str, list[str], int], Any] | None) = None,
 ) -> DistributedResult:
-    """Search local index + DHT distributed index, merge results.
+    """Search local index + P2P network, merge results.
 
     1. Run local FTS5 search.
-    2. Extract keywords and query DHT for peer pointers.
-    3. Convert peer pointers to ``RankedResult`` stubs.
+    2. Extract keywords from query.
+    3. If ``network_search_fn`` is provided (asyncio-safe bridge to
+       the P2P QueryRouter), fan out SEARCH_REQUEST to peers and
+       collect real search results with snippets and scores.
+       Otherwise, fall back to DHT-only peer pointer stubs.
     4. Merge & deduplicate by URL, keeping best score.
-    5. Optionally include vector results via hybrid path.
 
     Args:
         store: Local FTS5 document store.
         distributed_index: DHT-backed distributed index.
         query: User search query.
         limit: Maximum results.
-        authority_fn: Optional ``(url) -> float`` for domain authority lookup.
+        authority_fn: Optional ``(url) -> float`` for domain authority.
         vector_store: Optional vector store for hybrid local search.
+        network_search_fn: Optional asyncio-safe callable
+            ``(query, keywords, limit) -> list[dict]`` that fans out
+            search requests to peers via the P2P QueryRouter.
+            Each dict has: url, title, snippet, score, peer_id, doc_id.
 
     Returns:
         DistributedResult with merged local + remote results.
@@ -279,28 +319,59 @@ async def search_distributed(
         authority_fn=authority_fn,
     )
 
-    # 2. DHT keyword query
+    # 2. Extract keywords
     keywords = extract_keywords(query, max_keywords=10)
-    remote_pointers = await distributed_index.query(keywords) if keywords else []
 
-    # 3. Convert peer pointers to RankedResult stubs
+    # 3. Fetch remote results — prefer QueryRouter (real content)
     remote_results: list[RankedResult] = []
-    for ptr in remote_pointers:
-        remote_results.append(
-            RankedResult(
-                doc_id=ptr.doc_id,
-                url=ptr.url,
-                title=ptr.title,
-                snippet="",  # snippet unavailable from DHT pointer
-                bm25_score=0.0,
-                freshness_score=0.0,
-                trust_score=0.0,
-                authority_score=0.0,
-                combined_score=ptr.score,
-                crawled_at=0.0,
-                peer_id=ptr.peer_id,
+    remote_count = 0
+
+    if keywords and network_search_fn is not None:
+        # Use P2P QueryRouter: sends SEARCH_REQUEST to peers,
+        # returns results with actual snippets and scores.
+        try:
+            raw_results = await network_search_fn(
+                query,
+                keywords,
+                limit,
             )
-        )
+            for r in raw_results:
+                url = str(r.get("url", ""))
+                if not url:
+                    continue
+                remote_results.append(
+                    _make_remote_result(
+                        url=url,
+                        title=str(r.get("title", "")),
+                        snippet=str(r.get("snippet", "")),
+                        score=r.get("score", 0.0),
+                        doc_id=r.get("doc_id", 0),
+                        peer_id=str(r.get("peer_id", "")),
+                    )
+                )
+            remote_count = len(remote_results)
+        except Exception:
+            logger.exception("network_search_failed")
+    elif keywords:
+        # Fallback: DHT pointer stubs (no snippets, metadata only)
+        try:
+            remote_pointers = await distributed_index.query(
+                keywords,
+            )
+            for ptr in remote_pointers:
+                remote_results.append(
+                    _make_remote_result(
+                        url=ptr.url,
+                        title=ptr.title,
+                        snippet="",
+                        score=ptr.score,
+                        doc_id=ptr.doc_id,
+                        peer_id=ptr.peer_id,
+                    )
+                )
+            remote_count = len(remote_pointers)
+        except Exception:
+            logger.exception("dht_query_failed")
 
     # 4. Merge & deduplicate by URL (local results take priority)
     seen_urls: set[str] = set()
@@ -322,7 +393,6 @@ async def search_distributed(
 
     elapsed = (time.monotonic() - start) * 1000
     local_count = local_results.total
-    remote_count = len(remote_pointers)
 
     source = "distributed" if remote_count > 0 else "local_only"
 
@@ -330,7 +400,7 @@ async def search_distributed(
         "query_distributed",
         query=query,
         local_count=local_count,
-        remote_pointers=remote_count,
+        remote_count=remote_count,
         merged_count=len(merged),
         elapsed_ms=round(elapsed, 1),
     )

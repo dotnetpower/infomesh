@@ -244,14 +244,38 @@ def _trunc(text: str, max_len: int) -> str:
 def mcp_cmd(http: bool, host: str, port: int) -> None:
     """Run the MCP server (stdio or HTTP mode)."""
     config = load_config()
-    if http:
-        from infomesh.mcp.server import run_mcp_http_server
 
-        asyncio.run(run_mcp_http_server(config, host=host, port=port))
-    else:
-        from infomesh.mcp.server import run_mcp_server
+    # ── Best-effort P2P bootstrap for distributed search ──
+    from infomesh.services import bootstrap_p2p
 
-        asyncio.run(run_mcp_server(config))
+    p2p_node, distributed_index = bootstrap_p2p(config)
+
+    try:
+        if http:
+            from infomesh.mcp.server import run_mcp_http_server
+
+            asyncio.run(
+                run_mcp_http_server(
+                    config,
+                    host=host,
+                    port=port,
+                    distributed_index=distributed_index,
+                    p2p_node=p2p_node,
+                )
+            )
+        else:
+            from infomesh.mcp.server import run_mcp_server
+
+            asyncio.run(
+                run_mcp_server(
+                    config,
+                    distributed_index=distributed_index,
+                    p2p_node=p2p_node,
+                )
+            )
+    finally:
+        if p2p_node is not None and hasattr(p2p_node, "stop"):
+            p2p_node.stop()
 
 
 @click.command()

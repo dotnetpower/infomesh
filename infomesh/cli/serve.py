@@ -279,6 +279,7 @@ def _run_foreground_crawl(config: Config, seed_category: str) -> None:
     asyncio.run(_crawl_batch())
     elapsed = time.monotonic() - start_time
     click.echo(f"\n    Initial crawl: {crawled} pages indexed in {elapsed:.1f}s")
+    ctx.close()
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +315,9 @@ def stop() -> None:
 
 def _kill_bgm_processes() -> None:
     """Find and kill BGM player processes spawned by infomesh."""
-    from infomesh.dashboard.bgm import _kill_orphaned_bgm
+    from infomesh.dashboard.bgm import kill_orphaned_bgm
 
-    _kill_orphaned_bgm()
+    kill_orphaned_bgm()
 
 
 # ---------------------------------------------------------------------------
@@ -391,16 +392,24 @@ def serve(seeds: str | None, role: str | None) -> None:
         _serve_logger.debug("credit_sync_init_skipped")
 
     # ── P2P node (best-effort) ─────────────────────────────────
-    p2p_node = _try_start_p2p(
+    # Build local_search_fn so peers can query our local index.
+    from infomesh.services import bootstrap_p2p, create_local_search_fn
+
+    _local_search_fn = create_local_search_fn(config)
+
+    p2p_node, _distributed_index = bootstrap_p2p(
         config,
-        _serve_logger,
         credit_sync_manager=_credit_sync_mgr,
+        local_search_fn=_local_search_fn,
     )
 
     async def _run() -> None:
         from infomesh.services import AppContext, seed_and_crawl_loop
 
         ctx = AppContext(config)
+        # Attach P2P components so MCP and search can use them
+        ctx.distributed_index = _distributed_index
+        ctx.p2p_node = p2p_node
 
         if config.node.role == NodeRole.SEARCH:
             # Search-only nodes don't crawl — wait for index submissions
@@ -427,63 +436,105 @@ def serve(seeds: str | None, role: str | None) -> None:
         _serve_logger.info("serve_stopped")
 
 
-def _try_start_p2p(
-    config: Config,
-    log: structlog.stdlib.BoundLogger,
-    *,
-    credit_sync_manager: object | None = None,
-) -> object | None:
-    """Try to start the P2P node. Returns the node or None on failure.
-
-    Failures are logged as warnings — the node continues in local-only mode.
-    """
-    try:
-        from infomesh.p2p.node import InfoMeshNode  # noqa: F811
-    except ImportError:
-        log.warning(
-            "p2p_unavailable",
-            reason="libp2p not installed",
-            hint="pip install 'infomesh[p2p]'",
-        )
-        return None
-
-    try:
-        node = InfoMeshNode(
-            config,
-            credit_sync_manager=credit_sync_manager,
-        )
-        node.start(blocking=False)
-        log.info(
-            "p2p_started",
-            peer_id=node.peer_id,
-            listen_port=config.node.listen_port,
-            bootstrap_nodes=len(config.network.bootstrap_nodes),
-        )
-        if not config.network.bootstrap_nodes:
-            log.warning(
-                "p2p_no_bootstrap",
-                msg=(
-                    "No bootstrap nodes configured. "
-                    "Add [network] bootstrap_nodes in "
-                    "~/.infomesh/config.toml to connect to peers."
-                ),
-            )
-        return node
-    except Exception as exc:
-        log.warning(
-            "p2p_start_failed",
-            error=str(exc),
-            msg=(
-                "P2P node failed to start — running in local-only mode. "
-                "Crawling, indexing, and local search still work."
-            ),
-        )
-        return None
-
-
 # ---------------------------------------------------------------------------
 # infomesh status
 # ---------------------------------------------------------------------------
+
+
+def _render_p2p_status(
+    config: Config,
+    running: bool,
+) -> None:
+    """Render P2P status lines for the ``status`` command."""
+    from infomesh.dashboard.utils import read_p2p_status
+
+    p2p = read_p2p_status(config)
+    p2p_state = p2p.get("state", "stopped")
+    p2p_peers = p2p.get("peers", 0)
+
+    if p2p_state == "running":
+        click.echo(f"P2P:             running ({p2p_peers} peers)")
+        addrs = p2p.get("listen_addrs", [])
+        if addrs and isinstance(addrs, list):
+            click.echo("P2P addrs:       " + ", ".join(str(a) for a in addrs))
+        bs = p2p.get("bootstrap", {})
+        if isinstance(bs, dict) and p2p_peers == 0:
+            _render_bootstrap_hints(bs)
+    elif p2p_state == "error":
+        click.echo("P2P:             " + click.style("error", fg="red"))
+        err = p2p.get("error", "")
+        if err:
+            click.echo(f"P2P error:       {err}")
+    elif running:
+        click.echo("P2P:             " + click.style("not connected", fg="yellow"))
+        click.echo("                 (libp2p not installed or no bootstrap nodes)")
+    else:
+        click.echo("P2P:             stopped")
+
+
+def _render_bootstrap_hints(
+    bs: dict[str, object],
+) -> None:
+    """Render bootstrap troubleshooting hints."""
+    bs_conf = bs.get("configured", 0)
+    bs_conn = bs.get("connected", 0)
+    bs_fail = bs.get("failed", 0)
+
+    if bs_conf == 0:
+        click.echo("Bootstrap:       " + click.style("none configured", fg="yellow"))
+        click.echo("                 Add bootstrap nodes in ~/.infomesh/config.toml:")
+        click.echo("                 [network]")
+        click.echo(
+            '                 bootstrap_nodes = ["/ip4/<IP>/tcp/4001/p2p/<PEER_ID>"]'
+        )
+    elif isinstance(bs_fail, int) and bs_fail > 0 and bs_conn == 0:
+        click.echo(
+            "Bootstrap:       "
+            + click.style(
+                f"all {bs_fail} nodes unreachable",
+                fg="red",
+            )
+        )
+        failed = bs.get("failed_addrs", [])
+        if isinstance(failed, list):
+            for fa in failed:
+                click.echo(f"                 ✗ {fa}")
+        click.echo(
+            "                 Check: (1) node running?"
+            " (2) port 4001 open?"
+            " (3) correct IP?"
+        )
+        click.echo("                 Test: nc -zv <IP> 4001")
+
+
+def _render_credit_status(ledger: object) -> None:
+    """Render credit status lines for the ``status`` command."""
+    if ledger is None:
+        click.echo("Credits:         N/A (ledger unavailable)")
+        return
+    ls = ledger.stats()  # type: ignore[attr-defined]
+    click.echo(
+        f"Credits:         {ls.balance:.1f}"
+        f" (earned {ls.total_earned:.1f}"
+        f" / spent {ls.total_spent:.1f})"
+    )
+    click.echo(
+        f"Tier:            {ls.tier.value}"
+        f" (score {ls.contribution_score:.1f},"
+        f" search cost {ls.search_cost:.3f})"
+    )
+    if ls.credit_state.value != "normal":
+        click.echo(f"Credit state:    {ls.credit_state.value}")
+    if ls.owner_email:
+        click.echo(f"GitHub:          {ls.owner_email}")
+        click.echo("                 Credits linked across all nodes.")
+    else:
+        click.echo("GitHub:          " + click.style("not connected", fg="yellow"))
+        click.echo(
+            "                 Run 'infomesh config github your@email.com' to link."
+        )
+
+
 @click.command()
 def status() -> None:
     """Show node status."""
@@ -515,95 +566,8 @@ def status() -> None:
                 click.echo("Vector docs:     (chromadb not installed)")
         click.echo(f"LLM:             {'on' if config.llm.enabled else 'off'}")
 
-        # ── P2P status ─────────────────────────────────────────
-        from infomesh.dashboard.utils import read_p2p_status
-
-        p2p = read_p2p_status(config)
-        p2p_state = p2p.get("state", "stopped")
-        p2p_peers = p2p.get("peers", 0)
-        if p2p_state == "running":
-            click.echo(f"P2P:             running ({p2p_peers} peers)")
-            addrs = p2p.get("listen_addrs", [])
-            if addrs and isinstance(addrs, list):
-                click.echo(f"P2P addrs:       {', '.join(str(a) for a in addrs)}")
-            # Show bootstrap status if peers=0
-            bs = p2p.get("bootstrap", {})
-            if isinstance(bs, dict) and p2p_peers == 0:
-                bs_conf = bs.get("configured", 0)
-                bs_conn = bs.get("connected", 0)
-                bs_fail = bs.get("failed", 0)
-                if bs_conf == 0:
-                    click.echo(
-                        "Bootstrap:       "
-                        + click.style("none configured", fg="yellow")
-                    )
-                    click.echo(
-                        "                 Add bootstrap nodes in"
-                        " ~/.infomesh/config.toml:"
-                    )
-                    click.echo("                 [network]")
-                    click.echo(
-                        "                 bootstrap_nodes"
-                        ' = ["/ip4/<IP>/tcp/4001'
-                        '/p2p/<PEER_ID>"]'
-                    )
-                elif bs_fail > 0 and bs_conn == 0:
-                    click.echo(
-                        "Bootstrap:       "
-                        + click.style(
-                            f"all {bs_fail} nodes unreachable",
-                            fg="red",
-                        )
-                    )
-                    failed = bs.get("failed_addrs", [])
-                    if isinstance(failed, list):
-                        for fa in failed:
-                            click.echo(f"                 ✗ {fa}")
-                    click.echo(
-                        "                 Check: (1) node running?"
-                        " (2) port 4001 open?"
-                        " (3) correct IP?"
-                    )
-                    click.echo("                 Test: nc -zv <IP> 4001")
-        elif p2p_state == "error":
-            click.echo("P2P:             " + click.style("error", fg="red"))
-            err = p2p.get("error", "")
-            if err:
-                click.echo(f"P2P error:       {err}")
-        elif running:
-            click.echo("P2P:             " + click.style("not connected", fg="yellow"))
-            click.echo("                 (libp2p not installed or no bootstrap nodes)")
-        else:
-            click.echo("P2P:             stopped")
-
-        # Credits
-        if ctx.ledger is not None:
-            ls = ctx.ledger.stats()
-            click.echo(
-                f"Credits:         {ls.balance:.1f}"
-                f" (earned {ls.total_earned:.1f}"
-                f" / spent {ls.total_spent:.1f})"
-            )
-            click.echo(
-                f"Tier:            {ls.tier.value}"
-                f" (score {ls.contribution_score:.1f},"
-                f" search cost {ls.search_cost:.3f})"
-            )
-            if ls.credit_state.value != "normal":
-                click.echo(f"Credit state:    {ls.credit_state.value}")
-            if ls.owner_email:
-                click.echo(f"GitHub:          {ls.owner_email}")
-                click.echo("                 Credits linked across all nodes.")
-            else:
-                click.echo(
-                    "GitHub:          " + click.style("not connected", fg="yellow")
-                )
-                click.echo(
-                    "                 Run "
-                    "'infomesh config github your@email.com' to link."
-                )
-        else:
-            click.echo("Credits:         N/A (ledger unavailable)")
+        _render_p2p_status(config, running)
+        _render_credit_status(ctx.ledger)
 
         keys_dir = config.node.data_dir / "keys"
         if (keys_dir / "private.pem").exists():

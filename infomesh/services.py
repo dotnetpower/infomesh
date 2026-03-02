@@ -415,6 +415,10 @@ class AppContext:
             except Exception:  # noqa: BLE001
                 logger.warning("credit_sync_unavailable")
 
+        # ── P2P components (set externally via bootstrap_p2p) ──
+        self.distributed_index: object | None = None
+        self.p2p_node: object | None = None
+
         logger.info(
             "app_context_initialized",
             role=role,
@@ -434,7 +438,7 @@ class AppContext:
         """
         if self.credit_sync_manager is not None:
             with contextlib.suppress(Exception):
-                self.credit_sync_manager._store.close()  # type: ignore[attr-defined]
+                self.credit_sync_manager.close()  # type: ignore[attr-defined]
         if self.vector_store is not None:
             self.vector_store.close()
         if self.ledger is not None:
@@ -470,6 +474,130 @@ class AppContext:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.close_async()
+
+
+# ─── P2P helpers (shared by CLI commands) ─────────────────────
+
+
+def create_local_search_fn(
+    config: Config,
+) -> object | None:
+    """Build an async local-search function for P2P peer requests.
+
+    Constructs a ``LocalStore``, wraps the sync ``search_local`` call in
+    an async function, and returns it.  Returns ``None`` if the store
+    cannot be opened (missing dependencies, corrupt DB, etc.).
+
+    .. note:: Opens its own ``LocalStore`` connection because the P2P node
+       starts *before* ``AppContext`` is created.  SQLite WAL mode supports
+       concurrent readers, so this is safe.  The connection is intentionally
+       kept open for the lifetime of the P2P node.
+    """
+    try:
+        from infomesh.search.query import search_local
+
+        ls = LocalStore(
+            db_path=config.index.db_path,
+            tokenizer=config.index.fts_tokenizer,
+            compression_enabled=config.storage.compression_enabled,
+            compression_level=config.storage.compression_level,
+        )
+
+        async def _local_search(
+            query: str,
+            limit: int = 10,
+        ) -> list[dict[str, object]]:
+            """Async wrapper around sync search_local for P2P handler."""
+            qr = search_local(ls, query, limit=limit)
+            return [
+                {
+                    "url": r.url,
+                    "title": r.title,
+                    "snippet": r.snippet,
+                    "score": r.combined_score,
+                    "doc_id": r.doc_id,
+                }
+                for r in qr.results
+            ]
+
+        return _local_search
+    except Exception:  # noqa: BLE001
+        logger.debug("local_search_fn_unavailable")
+        return None
+
+
+def bootstrap_p2p(
+    config: Config,
+    *,
+    credit_sync_manager: object | None = None,
+    local_search_fn: object | None = None,
+) -> tuple[object | None, object | None]:
+    """Best-effort P2P node + distributed index bootstrap.
+
+    Creates an ``InfoMeshNode``, starts it in a background thread, and
+    builds a ``DistributedIndex`` wrapping the node's DHT.
+
+    Returns:
+        ``(p2p_node, distributed_index)`` — either or both may be
+        ``None`` if P2P is unavailable.
+    """
+    try:
+        from infomesh.p2p.node import InfoMeshNode
+    except ImportError:
+        logger.warning(
+            "p2p_unavailable",
+            reason="libp2p not installed",
+            hint="pip install 'infomesh[p2p]'",
+        )
+        return None, None
+
+    try:
+        node = InfoMeshNode(
+            config,
+            credit_sync_manager=credit_sync_manager,
+            local_search_fn=local_search_fn,
+        )
+        node.start(blocking=False)
+        logger.info(
+            "p2p_started",
+            peer_id=node.peer_id,
+            listen_port=config.node.listen_port,
+            bootstrap_nodes=len(config.network.bootstrap_nodes),
+        )
+        if not config.network.bootstrap_nodes:
+            logger.warning(
+                "p2p_no_bootstrap",
+                msg=(
+                    "No bootstrap nodes configured. "
+                    "Add [network] bootstrap_nodes in "
+                    "~/.infomesh/config.toml to connect to peers."
+                ),
+            )
+    except Exception as exc:
+        logger.warning(
+            "p2p_start_failed",
+            error=str(exc),
+            msg=(
+                "P2P node failed to start — running in local-only mode. "
+                "Crawling, indexing, and local search still work."
+            ),
+        )
+        return None, None
+
+    # Build DistributedIndex from the node's DHT
+    distributed_index: object | None = None
+    try:
+        dht = getattr(node, "dht", None)
+        pid = getattr(node, "peer_id", "")
+        if dht is not None and pid:
+            from infomesh.index.distributed import DistributedIndex
+
+            distributed_index = DistributedIndex(dht, pid)
+            logger.info("distributed_index_ready")
+    except Exception:  # noqa: BLE001
+        logger.debug("distributed_index_unavailable")
+
+    return node, distributed_index
 
 
 # ─── Backward-compatible re-exports from crawler.crawl_loop ───

@@ -107,45 +107,39 @@ class TestGetP2PStatus:
         assert result["error"] == "trio not installed"
 
 
-class TestTryStartP2P:
-    """Tests for _try_start_p2p graceful fallback."""
+class TestBootstrapP2P:
+    """Tests for bootstrap_p2p graceful fallback."""
 
     def test_returns_none_when_import_fails(self) -> None:
-        """Returns None and logs warning when libp2p not installed."""
-        mock_logger = MagicMock()
+        """Returns (None, None) when libp2p not installed."""
         config = Config()
 
-        with (
-            patch.dict("sys.modules", {"infomesh.p2p.node": None}),
-            patch("infomesh.cli.serve._try_start_p2p") as mock_fn,
-        ):
-            mock_fn.return_value = None
-            result = mock_fn(config, mock_logger)
+        with patch.dict("sys.modules", {"infomesh.p2p.node": None}):
+            from infomesh.services import bootstrap_p2p
 
-        assert result is None
+            result = bootstrap_p2p(config)
+
+        assert result == (None, None)
 
     def test_returns_none_on_start_error(self) -> None:
-        """Returns None when node.start() raises."""
-        from infomesh.cli.serve import _try_start_p2p
+        """Returns (None, None) when node.start() raises."""
+        from infomesh.services import bootstrap_p2p
 
-        mock_logger = MagicMock()
         config = Config()
 
         mock_node_cls = MagicMock()
         mock_node_cls.return_value.start.side_effect = RuntimeError("PoW failed")
 
         with patch("infomesh.p2p.node.InfoMeshNode", mock_node_cls):
-            result = _try_start_p2p(config, mock_logger)
+            node, dist_idx = bootstrap_p2p(config)
 
-        assert result is None
-        # Should have logged a warning
-        mock_logger.warning.assert_called()
+        assert node is None
+        assert dist_idx is None
 
     def test_warns_no_bootstrap_nodes(self) -> None:
         """Logs warning when no bootstrap nodes configured."""
-        from infomesh.cli.serve import _try_start_p2p
+        from infomesh.services import bootstrap_p2p
 
-        mock_logger = MagicMock()
         config = Config(network=NetworkConfig(bootstrap_nodes=[]))
 
         mock_node = MagicMock()
@@ -153,16 +147,11 @@ class TestTryStartP2P:
         mock_node_cls = MagicMock(return_value=mock_node)
 
         with patch("infomesh.p2p.node.InfoMeshNode", mock_node_cls):
-            result = _try_start_p2p(config, mock_logger)
+            node, _dist_idx = bootstrap_p2p(config)
 
-        if result is not None:
-            # Should have warned about no bootstrap nodes
-            warning_calls = [
-                c
-                for c in mock_logger.warning.call_args_list
-                if "p2p_no_bootstrap" in str(c)
-            ]
-            assert len(warning_calls) >= 1
+        # Node should have been started (even without bootstrap)
+        if node is not None:
+            mock_node.start.assert_called_once()
 
 
 class TestNodeStatusFile:

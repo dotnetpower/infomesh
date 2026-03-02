@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -62,7 +63,47 @@ logger = structlog.get_logger()
 # ── Constants ──────────────────────────────────────────────────────
 
 MCP_API_VERSION = "2025.1"
-SERVER_VERSION = "0.2.0"
+
+# Use actual package version instead of hardcoded string.
+try:
+    from infomesh import __version__ as SERVER_VERSION
+except ImportError:  # pragma: no cover
+    SERVER_VERSION = "0.0.0"
+
+# Credit tier thresholds (keep in sync with credits/types.py)
+_TIER_HIGH_THRESHOLD = 1000
+_TIER_MID_THRESHOLD = 100
+
+
+def _compute_credit_tier(balance: float) -> int:
+    """Determine credit tier from balance."""
+    if balance >= _TIER_HIGH_THRESHOLD:
+        return 3
+    if balance >= _TIER_MID_THRESHOLD:
+        return 2
+    return 1
+
+
+def _build_p2p_status(
+    p2p_node: Any,
+    distributed_index: Any,
+) -> dict[str, object]:
+    """Build P2P status dict from node and distributed index."""
+    if p2p_node is None:
+        return {"peers": 0, "mode": "local"}
+    try:
+        pc = len(p2p_node.connected_peers)
+        p2p_data: dict[str, object] = {"peers": pc}
+        if distributed_index is not None:
+            di = distributed_index.stats
+            p2p_data["dht"] = {
+                "published": di.documents_published,
+                "keywords": di.keywords_published,
+                "queries": di.queries_performed,
+            }
+        return p2p_data
+    except Exception:  # noqa: BLE001
+        return {"error": "status unavailable"}
 
 
 def _inject_network_credits(
@@ -83,7 +124,7 @@ def _inject_network_credits(
                 "node_count": agg.node_count,
             }
     except Exception:  # noqa: BLE001
-        pass
+        logger.debug("network_credits_unavailable")
 
 
 _SEARCH_ATTRIBUTION = (
@@ -165,22 +206,29 @@ def deduct_search_cost(ledger: Any) -> None:
 # ── Handler implementations ───────────────────────────────────────
 
 
-async def handle_search(
-    name: str,
+@dataclass
+class _SearchParams:
+    """Parsed and validated search parameters."""
+
+    query: str
+    original_query: str
+    limit: int
+    offset: int
+    fmt: str
+    snippet_len: int
+    session_id: str | None
+    filters: dict[str, Any]
+    cache_suffix: str
+
+
+def _preprocess_search_query(
     arguments: dict[str, Any],
-    *,
-    config: Config,
-    store: Any,
-    vector_store: Any,
-    distributed_index: Any | None,
-    link_graph: Any,
-    ledger: Any,
-    llm_backend: Any,
-    query_cache: QueryCache,
-    sessions: SessionStore,
-    analytics: AnalyticsTracker,
-) -> list[TextContent]:
-    """Handle search / search_local tool calls."""
+) -> _SearchParams | list[TextContent]:
+    """Parse, validate and NLP-preprocess search arguments.
+
+    Returns ``_SearchParams`` on success or an error response on
+    invalid input.
+    """
     query = arguments.get("query", "")
     limit = arguments.get("limit", 10)
     offset = arguments.get("offset", 0)
@@ -199,7 +247,6 @@ async def handle_search(
     offset = max(0, int(offset))
     snippet_len = max(10, min(int(snippet_len), 1000))
 
-    # ── NLP preprocessing ──────────────────────────────────────
     original_query = query
 
     # Parse natural language query for filters
@@ -229,7 +276,101 @@ async def handle_search(
     query = query[:1000]
 
     cache_suffix = f"|{fmt}|{offset}|{snippet_len}|{filters.get('language', '')}"
-    cached = query_cache.get(query + cache_suffix, limit)
+    return _SearchParams(
+        query=query,
+        original_query=original_query,
+        limit=limit,
+        offset=offset,
+        fmt=fmt,
+        snippet_len=snippet_len,
+        session_id=session_id,
+        filters=filters,
+        cache_suffix=cache_suffix,
+    )
+
+
+def _postprocess_search_text(
+    text: str,
+    *,
+    original_query: str,
+    fmt: str,
+    config: Config,
+    store: Any,
+    ledger: Any,
+) -> str:
+    """Apply post-search transformations to result text.
+
+    Handles: quota injection (JSON), "did you mean" suggestions,
+    attribution footer, and max_response_chars truncation.
+    """
+    # Inject quota into JSON responses
+    if fmt == "json" and ledger is not None:
+        try:
+            data = json.loads(text)
+            al = ledger.search_allowance()
+            data["quota"] = {
+                "credit_balance": round(ledger.balance(), 2),
+                "state": al.state.value,
+                "search_cost": round(al.search_cost, 3),
+            }
+            data["api_version"] = MCP_API_VERSION
+            text = json.dumps(data, ensure_ascii=False)
+        except json.JSONDecodeError:
+            logger.debug("search_quota_inject_failed")
+
+    # NLP "did you mean" suggestion
+    if text.startswith("No results found"):
+        try:
+            st = store.get_stats()
+            doc_count = st.get("document_count", 0)
+            if isinstance(doc_count, int) and doc_count == 0:
+                text += (
+                    "\n\nYour index is empty. "
+                    "Try crawling some pages first:\n"
+                    "  crawl_url(url='https://docs."
+                    "python.org/3/', depth=1)"
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        vocab = store.suggest(original_query[:20], limit=50) if store else []
+        suggestion = did_you_mean(original_query, vocab)
+        if suggestion:
+            text += f'\n\nDid you mean: "{suggestion}"?'
+
+    if fmt != "json" and text != "No results found." and config.mcp.show_attribution:
+        text += _SEARCH_ATTRIBUTION
+
+    # Apply max_response_chars truncation
+    max_chars = config.mcp.max_response_chars
+    if max_chars > 0 and len(text) > max_chars:
+        text = text[:max_chars] + "\n... (truncated)"
+
+    return text
+
+
+async def handle_search(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    config: Config,
+    store: Any,
+    vector_store: Any,
+    distributed_index: Any | None,
+    p2p_node: Any | None = None,
+    link_graph: Any,
+    ledger: Any,
+    llm_backend: Any,
+    query_cache: QueryCache,
+    sessions: SessionStore,
+    analytics: AnalyticsTracker,
+) -> list[TextContent]:
+    """Handle search / search_local tool calls."""
+    parsed = _preprocess_search_query(arguments)
+    if isinstance(parsed, list):
+        return parsed  # validation error
+
+    cache_key = parsed.query + parsed.cache_suffix
+    cached = query_cache.get(cache_key, parsed.limit)
     if cached is not None:
         return cached  # type: ignore[return-value]
 
@@ -237,8 +378,17 @@ async def handle_search(
     deduct_search_cost(ledger)
     authority_fn = link_graph.url_authority if link_graph else None
 
+    query = parsed.query
+    limit = parsed.limit
+    snippet_len = parsed.snippet_len
+    fmt = parsed.fmt
+
     # Distributed search
     if name == "search" and distributed_index is not None:
+        # Use P2P QueryRouter bridge if the node is running
+        nsf = None
+        if p2p_node is not None and hasattr(p2p_node, "search_network"):
+            nsf = p2p_node.search_network  # asyncio-safe bridge
         dist = await search_distributed(
             store,
             distributed_index,
@@ -246,6 +396,7 @@ async def handle_search(
             limit=limit,
             authority_fn=authority_fn,
             vector_store=vector_store,
+            network_search_fn=nsf,
         )
         if dist.remote_count > 0:
             peer_map: dict[str, list[PeerResult]] = {}
@@ -305,9 +456,9 @@ async def handle_search(
             store,
             query,
             limit=limit,
-            offset=offset,
+            offset=parsed.offset,
             authority_fn=authority_fn,
-            **filters,
+            **parsed.filters,
         )
         if llm_backend is not None:
             reranked_list = await rerank_with_llm(query, result.results, llm_backend)
@@ -326,59 +477,26 @@ async def handle_search(
     elapsed = (time.monotonic() - t0) * 1000
     await analytics.record_search(elapsed)
 
-    # Inject quota into JSON responses
-    if fmt == "json" and ledger is not None:
-        try:
-            data = json.loads(text)
-            al = ledger.search_allowance()
-            data["quota"] = {
-                "credit_balance": round(ledger.balance(), 2),
-                "state": al.state.value,
-                "search_cost": round(al.search_cost, 3),
-            }
-            data["api_version"] = MCP_API_VERSION
-            text = json.dumps(data, ensure_ascii=False)
-        except (json.JSONDecodeError, Exception):
-            pass  # noqa: BLE001
-
-    # ── NLP post-processing ───────────────────────────────────
-    if text.startswith("No results found"):
-        # Check if index is empty
-        try:
-            st = store.get_stats()
-            doc_count = st.get("document_count", 0)
-            if isinstance(doc_count, int) and doc_count == 0:
-                text += (
-                    "\n\nYour index is empty. "
-                    "Try crawling some pages first:\n"
-                    "  crawl_url(url='https://docs."
-                    "python.org/3/', depth=1)"
-                )
-        except Exception:  # noqa: BLE001
-            pass
-        vocab = store.suggest(original_query[:20], limit=50) if store else []
-        suggestion = did_you_mean(original_query, vocab)
-        if suggestion:
-            text += f'\n\nDid you mean: "{suggestion}"?'
-
-    if fmt != "json" and text != "No results found." and config.mcp.show_attribution:
-        text += _SEARCH_ATTRIBUTION
-
-    # Apply max_response_chars truncation
-    max_chars = config.mcp.max_response_chars
-    if max_chars > 0 and len(text) > max_chars:
-        text = text[:max_chars] + "\n... (truncated)"
+    # Post-processing (quota injection, suggestions, attribution)
+    text = _postprocess_search_text(
+        text,
+        original_query=parsed.original_query,
+        fmt=fmt,
+        config=config,
+        store=store,
+        ledger=ledger,
+    )
 
     # Session tracking
-    if session_id:
-        s = sessions.get_or_create(session_id)
+    if parsed.session_id:
+        s = sessions.get_or_create(parsed.session_id)
         s.last_query = query
         s.last_results = text[:2000]
         s.updated_at = time.time()
 
     response = [TextContent(type="text", text=text)]
     cache_entry: list[object] = list(response)
-    query_cache.put(query + cache_suffix, limit, cache_entry)
+    query_cache.put(cache_key, limit, cache_entry)
     return response
 
 
@@ -582,6 +700,70 @@ async def handle_crawl(
     )
 
 
+def _build_status_data(
+    *,
+    store: Any,
+    vector_store: Any,
+    link_graph: Any,
+    ledger: Any,
+    scheduler: Any,
+    p2p_node: Any,
+    distributed_index: Any,
+    analytics: AnalyticsTracker,
+    credit_sync_manager: Any = None,
+) -> dict[str, object]:
+    """Build the common status data dict used by stats/status handlers."""
+    stats = store.get_stats()
+
+    data: dict[str, object] = {
+        "api_version": MCP_API_VERSION,
+        "phase": "4 (Production)",
+        "documents_indexed": stats.get("document_count", 0),
+        "pending_crawl_urls": (scheduler.pending_count if scheduler else 0),
+        "ranking": "BM25 + freshness + trust + authority",
+        "analytics": analytics.to_dict(),
+    }
+
+    if vector_store is not None:
+        vs = vector_store.get_stats()
+        data["vector"] = {
+            "documents": vs.get("document_count", 0),
+            "model": vs.get("model", "unknown"),
+        }
+    else:
+        data["vector"] = {"enabled": False}
+
+    if link_graph:
+        lg = link_graph.get_stats()
+        data["link_graph"] = {
+            "links": lg.get("link_count", 0),
+            "domains_scored": lg.get("domain_count", 0),
+        }
+    else:
+        data["link_graph"] = {"enabled": False}
+
+    if ledger is not None:
+        al = ledger.search_allowance()
+        cr: dict[str, object] = {
+            "balance": round(ledger.balance(), 2),
+            "state": al.state.value,
+            "search_cost": round(al.search_cost, 3),
+            "tier": _compute_credit_tier(ledger.balance()),
+        }
+        if al.state.value == "grace":
+            cr["grace_remaining_hours"] = round(
+                al.grace_remaining_hours,
+                1,
+            )
+        elif al.state.value == "debt":
+            cr["debt_amount"] = round(al.debt_amount, 2)
+        _inject_network_credits(cr, credit_sync_manager)
+        data["credits"] = cr
+
+    data["p2p"] = _build_p2p_status(p2p_node, distributed_index)
+    return data
+
+
 def handle_stats(
     arguments: dict[str, Any],
     *,
@@ -597,65 +779,17 @@ def handle_stats(
 ) -> list[TextContent]:
     """Handle network_stats tool call."""
     fmt = arguments.get("format", "text")
-    stats = store.get_stats()
-
-    data: dict[str, object] = {
-        "api_version": MCP_API_VERSION,
-        "phase": "4 (Production)",
-        "documents_indexed": stats["document_count"],
-        "pending_crawl_urls": (scheduler.pending_count if scheduler else 0),
-        "ranking": "BM25 + freshness + trust + authority",
-        "analytics": analytics.to_dict(),
-    }
-
-    if vector_store is not None:
-        vs = vector_store.get_stats()
-        data["vector"] = {
-            "documents": vs["document_count"],
-            "model": vs["model"],
-        }
-    else:
-        data["vector"] = {"enabled": False}
-
-    if link_graph:
-        lg = link_graph.get_stats()
-        data["link_graph"] = {
-            "links": lg["link_count"],
-            "domains_scored": lg["domain_count"],
-        }
-    else:
-        data["link_graph"] = {"enabled": False}
-
-    if ledger is not None:
-        al = ledger.search_allowance()
-        cr: dict[str, object] = {
-            "balance": round(ledger.balance(), 2),
-            "state": al.state.value,
-            "search_cost": round(al.search_cost, 3),
-        }
-        if al.state.value == "grace":
-            cr["grace_remaining_hours"] = round(al.grace_remaining_hours, 1)
-        elif al.state.value == "debt":
-            cr["debt_amount"] = round(al.debt_amount, 2)
-        _inject_network_credits(cr, credit_sync_manager)
-        data["credits"] = cr
-
-    if p2p_node is not None:
-        try:
-            pc = len(p2p_node.connected_peers)
-            p2p_data: dict[str, object] = {"peers": pc}
-            if distributed_index is not None:
-                di = distributed_index.stats
-                p2p_data["dht"] = {
-                    "published": di.documents_published,
-                    "keywords": di.keywords_published,
-                    "queries": di.queries_performed,
-                }
-            data["p2p"] = p2p_data
-        except Exception:  # noqa: BLE001
-            data["p2p"] = {"error": "status unavailable"}
-    else:
-        data["p2p"] = {"peers": 0, "mode": "local"}
+    data = _build_status_data(
+        store=store,
+        vector_store=vector_store,
+        link_graph=link_graph,
+        ledger=ledger,
+        scheduler=scheduler,
+        p2p_node=p2p_node,
+        distributed_index=distributed_index,
+        analytics=analytics,
+        credit_sync_manager=credit_sync_manager,
+    )
 
     if fmt == "json":
         return [
@@ -1106,9 +1240,7 @@ def handle_credit_balance(
             "balance": round(ledger.balance(), 2),
             "state": al.state.value,
             "search_cost": round(al.search_cost, 3),
-            "tier": (
-                3 if ledger.balance() >= 1000 else 2 if ledger.balance() >= 100 else 1
-            ),
+            "tier": _compute_credit_tier(ledger.balance()),
         }
         if al.state.value == "grace":
             data["grace_remaining_hours"] = round(
@@ -1227,7 +1359,7 @@ def handle_remove_url(
                 ErrorCode.NOT_FOUND,
                 f"URL not found in index: {url}",
             )
-        store.delete_document(doc["id"])
+        store.delete_document(doc.doc_id)
         return [
             TextContent(
                 type="text",
@@ -1252,6 +1384,7 @@ async def handle_web_search(
     store: Any,
     vector_store: Any,
     distributed_index: Any | None,
+    p2p_node: Any | None = None,
     link_graph: Any,
     ledger: Any,
     llm_backend: Any,
@@ -1343,6 +1476,7 @@ async def handle_web_search(
         store=store,
         vector_store=vector_store,
         distributed_index=distributed_index,
+        p2p_node=p2p_node,
         link_graph=link_graph,
         ledger=ledger,
         llm_backend=effective_llm,
@@ -1369,8 +1503,8 @@ async def handle_web_search(
                         )
             text = json.dumps(data, ensure_ascii=False)
             return [TextContent(type="text", text=text)]
-        except (json.JSONDecodeError, Exception):
-            pass  # fall through with original result
+        except (json.JSONDecodeError, AttributeError):
+            logger.debug("web_search_full_content_inject_failed")
 
     return result
 
@@ -1392,75 +1526,21 @@ def handle_status(
 
     Always returns JSON for consistency.
     """
-    stats = store.get_stats()
-
-    data: dict[str, object] = {
-        "status": "ok",
-        "server": "infomesh",
-        "version": SERVER_VERSION,
-        "api_version": MCP_API_VERSION,
-        "phase": "4 (Production)",
-        "documents_indexed": stats.get("document_count", 0),
-        "pending_crawl_urls": (scheduler.pending_count if scheduler else 0),
-        "ranking": ("BM25 + freshness + trust + authority"),
-        "analytics": analytics.to_dict(),
-    }
-
-    # Vector store
-    if vector_store is not None:
-        vs = vector_store.get_stats()
-        data["vector"] = {
-            "documents": vs.get("document_count", 0),
-            "model": vs.get("model", "unknown"),
-        }
-    else:
-        data["vector"] = {"enabled": False}
-
-    # Link graph
-    if link_graph:
-        lg = link_graph.get_stats()
-        data["link_graph"] = {
-            "links": lg.get("link_count", 0),
-            "domains_scored": lg.get("domain_count", 0),
-        }
-    else:
-        data["link_graph"] = {"enabled": False}
-
-    # Credits
-    if ledger is not None:
-        al = ledger.search_allowance()
-        cr: dict[str, object] = {
-            "balance": round(ledger.balance(), 2),
-            "state": al.state.value,
-            "search_cost": round(al.search_cost, 3),
-            "tier": (
-                3 if ledger.balance() >= 1000 else 2 if ledger.balance() >= 100 else 1
-            ),
-        }
-        if al.state.value == "grace":
-            cr["grace_remaining_hours"] = round(al.grace_remaining_hours, 1)
-        elif al.state.value == "debt":
-            cr["debt_amount"] = round(al.debt_amount, 2)
-        _inject_network_credits(cr, credit_sync_manager)
-        data["credits"] = cr
-
-    # P2P
-    if p2p_node is not None:
-        try:
-            pc = len(p2p_node.connected_peers)
-            p2p_data: dict[str, object] = {"peers": pc}
-            if distributed_index is not None:
-                di = distributed_index.stats
-                p2p_data["dht"] = {
-                    "published": di.documents_published,
-                    "keywords": di.keywords_published,
-                    "queries": di.queries_performed,
-                }
-            data["p2p"] = p2p_data
-        except Exception:  # noqa: BLE001
-            data["p2p"] = {"error": "status unavailable"}
-    else:
-        data["p2p"] = {"peers": 0, "mode": "local"}
+    data = _build_status_data(
+        store=store,
+        vector_store=vector_store,
+        link_graph=link_graph,
+        ledger=ledger,
+        scheduler=scheduler,
+        p2p_node=p2p_node,
+        distributed_index=distributed_index,
+        analytics=analytics,
+        credit_sync_manager=credit_sync_manager,
+    )
+    # Augment with status-specific fields
+    data["status"] = "ok"
+    data["server"] = "infomesh"
+    data["version"] = SERVER_VERSION
 
     # Top domains
     try:
