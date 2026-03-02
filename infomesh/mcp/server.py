@@ -146,6 +146,61 @@ def _create_app(
         if auth_err is not None:
             return [TextContent(type="text", text=auth_err)]
 
+        try:
+            return await _dispatch_tool(
+                name,
+                arguments,
+                config=config,
+                store=store,
+                vector_store=vector_store,
+                worker=worker,
+                scheduler=scheduler,
+                link_graph=link_graph,
+                ledger=ledger,
+                llm_backend=llm_backend,
+                query_cache=query_cache,
+                sessions=sessions,
+                analytics=analytics,
+                webhooks=webhooks,
+                pstore=pstore,
+                distributed_index=distributed_index,
+                p2p_node=p2p_node,
+                credit_sync_manager=credit_sync_manager,
+            )
+        except Exception:
+            logger.exception("tool_unhandled_error", tool=name)
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"Error [INTERNAL]: An unexpected error "
+                        f"occurred in tool '{name}'. "
+                        f"Please try again or report the issue."
+                    ),
+                )
+            ]
+
+    async def _dispatch_tool(  # noqa: PLR0912, PLR0913, PLR0917
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        config: Any,
+        store: Any,
+        vector_store: Any,
+        worker: Any,
+        scheduler: Any,
+        link_graph: Any,
+        ledger: Any,
+        llm_backend: Any,
+        query_cache: Any,
+        sessions: Any,
+        analytics: Any,
+        webhooks: Any,
+        pstore: Any,
+        distributed_index: Any,
+        p2p_node: Any,
+        credit_sync_manager: Any,
+    ) -> list[TextContent]:
         match name:
             # ── New consolidated tools ─────────────────
             case "web_search":

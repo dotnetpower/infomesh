@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any
 
 import click
 import structlog
@@ -153,13 +153,11 @@ def start(
         serve_cmd.extend(["--role", role])
 
     log_path = config.node.data_dir / "node.log"
-    log_file: Any = None
     try:
-        log_file = open(log_path, "a")  # noqa: SIM115
         proc = subprocess.Popen(
             serve_cmd,
-            stdout=log_file,
-            stderr=log_file,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
@@ -186,8 +184,7 @@ def start(
 
         exit_action = run_dashboard(config=config, node_pid=proc.pid)
     finally:
-        if log_file is not None:
-            log_file.close()
+        pass  # log rotation is handled by _serve subprocess
 
     if exit_action == "stop_all":
         try:
@@ -333,6 +330,27 @@ def _kill_bgm_processes() -> None:
 )
 def serve(seeds: str | None, role: str | None) -> None:
     """Internal: run the crawl loop as a background process."""
+    import logging
+    from logging.handlers import RotatingFileHandler
+
+    config = load_config()
+
+    # ── Set up log rotation (10 MB × 5 files) ────────────────
+    log_path = config.node.data_dir / "node.log"
+    _file_handler = RotatingFileHandler(
+        str(log_path),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _file_handler.setLevel(logging.DEBUG)
+    logging.basicConfig(
+        handlers=[_file_handler],
+        level=logging.DEBUG,
+        format="%(message)s",
+        force=True,
+    )
+
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
@@ -341,11 +359,9 @@ def serve(seeds: str | None, role: str | None) -> None:
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
     )
     _serve_logger = structlog.get_logger()
-
-    config = load_config()
     if role:
         from dataclasses import replace as dc_replace
 
@@ -411,18 +427,37 @@ def serve(seeds: str | None, role: str | None) -> None:
         ctx.distributed_index = _distributed_index
         ctx.p2p_node = p2p_node
 
+        # ── SIGTERM graceful shutdown ─────────────────────────
+        loop = asyncio.get_running_loop()
+        _shutdown_event = asyncio.Event()
+
+        def _sigterm_handler() -> None:
+            _serve_logger.info("sigterm_received", msg="Graceful shutdown starting")
+            _shutdown_event.set()
+
+        try:
+            loop.add_signal_handler(signal.SIGTERM, _sigterm_handler)
+            loop.add_signal_handler(signal.SIGINT, _sigterm_handler)
+        except NotImplementedError:
+            pass  # Windows doesn't support add_signal_handler
+
         if config.node.role == NodeRole.SEARCH:
             # Search-only nodes don't crawl — wait for index submissions
             _serve_logger.info("search_mode", msg="Waiting for index submissions")
-            import asyncio
-
-            try:
-                while True:
-                    await asyncio.sleep(60)
-            except asyncio.CancelledError:
-                pass
+            await _shutdown_event.wait()
         else:
-            await seed_and_crawl_loop(ctx, seed_category=seeds or "tech-docs")
+            crawl_task = asyncio.create_task(
+                seed_and_crawl_loop(ctx, seed_category=seeds or "tech-docs"),
+            )
+            shutdown_task = asyncio.create_task(_shutdown_event.wait())
+            done, pending = await asyncio.wait(
+                [crawl_task, shutdown_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
 
     try:
         asyncio.run(_run())

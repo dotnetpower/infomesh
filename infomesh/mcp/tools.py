@@ -19,6 +19,7 @@ Design principles:
 
 from __future__ import annotations
 
+import hmac
 import time as _time
 from typing import Any
 
@@ -328,6 +329,6 @@ def check_api_key(
     if expected_key is None:
         return None
     provided = arguments.get("api_key")
-    if provided != expected_key:
+    if not isinstance(provided, str) or not hmac.compare_digest(provided, expected_key):
         return "Error: invalid or missing api_key"
     return None

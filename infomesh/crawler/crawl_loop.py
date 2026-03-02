@@ -124,7 +124,9 @@ async def seed_and_crawl_loop(
     disk_check_interval = 60
     last_disk_check = 0.0
     last_crawl_at = time.monotonic()
+    last_fts_optimize = time.monotonic()
     idle_restart_threshold = 10.0
+    fts_optimize_interval = 3600.0  # optimize FTS5 every hour
 
     while True:
         now = time.monotonic()
@@ -152,7 +154,11 @@ async def seed_and_crawl_loop(
                     crawled=crawl_count,
                     msg="Re-seeding queue after idle timeout",
                 )
-                reseed_count = await _reseed_queue(ctx, _logger)
+                try:
+                    reseed_count = await _reseed_queue(ctx, _logger)
+                except Exception:  # noqa: BLE001
+                    _logger.exception("reseed_queue_error")
+                    reseed_count = 0
                 if reseed_count > 0:
                     last_crawl_at = time.monotonic()
                     _logger.info(
@@ -219,3 +225,16 @@ async def seed_and_crawl_loop(
                 )
         except Exception:
             _logger.exception("crawl_error", url=url)
+
+        # Periodic FTS5 optimization — merge segments to avoid search slowdown
+        now_opt = time.monotonic()
+        if now_opt - last_fts_optimize >= fts_optimize_interval:
+            last_fts_optimize = now_opt
+            try:
+                ctx.store.optimize()
+                _logger.info(
+                    "fts5_optimize_done",
+                    crawl_count=crawl_count,
+                )
+            except Exception:  # noqa: BLE001
+                _logger.warning("fts5_optimize_error", exc_info=True)

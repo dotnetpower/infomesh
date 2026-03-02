@@ -205,14 +205,20 @@ class ResourceGovernor:
         """Return current CPU usage percentage (0–100)."""
         if not _HAS_PSUTIL:
             return 0.0
-        return float(psutil.cpu_percent(interval=0))
+        try:
+            return float(psutil.cpu_percent(interval=0))
+        except Exception:  # noqa: BLE001
+            return 0.0
 
     @staticmethod
     def _sample_memory() -> float:
         """Return current memory usage percentage (0–100)."""
         if not _HAS_PSUTIL:
             return 0.0
-        return float(psutil.virtual_memory().percent)
+        try:
+            return float(psutil.virtual_memory().percent)
+        except Exception:  # noqa: BLE001
+            return 0.0
 
     def sample_network_mbps(self) -> tuple[float, float]:
         """Return (upload_mbps, download_mbps) since last call.
@@ -222,7 +228,12 @@ class ResourceGovernor:
         if not _HAS_PSUTIL:
             return 0.0, 0.0
 
-        counters = psutil.net_io_counters()
+        try:
+            counters = psutil.net_io_counters()
+        except Exception:  # noqa: BLE001
+            return 0.0, 0.0
+        if counters is None:
+            return 0.0, 0.0
         now = time.monotonic()
 
         if self._last_net_check == 0.0:

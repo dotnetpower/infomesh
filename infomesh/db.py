@@ -69,6 +69,7 @@ class SQLiteStore:
 
         # Standard pragmas
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         for pragma in extra_pragmas or []:
             self._conn.execute(pragma)
 

@@ -236,6 +236,26 @@ class CrawlWorker:
                 elapsed_ms=_elapsed(start),
             )
 
+        # Early Content-Length check to avoid reading huge responses
+        content_length = resp.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > MAX_RESPONSE_BYTES:
+                    logger.warning(
+                        "crawl_response_too_large_header",
+                        url=url,
+                        content_length=int(content_length),
+                    )
+                    self._scheduler.mark_done(url)
+                    return CrawlResult(
+                        url=url,
+                        success=False,
+                        error="response_too_large",
+                        elapsed_ms=_elapsed(start),
+                    )
+            except ValueError:
+                pass  # malformed Content-Length, proceed with body check
+
         html = resp.text
         # Enforce response size limit
         html_bytes = html.encode("utf-8", errors="replace")

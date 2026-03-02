@@ -310,6 +310,8 @@ class InfoMeshNode:
 
         import asyncio
 
+        _SEARCH_NETWORK_TIMEOUT = 30  # seconds
+
         def _sync_bridge() -> list[dict[str, object]]:
             import trio
 
@@ -339,7 +341,18 @@ class InfoMeshNode:
                 for r in results
             ]
 
-        return await asyncio.to_thread(_sync_bridge)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_sync_bridge),
+                timeout=_SEARCH_NETWORK_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.warning(
+                "search_network_timeout",
+                query=query[:60],
+                timeout=_SEARCH_NETWORK_TIMEOUT,
+            )
+            return []
 
     # ─── Lifecycle ─────────────────────────────────────────
 
@@ -403,6 +416,14 @@ class InfoMeshNode:
 
         if self._trio_thread is not None:
             self._trio_thread.join(timeout=10)
+            if self._trio_thread.is_alive():
+                logger.warning(
+                    "trio_thread_timeout",
+                    msg=(
+                        "P2P thread did not exit within 10s; "
+                        "it will be abandoned as a daemon thread"
+                    ),
+                )
             self._trio_thread = None
 
         self._state = NodeState.STOPPED
@@ -592,17 +613,26 @@ class InfoMeshNode:
                 await self._refresh_routing_table()
                 await self._save_connected_peers()
                 if self._peer_store is not None:
-                    self._peer_store.prune()
+                    try:
+                        self._peer_store.prune()
+                    except Exception:  # noqa: BLE001
+                        logger.warning("peer_store_prune_failed")
 
             # Periodic PEX round
             if now - last_pex >= PEX_ROUND_INTERVAL:
                 last_pex = now
-                await self._run_pex_round()
+                try:
+                    await self._run_pex_round()
+                except Exception:  # noqa: BLE001
+                    logger.warning("pex_round_failed")
 
             # Periodic credit sync with same-owner peers
             if now - last_credit_sync >= _CREDIT_SYNC_INTERVAL:
                 last_credit_sync = now
-                await self._run_credit_sync_round()
+                try:
+                    await self._run_credit_sync_round()
+                except Exception:  # noqa: BLE001
+                    logger.warning("credit_sync_round_failed")
 
             # Update status file periodically
             if now - last_status >= _STATUS_WRITE_INTERVAL:
@@ -610,7 +640,10 @@ class InfoMeshNode:
                 self._write_status_file()
 
             # Integrate mDNS-discovered peers
-            await self._connect_mdns_peers()
+            try:
+                await self._connect_mdns_peers()
+            except Exception:  # noqa: BLE001
+                logger.debug("mdns_connect_failed")
 
         # ── Shutdown: save connected peers + cleanup ──
         await self._save_connected_peers()

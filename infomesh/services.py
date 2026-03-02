@@ -256,8 +256,26 @@ async def crawl_and_index(
 
     if result.success and result.page:
         if link_graph and result.discovered_links:
-            link_graph.add_links(url, result.discovered_links)
-        index_document(result.page, store, vector_store)
+            try:
+                link_graph.add_links(url, result.discovered_links)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "link_graph_update_failed",
+                    url=url,
+                )
+        try:
+            index_document(result.page, store, vector_store)
+        except Exception:  # noqa: BLE001
+            logger.error(
+                "index_document_failed",
+                url=url,
+                msg="Page crawled but indexing failed",
+            )
+            return CrawlAndIndexResult(
+                success=False,
+                url=url,
+                error="index_failed",
+            )
         return CrawlAndIndexResult(
             success=True,
             title=result.page.title,

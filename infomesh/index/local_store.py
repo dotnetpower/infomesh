@@ -89,10 +89,11 @@ class LocalStore:
             )
         self._tokenizer = tokenizer
 
-        self._conn = sqlite3.connect(self._db_path)
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         # Enable WAL mode for concurrent reads (dashboard) while writing (crawler)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._compressor: Compressor | None = None
         if compression_enabled:
             self._compressor = Compressor(level=compression_level)
@@ -475,6 +476,21 @@ class LocalStore:
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()
+
+    def optimize(self) -> None:
+        """Optimize the FTS5 index by merging segments.
+
+        Should be called periodically (e.g., daily or every N inserts)
+        to prevent search performance degradation from segment
+        accumulation.
+        """
+        try:
+            self._conn.execute(
+                "INSERT INTO documents_fts(documents_fts) VALUES('optimize')"
+            )
+            self._conn.commit()
+        except Exception:  # noqa: BLE001
+            pass  # Non-critical; log if structlog available
 
     def __enter__(self) -> LocalStore:
         return self

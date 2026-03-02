@@ -104,8 +104,9 @@ class DeduplicatorDB:
         resolved = db_path or ":memory:"
         if resolved != ":memory:":
             Path(resolved).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(resolved)
+        self._conn = sqlite3.connect(resolved, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS seen_urls (
                 url_hash TEXT PRIMARY KEY,
@@ -118,8 +119,34 @@ class DeduplicatorDB:
         # Add simhash column if upgrading from older schema
         with contextlib.suppress(sqlite3.OperationalError):
             self._conn.execute("ALTER TABLE seen_urls ADD COLUMN simhash INTEGER")
+        # Index on content_hash for O(1) exact-dedup lookups
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_content_hash ON seen_urls (content_hash)"
+        )
         self._conn.commit()
         self._simhash_index = SimHashIndex()
+        self._reload_simhash_index()
+
+    def _reload_simhash_index(self) -> None:
+        """Reload SimHash fingerprints from SQLite into memory.
+
+        Called on startup so near-duplicate detection works
+        across restarts without re-crawling.
+        """
+        rows = self._conn.execute(
+            "SELECT url_hash, simhash FROM seen_urls WHERE simhash IS NOT NULL"
+        ).fetchall()
+        for url_hash_val, fp_signed in rows:
+            fp = _to_unsigned64(fp_signed)
+            doc_id = int(url_hash_val[:8], 16) & 0x7FFFFFFF
+            self._simhash_index.add(doc_id, fp)
+        if rows:
+            import structlog
+
+            structlog.get_logger().info(
+                "simhash_index_reloaded",
+                count=len(rows),
+            )
 
     def is_url_seen(self, url: str) -> bool:
         """Check if a normalized URL has been seen before."""

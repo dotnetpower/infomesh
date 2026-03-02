@@ -110,11 +110,13 @@ def create_admin_app(
                 content={"detail": "Admin API is only accessible from localhost"},
             )
 
-        # Optional API key check
+        # Optional API key check (constant-time comparison)
         api_key = os.environ.get("INFOMESH_API_KEY")
         if api_key is not None:
+            import hmac
+
             provided = request.headers.get("x-api-key", "")
-            if provided != api_key:
+            if not hmac.compare_digest(provided, api_key):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid API key"},
