@@ -32,6 +32,8 @@ def _ranked_to_dict(r: RankedResult, *, max_snippet: int = 200) -> dict[str, obj
             "freshness": round(r.freshness_score, 4),
             "trust": round(r.trust_score, 4),
             "authority": round(r.authority_score, 4),
+            "title_match": round(r.title_match_score, 4),
+            "url_path": round(r.url_path_score, 4),
         },
         "crawled_at": r.crawled_at,
         "peer_id": r.peer_id,

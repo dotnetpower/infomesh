@@ -11,7 +11,9 @@ from infomesh.index.ranking import (
     WEIGHT_AUTHORITY,
     WEIGHT_BM25,
     WEIGHT_FRESHNESS,
+    WEIGHT_TITLE_MATCH,
     WEIGHT_TRUST,
+    WEIGHT_URL_PATH,
     RankedResult,
     _RawCandidate,
     combined_score,
@@ -70,15 +72,40 @@ class TestNormalizeBM25:
 
 class TestCombinedScore:
     def test_all_ones(self):
-        assert combined_score(1.0, 1.0, 1.0, 1.0) == pytest.approx(1.0)
+        # With new bonuses: core(0.8) + title(0.15) + url(0.05) = 1.0
+        score = combined_score(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            title_match=1.0,
+            url_path=1.0,
+        )
+        assert score == pytest.approx(1.0)
+
+    def test_core_only_all_ones(self):
+        # Core signals only (no title/url bonuses) = 0.8
+        assert combined_score(1.0, 1.0, 1.0, 1.0) == pytest.approx(0.8)
 
     def test_all_zeros(self):
         assert combined_score(0.0, 0.0, 0.0, 0.0) == 0.0
 
     def test_weights_sum_correctly(self):
-        score = combined_score(0.5, 0.5, 0.5, 0.5)
+        score = combined_score(
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            title_match=0.5,
+            url_path=0.5,
+        )
         expected = 0.5 * (
-            WEIGHT_BM25 + WEIGHT_FRESHNESS + WEIGHT_TRUST + WEIGHT_AUTHORITY
+            WEIGHT_BM25
+            + WEIGHT_FRESHNESS
+            + WEIGHT_TRUST
+            + WEIGHT_AUTHORITY
+            + WEIGHT_TITLE_MATCH
+            + WEIGHT_URL_PATH
         )
         assert score == pytest.approx(expected)
 

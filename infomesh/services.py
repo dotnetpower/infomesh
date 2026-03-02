@@ -66,6 +66,8 @@ def index_document(
     page: ParsedPage,
     store: LocalStore,
     vector_store: VectorStoreLike | None = None,
+    *,
+    js_required: bool = False,
 ) -> int | None:
     """Index a crawled page into FTS5 and optionally vector store.
 
@@ -78,6 +80,7 @@ def index_document(
         page: Parsed crawl result.
         store: FTS5 local store.
         vector_store: Optional VectorStore instance. Pass None to skip.
+        js_required: Whether the page needed JS rendering.
 
     Returns:
         Document ID if indexed, None if duplicate.
@@ -89,6 +92,7 @@ def index_document(
         raw_html_hash=page.raw_html_hash,
         text_hash=page.text_hash,
         language=page.language,
+        js_required=js_required,
     )
 
     if vector_store is not None and doc_id is not None:
@@ -205,7 +209,12 @@ async def fetch_page_async(
 
     if result.success and result.page:
         paywall = is_paywall_content(result.page.text)
-        index_document(result.page, store, vector_store)
+        index_document(
+            result.page,
+            store,
+            vector_store,
+            js_required=result.js_required,
+        )
         return FetchPageResult(
             success=True,
             title=result.page.title,
@@ -264,7 +273,12 @@ async def crawl_and_index(
                     url=url,
                 )
         try:
-            index_document(result.page, store, vector_store)
+            index_document(
+                result.page,
+                store,
+                vector_store,
+                js_required=result.js_required,
+            )
         except Exception:  # noqa: BLE001
             logger.error(
                 "index_document_failed",
@@ -349,6 +363,17 @@ class AppContext:
                 max_depth=c.crawl.max_depth,
             )
             self.worker = CrawlWorker(c.crawl, self.scheduler, self.dedup, self.robots)
+
+        # ── Feed monitor & priority recrawl (full + crawler) ──
+        self.feed_monitor: object | None = None
+        self.priority_queue: object | None = None
+
+        if role in (NodeRole.FULL, NodeRole.CRAWLER) and c.crawl.rss_enabled:
+            from infomesh.crawler.feed_monitor import FeedMonitor
+            from infomesh.crawler.freshness import PriorityRecrawlQueue
+
+            self.feed_monitor = FeedMonitor()
+            self.priority_queue = PriorityRecrawlQueue()
 
         # ── Search / index components (full + search roles) ─
         self.link_graph: LinkGraph | None = None

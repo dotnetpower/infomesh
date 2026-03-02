@@ -26,6 +26,8 @@ from infomesh.hashing import content_hash
 from infomesh.security import SSRFError, validate_url
 
 if TYPE_CHECKING:
+    from infomesh.crawler.js_detect import JSDetectionResult
+    from infomesh.crawler.js_render import JSRenderer
     from infomesh.p2p.dht import InfoMeshDHT
 
 logger = structlog.get_logger()
@@ -45,6 +47,9 @@ class CrawlResult:
     error: str | None = None
     elapsed_ms: float = 0.0
     discovered_links: list[str] = field(default_factory=list)
+    discovered_feeds: list[str] = field(default_factory=list)
+    js_required: bool = False  # True if JS rendering was needed
+    js_rendered: bool = False  # True if Playwright was used
 
 
 class CrawlWorker:
@@ -63,12 +68,14 @@ class CrawlWorker:
         robots: RobotsChecker,
         *,
         dht: InfoMeshDHT | None = None,
+        js_renderer: JSRenderer | None = None,
     ) -> None:
         self._config = config
         self._scheduler = scheduler
         self._dedup = dedup
         self._robots = robots
         self._dht = dht
+        self._js_renderer = js_renderer
         self._client: httpx.AsyncClient | None = None
         self._scope_domain: str | None = None
         self._scope_path: str | None = None
@@ -276,6 +283,21 @@ class CrawlWorker:
 
         # Parse content
         page = extract_content(html, url, raw_hash=raw_hash)
+
+        # JS detection: check if page needs JavaScript rendering
+        js_detection = _detect_js(html)
+        js_required = js_detection.js_required
+        js_rendered = False
+
+        if (page is None or len(page.text) < 200) and js_required:
+            # Try JS rendering if available
+            rendered = await self._try_js_render(url)
+            if rendered is not None:
+                js_rendered = True
+                raw_hash = content_hash(rendered)
+                page = extract_content(rendered, url, raw_hash=raw_hash)
+                html = rendered  # use rendered HTML for link extraction
+
         if page is None:
             self._scheduler.mark_done(url)
             return CrawlResult(
@@ -283,6 +305,7 @@ class CrawlWorker:
                 success=False,
                 error="extraction_failed",
                 elapsed_ms=_elapsed(start),
+                js_required=js_required,
             )
 
         # Canonical tag — if the page declares a different canonical URL,
@@ -357,12 +380,23 @@ class CrawlWorker:
                 )
 
         elapsed = _elapsed(start)
+
+        # Discover RSS/Atom feeds from the page
+        feed_urls: list[str] = []
+        try:
+            from infomesh.crawler.rss import discover_feeds
+
+            feed_urls = discover_feeds(html, url)
+        except Exception:  # noqa: BLE001
+            pass  # non-critical
+
         logger.info(
             "crawl_success",
             url=url,
             title=page.title[:60] if page.title else "",
             text_len=len(page.text),
             elapsed_ms=round(elapsed, 1),
+            js_rendered=js_rendered,
         )
 
         return CrawlResult(
@@ -371,6 +405,9 @@ class CrawlWorker:
             page=page,
             elapsed_ms=elapsed,
             discovered_links=discovered,
+            discovered_feeds=feed_urls,
+            js_required=js_required,
+            js_rendered=js_rendered,
         )
 
     async def _fetch_with_retry(
@@ -521,11 +558,51 @@ class CrawlWorker:
             )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP client and JS renderer."""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
+        if self._js_renderer is not None:
+            await self._js_renderer.close()
+
+    async def _try_js_render(self, url: str) -> str | None:
+        """Attempt to render a page with the JS renderer.
+
+        Returns the rendered HTML string, or *None* if rendering is
+        unavailable or fails.
+        """
+        if self._js_renderer is None:
+            if not self._config.js_rendering:
+                return None
+            # Lazy-init renderer if config says yes but no renderer set
+            from infomesh.crawler.js_render import JSRenderer, is_playwright_available
+
+            if not is_playwright_available():
+                logger.debug("js_render_skip_no_playwright", url=url)
+                return None
+            self._js_renderer = JSRenderer(
+                max_tabs=self._config.js_max_tabs,
+                timeout_ms=self._config.js_timeout_ms,
+                max_memory_mb=self._config.js_max_memory_mb,
+            )
+
+        result = await self._js_renderer.render(url)
+        if result.success:
+            return result.html
+        logger.debug(
+            "js_render_attempt_failed",
+            url=url,
+            error=result.error,
+        )
+        return None
 
 
 def _elapsed(start: float) -> float:
     """Calculate elapsed milliseconds."""
     return (time.monotonic() - start) * 1000
+
+
+def _detect_js(html: str) -> JSDetectionResult:
+    """Run JS detection on raw HTML."""
+    from infomesh.crawler.js_detect import detect_js_requirement
+
+    return detect_js_requirement(html)

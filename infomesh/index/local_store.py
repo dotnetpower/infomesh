@@ -43,6 +43,7 @@ class IndexedDocument:
     stale_count: int = 0
     last_recrawl_at: float | None = None
     change_frequency: float = 0.0
+    js_required: int = 0  # 1 if JS rendering was needed
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,10 @@ class LocalStore:
                 "change_frequency",
                 "ALTER TABLE documents ADD COLUMN change_frequency REAL DEFAULT 0.0",
             ),
+            (
+                "js_required",
+                "ALTER TABLE documents ADD COLUMN js_required INTEGER DEFAULT 0",
+            ),
         ]
         for col, ddl in migrations:
             if col not in existing:
@@ -199,6 +204,7 @@ class LocalStore:
         text_hash: str,
         *,
         language: str | None = None,
+        js_required: bool = False,
     ) -> int | None:
         """Add a document to the local index.
 
@@ -209,6 +215,7 @@ class LocalStore:
             raw_html_hash: SHA-256 of raw HTML.
             text_hash: SHA-256 of extracted text.
             language: ISO language code.
+            js_required: Whether the page needed JS rendering.
 
         Returns:
             Document ID if inserted, None if duplicate.
@@ -221,8 +228,8 @@ class LocalStore:
                 """INSERT INTO documents
                    (url, title, text, compressed_text,
                     language, raw_html_hash,
-                    text_hash, crawled_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    text_hash, crawled_at, js_required)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     url,
                     title,
@@ -232,6 +239,7 @@ class LocalStore:
                     raw_html_hash,
                     text_hash,
                     time.time(),
+                    1 if js_required else 0,
                 ),
             )
             self._conn.commit()
@@ -442,6 +450,25 @@ class LocalStore:
             (limit,),
         ).fetchall()
         return [(r["domain"], r["cnt"]) for r in rows]
+
+    def get_js_required_domains(self, limit: int = 20) -> list[tuple[str, int, int]]:
+        """Return domains with JS-required pages.
+
+        Returns:
+            List of ``(domain, js_count, total_count)`` tuples,
+            ordered by JS ratio descending.
+        """
+        rows = self._conn.execute(
+            f"SELECT {self._DOMAIN_SQL} AS domain, "
+            "SUM(CASE WHEN js_required = 1 THEN 1 ELSE 0 END) AS js_cnt, "
+            "COUNT(*) AS total "
+            "FROM documents GROUP BY domain "
+            "HAVING js_cnt > 0 "
+            "ORDER BY CAST(js_cnt AS REAL) / total DESC "
+            "LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [(r["domain"], r["js_cnt"], r["total"]) for r in rows]
 
     def get_domain_count(self) -> int:
         """Return the number of distinct domains in the index."""

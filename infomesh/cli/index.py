@@ -70,10 +70,40 @@ def index_export(output: str) -> None:
 
 
 @index_group.command("import")
-@click.argument("input_path")
-@click.option("--info", is_flag=True, default=False, help="Show snapshot metadata only")
-def index_import(input_path: str, info: bool) -> None:
-    """Import documents from a snapshot file."""
+@click.argument("input_path", required=False, default=None)
+@click.option(
+    "--info",
+    is_flag=True,
+    default=False,
+    help="Show snapshot metadata only",
+)
+@click.option(
+    "--starter",
+    is_flag=True,
+    default=False,
+    help=("Download and import the community starter index from GitHub Releases"),
+)
+def index_import(
+    input_path: str | None,
+    info: bool,
+    starter: bool,
+) -> None:
+    """Import documents from a snapshot file.
+
+    \b
+    With --starter, downloads the community starter index from GitHub
+    Releases automatically (no INPUT_PATH needed). Use --starter --info
+    to check what's available without downloading.
+    """
+    if starter:
+        _handle_starter_import(info)
+        return
+
+    if input_path is None:
+        click.echo("Error: Missing argument 'INPUT_PATH'.")
+        click.echo("  Use --starter to download the community index.")
+        raise SystemExit(1)
+
     from infomesh.index.snapshot import import_snapshot, read_snapshot_metadata
 
     if info:
@@ -158,3 +188,95 @@ def index_import_urls(url_file: str, max_urls: int) -> None:
         click.echo(f"  Skipped (already seen): {stats.skipped_duplicate}")
 
     asyncio.run(_do_import())
+
+
+# ── Starter snapshot helper ─────────────────────────────────────────
+
+
+def _handle_starter_import(info_only: bool) -> None:
+    """Download and/or import the community starter index."""
+    import asyncio
+    import sys
+
+    from infomesh.index.starter import find_starter_asset
+
+    config = load_config()
+
+    click.echo("  ⏳ Checking for starter index on GitHub Releases...")
+    asset = asyncio.run(find_starter_asset(cache_dir=config.node.data_dir))
+
+    if asset is None:
+        click.secho(
+            "  No starter snapshot found in GitHub Releases.",
+            fg="yellow",
+        )
+        click.echo("  The project maintainer has not published a starter index yet.")
+        raise SystemExit(0)
+
+    if info_only:
+        click.echo("Starter Index (remote)")
+        click.echo(f"  Release:  {asset.release_tag}")
+        click.echo(f"  Size:     {asset.size_mb:.1f} MB")
+        click.echo(f"  Created:  {asset.created_at}")
+        click.echo(f"  URL:      {asset.download_url}")
+        return
+
+    # Confirm download
+    click.echo(
+        f"  Found starter index: {asset.size_mb:.1f} MB (release {asset.release_tag})"
+    )
+    if sys.stdin.isatty() and not click.confirm(
+        "  Download and import?",
+        default=True,
+    ):
+        return
+
+    # Download with progress bar
+    from infomesh.index.starter import download_starter_snapshot
+
+    click.echo(f"  ⏳ Downloading {asset.size_mb:.1f} MB...")
+
+    last_pct = [-1]
+
+    def _progress(downloaded: int, total: int) -> None:
+        pct = downloaded * 100 // total if total else 0
+        if pct != last_pct[0] and pct % 5 == 0:
+            last_pct[0] = pct
+            click.echo(f"  ... {pct}%")
+
+    snapshot_path = asyncio.run(
+        download_starter_snapshot(
+            config.node.data_dir,
+            progress_callback=_progress,
+        )
+    )
+    if snapshot_path is None:
+        click.secho("  Download failed.", fg="red")
+        raise SystemExit(1)
+
+    click.echo(f"  ✔ Downloaded to {snapshot_path}")
+
+    # Import into local index
+    click.echo("  ⏳ Importing into local index...")
+    from infomesh.index.snapshot import import_snapshot
+    from infomesh.services import AppContext
+
+    ctx = AppContext(config)
+    try:
+        stats = import_snapshot(
+            ctx.store,
+            snapshot_path,
+            vector_store=ctx.vector_store,
+        )
+    finally:
+        ctx.close()
+
+    click.echo(f"  ✔ Imported {stats.exported} documents")
+    click.echo(f"  Skipped (duplicate): {stats.skipped}")
+    click.echo(f"  Total in snapshot:   {stats.total_documents}")
+    click.echo(f"  Time: {stats.elapsed_ms:.0f}ms")
+    click.secho(
+        "\n  Starter index loaded! Run 'infomesh search <query>' to try it out.",
+        fg="green",
+        bold=True,
+    )

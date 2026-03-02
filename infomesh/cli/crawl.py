@@ -305,3 +305,51 @@ def dashboard(tab: str, text: bool) -> None:
 
     config = load_config()
     run_dashboard(config=config, initial_tab=tab)
+
+
+# ── Feed management commands ────────────────────────────────────────────
+
+
+@click.group("feeds")
+def feeds_group() -> None:
+    """Manage RSS/Atom feed monitoring."""
+
+
+@feeds_group.command("import")
+@click.argument("opml_file", type=click.Path(exists=True))
+def feeds_import(opml_file: str) -> None:
+    """Import RSS/Atom feeds from an OPML file."""
+    from pathlib import Path
+
+    from infomesh.crawler.feed_monitor import parse_opml
+
+    content = Path(opml_file).read_text(encoding="utf-8")
+    feeds = parse_opml(content)
+
+    if not feeds:
+        click.echo("No feeds found in OPML file.")
+        return
+
+    click.echo(f"Found {len(feeds)} feeds:")
+    for feed in feeds:
+        label = f" ({feed.label})" if feed.label else ""
+        click.echo(f"  {feed.url}{label}")
+
+
+@feeds_group.command("list")
+def feeds_list() -> None:
+    """List currently configured RSS/Atom feeds."""
+    config = load_config()
+    if not config.crawl.rss_enabled:
+        click.echo(
+            "RSS feed monitoring is disabled. "
+            "Enable with: infomesh config set crawl.rss_enabled true"
+        )
+        return
+
+    click.echo(
+        f"RSS monitoring: enabled "
+        f"(interval={config.crawl.rss_default_interval}s, "
+        f"max={config.crawl.rss_max_feeds}, "
+        f"discovery={'on' if config.crawl.rss_discovery else 'off'})"
+    )

@@ -324,6 +324,119 @@ If lint errors are found, fix them before committing:
 
 **CI enforces all four checks on Python 3.12 and 3.13.** A commit that breaks lint, format, build, or tests will fail CI.
 
+### Git Commit & Push Policy
+
+- **NEVER run `git commit` or `git push`** — the maintainer handles all commits and pushes manually.
+- Copilot's responsibility ends at: code changes, lint/format fixes, and test validation.
+- After completing work, report what was changed and confirm all checks pass. Do NOT commit or push.
+
+### GitHub Projects Workflow
+
+All tasks are tracked on the **"InfoMesh Roadmap"** Kanban board (GitHub Projects).
+
+**Columns (Status field):**
+
+| Column | Meaning |
+|--------|---------|
+| **Backlog** | Ideas and future work, not yet scheduled |
+| **Todo** | Approved for next sprint / ready to pick up |
+| **In Progress** | Currently being worked on (coding) |
+| **In Review** | Code complete, awaiting maintainer review before commit |
+| **Done** | Committed, pushed, and verified |
+
+**Workflow rules:**
+
+1. **Before starting work**: Check the board (`gh project item-list`) for prioritized tasks.
+2. **Starting a task**:
+   - If no Issue exists, create one (`gh issue create`) and add it to the project (`gh project item-add`).
+   - Set the item's Status to **"In Progress"** (`gh project item-edit`).
+3. **Code complete**:
+   - Set Status to **"In Review"**.
+   - Report changes and confirm lint/test pass.
+4. **After maintainer commits & pushes**:
+   - Set Status to **"Done"**.
+5. **One task at a time**: Only one item should be "In Progress" at any moment (matches the todo-list rule of one in-progress item).
+6. **Link PRs to Issues**: When the maintainer creates a PR, reference the Issue number (e.g., `Closes #1`).
+
+**When to create Issues:**
+
+Every non-trivial work item must have a GitHub Issue **before** coding begins. This includes:
+
+| Category | When to create | Issue title convention | Required labels |
+|----------|---------------|----------------------|-----------------|
+| **Bug** | Crash, incorrect behavior, test failure discovered | `[Bug] <symptom>` | `bug` + component label |
+| **Feature** | New functionality, new CLI command, new MCP tool | `[Feature] <capability>` | `enhancement` + priority + component |
+| **Refactor** | SRP violation, code smell, performance improvement | `[Refactor] <target>` | `refactor` + component |
+| **Docs** | Missing/outdated documentation, translation gap | `[Docs] <topic>` | `documentation` |
+| **CI/CD** | Workflow fix, build improvement, release process | `[CI] <change>` | `ci` |
+| **Test** | Missing test coverage, flaky test fix | `[Test] <scope>` | `test` + component |
+
+**Issue template (recommended structure):**
+
+```
+## Problem / Motivation
+<What's wrong or what's needed — 1-3 sentences>
+
+## Proposed Solution
+- [ ] Step 1
+- [ ] Step 2
+- [ ] Step 3
+
+## Success Criteria
+- <How to verify this is done>
+
+## Related Code
+- `infomesh/<module>/<file>.py`
+```
+
+**Bug report specifics:**
+
+When reporting a bug, always include:
+1. **Reproduction steps** — exact commands or code to trigger the bug.
+2. **Expected behavior** — what should happen.
+3. **Actual behavior** — what actually happens (include error messages/tracebacks).
+4. **Environment** — Python version, OS, infomesh version (`infomesh --version`).
+
+**Issue lifecycle:**
+
+```
+Discover bug / plan feature
+  → gh issue create (with labels + body)
+  → gh project item-add (add to Roadmap board)
+  → Set Status: "Todo" or "In Progress"
+  → Work on it (code + test + lint)
+  → Set Status: "In Review"
+  → Maintainer reviews, commits, pushes
+  → Set Status: "Done"
+  → gh issue close (with commit reference)
+```
+
+**Prioritization guidelines:**
+
+| Priority | Response time | Description |
+|----------|--------------|-------------|
+| `priority: P0` | Immediate | Blocks users — crashes, data loss, security vulnerability |
+| `priority: P1` | This sprint | Important — significantly impacts usability or adoption |
+| `priority: P2` | Next quarter | Nice-to-have — improves experience but not blocking |
+
+**Labels convention:**
+
+| Label | Color | Usage |
+|-------|-------|-------|
+| `priority: P0` | Red | Must-have, blocks adoption |
+| `priority: P1` | Orange | Important, next quarter |
+| `priority: P2` | Yellow | Nice-to-have, future |
+| `search-quality` | Purple | Search relevance & ranking |
+| `crawler` | Green | Crawling & content extraction |
+| `p2p` | Blue | P2P network & DHT |
+| `dashboard` | Pink | Dashboard & UI |
+| `bug` | Red | Bug report |
+| `enhancement` | Light blue | Feature request |
+| `refactor` | Gray | Code improvement (no behavior change) |
+| `documentation` | Blue | Docs only |
+| `ci` | Yellow | CI/CD workflow changes |
+| `test` | Green | Test coverage / fix |
+
 ### Naming
 
 - Modules/packages: `snake_case`

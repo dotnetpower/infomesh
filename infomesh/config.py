@@ -64,6 +64,15 @@ class CrawlConfig:
     pending_per_domain: int = 10
     user_agent: str = "InfoMesh/0.1 (+https://github.com/dotnetpower/infomesh)"
     respect_robots: bool = True
+    js_rendering: bool = False  # opt-in: render JS-heavy pages via Playwright
+    js_max_tabs: int = 3  # max concurrent browser tabs
+    js_timeout_ms: int = 30_000  # per-page rendering timeout
+    js_max_memory_mb: int = 512  # browser memory limit
+    # RSS feed monitoring
+    rss_enabled: bool = False  # enable RSS/Atom feed polling
+    rss_default_interval: int = 900  # default poll interval (15 min)
+    rss_max_feeds: int = 100  # max feeds to monitor simultaneously
+    rss_discovery: bool = True  # auto-discover feeds from crawled pages
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,9 @@ class NetworkConfig:
     bootstrap_nodes: list[str] = field(default_factory=list)
     index_submit_peers: list[str] = field(default_factory=list)
     peer_acl: list[str] = field(default_factory=list)
+    bootstrap_dns: bool = True
+    bootstrap_github: bool = True
+    bootstrap_dns_domain: str = "infomesh.io"
 
 
 @dataclass(frozen=True)

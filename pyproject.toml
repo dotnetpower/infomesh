@@ -56,8 +56,11 @@ vector = [
 llm = [
     "ollama>=0.3",
 ]
+browser = [
+    "playwright>=1.40",
+]
 all = [
-    "infomesh[p2p,vector,llm]",
+    "infomesh[p2p,vector,llm,browser]",
 ]
 
 [project.scripts]

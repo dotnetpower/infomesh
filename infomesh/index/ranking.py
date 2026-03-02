@@ -19,11 +19,16 @@ logger = structlog.get_logger()
 
 # --- Tuning constants ---------------------------------------------------
 
-# Weight factors for the four ranking signals (must sum to ~1.0)
-WEIGHT_BM25 = 0.45
-WEIGHT_FRESHNESS = 0.20
-WEIGHT_TRUST = 0.15
-WEIGHT_AUTHORITY = 0.20
+# Weight factors for ranking signals.
+# Core weights (sum to ~1.0 before bonuses):
+WEIGHT_BM25 = 0.40
+WEIGHT_FRESHNESS = 0.15
+WEIGHT_TRUST = 0.10
+WEIGHT_AUTHORITY = 0.15
+
+# Bonus weights — additive on top of the core score:
+WEIGHT_TITLE_MATCH = 0.15  # query terms in title
+WEIGHT_URL_PATH = 0.05  # query terms in URL path
 
 # Freshness half-life in seconds (7 days).
 # After one half-life the freshness component drops to 50 %.
@@ -51,6 +56,8 @@ class RankedResult:
     combined_score: float
     crawled_at: float
     peer_id: str | None = None
+    title_match_score: float = 0.0
+    url_path_score: float = 0.0
 
 
 # --- Scoring helpers -----------------------------------------------------
@@ -100,28 +107,44 @@ def combined_score(
     trust: float,
     authority: float = 0.0,
     *,
+    title_match: float = 0.0,
+    url_path: float = 0.0,
     w_bm25: float = WEIGHT_BM25,
     w_fresh: float = WEIGHT_FRESHNESS,
     w_trust: float = WEIGHT_TRUST,
     w_authority: float = WEIGHT_AUTHORITY,
+    w_title: float = WEIGHT_TITLE_MATCH,
+    w_url: float = WEIGHT_URL_PATH,
 ) -> float:
-    """Compute the weighted sum of the four ranking signals.
+    """Compute the weighted sum of ranking signals.
+
+    Core signals (BM25, freshness, trust, authority) plus additive
+    bonuses for title match and URL path relevance.
 
     Args:
         bm25: Normalized BM25 score ``[0, 1]``.
         freshness: Freshness score ``[0, 1]``.
         trust: Trust score ``[0, 1]``.
         authority: Domain authority score ``[0, 1]``.
+        title_match: Title-query overlap ``[0, 1]``.
+        url_path: URL path-query overlap ``[0, 1]``.
         w_bm25: Weight for relevance.
         w_fresh: Weight for freshness.
         w_trust: Weight for trust.
         w_authority: Weight for domain authority.
+        w_title: Weight for title match bonus.
+        w_url: Weight for URL path bonus.
 
     Returns:
         Combined score (higher is better).
     """
     return (
-        w_bm25 * bm25 + w_fresh * freshness + w_trust * trust + w_authority * authority
+        w_bm25 * bm25
+        + w_fresh * freshness
+        + w_trust * trust
+        + w_authority * authority
+        + w_title * title_match
+        + w_url * url_path
     )
 
 
@@ -141,6 +164,8 @@ class _RawCandidate:
     peer_id: str | None
     trust: float
     authority: float = 0.0
+    title_match: float = 0.0
+    url_path: float = 0.0
 
 
 def rank_results(
@@ -176,7 +201,14 @@ def rank_results(
     for c in candidates:
         norm_bm25 = normalize_bm25(c.bm25_raw, max_score=max_bm25)
         fresh = freshness_score(c.crawled_at, now=now)
-        combo = combined_score(norm_bm25, fresh, c.trust, c.authority)
+        combo = combined_score(
+            norm_bm25,
+            fresh,
+            c.trust,
+            c.authority,
+            title_match=c.title_match,
+            url_path=c.url_path,
+        )
         scored.append(
             RankedResult(
                 doc_id=c.doc_id,
@@ -190,6 +222,8 @@ def rank_results(
                 combined_score=round(combo, 6),
                 crawled_at=c.crawled_at,
                 peer_id=c.peer_id,
+                title_match_score=round(c.title_match, 6),
+                url_path_score=round(c.url_path, 6),
             )
         )
 
@@ -209,6 +243,7 @@ def rank_local_results(
     *,
     trust: float = DEFAULT_TRUST,
     authority_fn: Callable[[str], float] | None = None,
+    query_tokens: list[str] | None = None,
     limit: int = 10,
     now: float | None = None,
 ) -> list[RankedResult]:
@@ -220,12 +255,15 @@ def rank_local_results(
         authority_fn: Optional callable ``(url) -> float`` returning
             domain authority for a URL.  When ``None``, authority
             defaults to 0.0 for all results.
+        query_tokens: Lowercased query tokens for title/URL scoring.
         limit: Maximum results.
         now: Override timestamp.
 
     Returns:
         Ranked results.
     """
+    from infomesh.search.passage import title_match_score, url_path_score
+
     candidates = [
         _RawCandidate(
             doc_id=r.doc_id,
@@ -237,6 +275,10 @@ def rank_local_results(
             peer_id=None,
             trust=trust,
             authority=authority_fn(r.url) if authority_fn else 0.0,
+            title_match=(
+                title_match_score(r.title, query_tokens) if query_tokens else 0.0
+            ),
+            url_path=(url_path_score(r.url, query_tokens) if query_tokens else 0.0),
         )
         for r in results
     ]

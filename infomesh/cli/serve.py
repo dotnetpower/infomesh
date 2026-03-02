@@ -24,6 +24,74 @@ def _pid_path(data_dir: Path) -> Path:
     return data_dir / _PID_FILE_NAME
 
 
+def _offer_starter_download(config: Config) -> None:
+    """Prompt the user to download the starter index if available."""
+    import asyncio
+
+    from infomesh.index.starter import (
+        download_starter_snapshot,
+        find_starter_asset,
+    )
+
+    click.secho(
+        "\n  Your index is empty — search won't return results yet.",
+        fg="yellow",
+    )
+    click.echo("  A community starter index is available to get you started quickly.")
+
+    asset = asyncio.run(find_starter_asset(cache_dir=config.node.data_dir))
+    if asset is None:
+        click.echo(
+            "  (No starter snapshot published yet. "
+            "Run 'infomesh crawl' to build your own index.)\n"
+        )
+        return
+
+    click.echo(f"  Starter index: {asset.size_mb:.1f} MB")
+
+    if not sys.stdin.isatty() or not click.confirm(
+        "  Download and import now?",
+        default=True,
+    ):
+        click.echo("  Skipped. Run 'infomesh index import --starter' anytime.\n")
+        return
+
+    click.echo(f"  ⏳ Downloading {asset.size_mb:.1f} MB...")
+
+    last_pct = [-1]
+
+    def _progress(downloaded: int, total: int) -> None:
+        pct = downloaded * 100 // total if total else 0
+        if pct != last_pct[0] and pct % 10 == 0:
+            last_pct[0] = pct
+            click.echo(f"  ... {pct}%")
+
+    path = asyncio.run(
+        download_starter_snapshot(
+            config.node.data_dir,
+            progress_callback=_progress,
+        )
+    )
+    if path is None:
+        click.secho("  Download failed. Continuing without starter.\n", fg="red")
+        return
+
+    click.echo("  ⏳ Importing into local index...")
+    from infomesh.index.snapshot import import_snapshot
+    from infomesh.services import AppContext
+
+    ctx = AppContext(config)
+    try:
+        stats = import_snapshot(ctx.store, path, vector_store=ctx.vector_store)
+    finally:
+        ctx.close()
+
+    click.secho(
+        f"  ✔ Imported {stats.exported} documents ({stats.elapsed_ms:.0f}ms)\n",
+        fg="green",
+    )
+
+
 # ---------------------------------------------------------------------------
 # infomesh start
 # ---------------------------------------------------------------------------
@@ -132,6 +200,22 @@ def start(
             bold=True,
         )
         raise SystemExit(1)
+
+    # ── Starter index check (cold start) ─────────────────────────
+    from infomesh.index.local_store import LocalStore
+    from infomesh.index.starter import needs_starter
+
+    _store = LocalStore(
+        db_path=config.index.db_path,
+        compression_enabled=config.storage.compression_enabled,
+        compression_level=config.storage.compression_level,
+    )
+    try:
+        _doc_count = _store.get_stats().get("document_count", 0)
+        if isinstance(_doc_count, int) and needs_starter(_doc_count):
+            _offer_starter_download(config)
+    finally:
+        _store.close()
 
     # ── Port accessibility check ──────────────────────────────────
     from infomesh.resources.port_check import check_port_and_offer_fix

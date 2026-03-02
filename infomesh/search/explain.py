@@ -12,7 +12,9 @@ from infomesh.index.ranking import (
     WEIGHT_AUTHORITY,
     WEIGHT_BM25,
     WEIGHT_FRESHNESS,
+    WEIGHT_TITLE_MATCH,
     WEIGHT_TRUST,
+    WEIGHT_URL_PATH,
     RankedResult,
 )
 
@@ -79,12 +81,16 @@ def explain_result(result: RankedResult) -> ScoreExplanation:
         "freshness": result.freshness_score,
         "trust": result.trust_score,
         "authority": result.authority_score,
+        "title_match": result.title_match_score,
+        "url_path": result.url_path_score,
     }
     weights = {
         "bm25": WEIGHT_BM25,
         "freshness": WEIGHT_FRESHNESS,
         "trust": WEIGHT_TRUST,
         "authority": WEIGHT_AUTHORITY,
+        "title_match": WEIGHT_TITLE_MATCH,
+        "url_path": WEIGHT_URL_PATH,
     }
     weighted = {k: components[k] * weights[k] for k in components}
 
@@ -99,6 +105,10 @@ def explain_result(result: RankedResult) -> ScoreExplanation:
         notes.append("High-trust peer")
     if result.authority_score > 0.5:
         notes.append("High domain authority")
+    if result.title_match_score > 0.5:
+        notes.append("Query matches title")
+    if result.url_path_score > 0.3:
+        notes.append("Query matches URL path")
 
     return ScoreExplanation(
         url=result.url,

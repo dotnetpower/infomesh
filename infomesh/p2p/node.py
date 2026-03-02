@@ -913,7 +913,7 @@ class InfoMeshNode:
         return protocols
 
     async def _bootstrap(self) -> None:
-        """Connect to bootstrap nodes from config."""
+        """Connect to bootstrap nodes from config + dynamic discovery."""
         import trio as _trio
         from libp2p.peer.peerinfo import info_from_p2p_addr
         from multiaddr import Multiaddr
@@ -926,6 +926,26 @@ class InfoMeshNode:
 
             defaults = _load_default_bootstrap_nodes()
             bootstrap_addrs = [a for a in bootstrap_addrs if a != "default"] + defaults
+
+        # Dynamic discovery — DNS SRV/TXT + GitHub (non-blocking)
+        try:
+            dynamic = await _trio.to_thread.run_sync(self._discover_dynamic_bootstrap)
+            if dynamic:
+                existing = set(bootstrap_addrs)
+                for addr in dynamic:
+                    if addr not in existing:
+                        bootstrap_addrs.append(addr)
+                        existing.add(addr)
+                logger.info(
+                    "bootstrap_dynamic_merged",
+                    dynamic_count=len(dynamic),
+                    total=len(bootstrap_addrs),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "bootstrap_dynamic_failed",
+                error=str(exc),
+            )
 
         if not bootstrap_addrs:
             logger.info("no_bootstrap_nodes", note="running in standalone mode")
@@ -987,6 +1007,47 @@ class InfoMeshNode:
                     "Check with: nc -zv <ip> 4001"
                 ),
             )
+
+    # ─── Dynamic bootstrap discovery ──────────────────────────
+
+    def _discover_dynamic_bootstrap(self) -> list[str]:
+        """Discover additional bootstrap nodes via DNS/GitHub.
+
+        Runs synchronously (called from trio via
+        ``trio.to_thread.run_sync``).  Uses asyncio internally for
+        the discovery coroutines.
+
+        Returns:
+            List of multiaddr strings from dynamic sources.
+        """
+        import asyncio as _asyncio
+
+        from infomesh.p2p.bootstrap import discover_bootstrap_nodes
+
+        net_cfg = self._config.network
+        use_dns = getattr(net_cfg, "bootstrap_dns", True)
+        use_github = getattr(net_cfg, "bootstrap_github", True)
+        dns_domain = getattr(net_cfg, "bootstrap_dns_domain", "infomesh.io")
+
+        if not use_dns and not use_github:
+            return []
+
+        try:
+            result = _asyncio.run(
+                discover_bootstrap_nodes(
+                    dns_domain=dns_domain,
+                    cache_dir=self._config.node.data_dir,
+                    use_dns=use_dns,
+                    use_github=use_github,
+                )
+            )
+            return result.addrs
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "dynamic_bootstrap_error",
+                error=str(exc),
+            )
+            return []
 
     # ─── PoW cache ──────────────────────────────────────────
 

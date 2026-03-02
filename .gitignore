@@ -208,3 +208,7 @@ __marimo__/
 
 mockups/
 uv.lock
+
+# Private infra / scenario tests (Azure VMs, IPs, credentials)
+tests/infra/
+.env.test

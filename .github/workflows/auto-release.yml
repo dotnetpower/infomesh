@@ -142,6 +142,7 @@ jobs:
           echo "Generating release notes for range: ${range}"
 
           # Categorize commits by conventional-commit prefix
+          # Each category stores entries as bullet lines (subject + optional body)
           features=""
           fixes=""
           docs=""
@@ -149,46 +150,92 @@ jobs:
           tests=""
           others=""
 
+          # Dump commits to a temp file with clear markers
+          git log "${range}" --pretty=format:'__COMMIT_START__%n%s%n__BODY__%n%b' \
+            --no-merges > /tmp/commits-raw.txt
+          # Append a final marker so the last commit is processed
+          echo "" >> /tmp/commits-raw.txt
+          echo "__COMMIT_START__" >> /tmp/commits-raw.txt
+
+          current_subject=""
+          current_body=""
+          reading_body=false
+
           while IFS= read -r line; do
-            # Skip auto-release commits, skip-release commits, and empty lines
-            if [ -z "$line" ] || echo "$line" | grep -qE '\[(auto-release|skip release)\]'; then
-              continue
-            fi
-            # Categorize by conventional-commit prefix
-            if echo "$line" | grep -qi '^feat'; then
-              msg=$(echo "$line" | sed -E 's/^feat([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              features="${features}- ${msg}\n"
-            elif echo "$line" | grep -qi '^fix'; then
-              msg=$(echo "$line" | sed -E 's/^fix([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              fixes="${fixes}- ${msg}\n"
-            elif echo "$line" | grep -qi '^docs'; then
-              msg=$(echo "$line" | sed -E 's/^docs([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              docs="${docs}- ${msg}\n"
-            elif echo "$line" | grep -qi '^test'; then
-              msg=$(echo "$line" | sed -E 's/^test([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              tests="${tests}- ${msg}\n"
-            elif echo "$line" | grep -qi '^chore'; then
-              msg=$(echo "$line" | sed -E 's/^chore([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              chores="${chores}- ${msg}\n"
-            elif echo "$line" | grep -qi '^refactor\|^perf\|^ci\|^build\|^style'; then
-              msg=$(echo "$line" | sed -E 's/^(refactor|perf|ci|build|style)([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
-              chores="${chores}- ${msg}\n"
+            if [ "$line" = "__COMMIT_START__" ]; then
+              # Process previous commit (if any)
+              if [ -n "$current_subject" ]; then
+                # Skip auto-release / skip-release commits
+                if ! echo "$current_subject" | grep -qE '\[(auto-release|skip release)\]'; then
+
+                  # Format body lines as indented sub-bullets
+                  body_bullets=""
+                  if [ -n "$current_body" ]; then
+                    while IFS= read -r bline; do
+                      trimmed=$(echo "$bline" | sed 's/^[[:space:]]*//')
+                      [ -z "$trimmed" ] && continue
+                      # Preserve existing bullet structure, add bullet to plain text
+                      if echo "$trimmed" | grep -qE '^[-*]'; then
+                        body_bullets="${body_bullets}  ${trimmed}\n"
+                      else
+                        body_bullets="${body_bullets}  - ${trimmed}\n"
+                      fi
+                    done <<< "$current_body"
+                  fi
+
+                  # Categorize by conventional-commit prefix
+                  if echo "$current_subject" | grep -qi '^feat'; then
+                    msg=$(echo "$current_subject" | sed -E 's/^feat([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+                    features="${features}- ${msg}\n${body_bullets}"
+                  elif echo "$current_subject" | grep -qi '^fix'; then
+                    msg=$(echo "$current_subject" | sed -E 's/^fix([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+                    fixes="${fixes}- ${msg}\n${body_bullets}"
+                  elif echo "$current_subject" | grep -qi '^docs'; then
+                    msg=$(echo "$current_subject" | sed -E 's/^docs([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+                    docs="${docs}- ${msg}\n${body_bullets}"
+                  elif echo "$current_subject" | grep -qi '^test'; then
+                    msg=$(echo "$current_subject" | sed -E 's/^test([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+                    tests="${tests}- ${msg}\n${body_bullets}"
+                  elif echo "$current_subject" | grep -qi '^chore'; then
+                    msg=$(echo "$current_subject" | sed -E 's/^chore([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+                    chores="${chores}- ${msg}\n${body_bullets}"
+                  elif echo "$current_subject" | grep -qi '^refactor\|^perf\|^ci\|^build\|^style'; then
+                    msg=$(echo "$current_subject" | sed -E 's/^(refactor|perf|ci|build|style)([(][^)]*[)])?[[:space:]]*:[[:space:]]*//')
+                    chores="${chores}- ${msg}\n${body_bullets}"
+                  else
+                    # Non-conventional commits — classify by keywords
+                    lower=$(echo "$current_subject" | tr '[:upper:]' '[:lower:]')
+                    if echo "$lower" | grep -qE 'add|implement|support|enable|new|create|introduce'; then
+                      features="${features}- ${current_subject}\n${body_bullets}"
+                    elif echo "$lower" | grep -qE 'fix|patch|correct|resolve|repair|bug'; then
+                      fixes="${fixes}- ${current_subject}\n${body_bullets}"
+                    elif echo "$lower" | grep -qE 'doc|readme|changelog|comment|typo'; then
+                      docs="${docs}- ${current_subject}\n${body_bullets}"
+                    elif echo "$lower" | grep -qE 'test|spec|coverage|assert'; then
+                      tests="${tests}- ${current_subject}\n${body_bullets}"
+                    else
+                      others="${others}- ${current_subject}\n${body_bullets}"
+                    fi
+                  fi
+                fi
+              fi
+              # Reset for next commit
+              current_subject=""
+              current_body=""
+              reading_body=false
+            elif [ "$line" = "__BODY__" ]; then
+              reading_body=true
+            elif [ "$reading_body" = false ]; then
+              current_subject="$line"
             else
-              # Non-conventional commits — classify by keywords in the message
-              lower=$(echo "$line" | tr '[:upper:]' '[:lower:]')
-              if echo "$lower" | grep -qE 'add|implement|support|enable|new|create|introduce'; then
-                features="${features}- ${line}\n"
-              elif echo "$lower" | grep -qE 'fix|patch|correct|resolve|repair|bug'; then
-                fixes="${fixes}- ${line}\n"
-              elif echo "$lower" | grep -qE 'doc|readme|changelog|comment|typo'; then
-                docs="${docs}- ${line}\n"
-              elif echo "$lower" | grep -qE 'test|spec|coverage|assert'; then
-                tests="${tests}- ${line}\n"
+              # Accumulate body lines
+              if [ -n "$current_body" ]; then
+                current_body="${current_body}"$'\n'"${line}"
               else
-                others="${others}- ${line}\n"
+                current_body="$line"
               fi
             fi
-          done <<< "$(git log "${range}" --pretty=format:'%s' --no-merges)"
+          done < /tmp/commits-raw.txt
 
           # Build release body
           body=""

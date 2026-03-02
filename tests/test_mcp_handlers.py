@@ -49,6 +49,8 @@ def _mock_search_result() -> MagicMock:
     r.freshness_score = 0.3
     r.trust_score = 0.1
     r.authority_score = 0.05
+    r.title_match_score = 0.0
+    r.url_path_score = 0.0
     r.peer_id = None
     # Ensure dict-like weighted access for explain
     r.weighted = {"bm25": 0.5, "freshness": 0.3, "trust": 0.1, "authority": 0.05}

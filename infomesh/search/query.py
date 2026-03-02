@@ -111,6 +111,8 @@ def search_local(
     Returns:
         QueryResult with ranked search results.
     """
+    from infomesh.search.passage import _tokenize
+
     start = time.monotonic()
 
     sanitized = _sanitize_fts_query(query)
@@ -125,12 +127,20 @@ def search_local(
         exclude_domains=exclude_domains,
     )
 
-    # Apply full ranking pipeline
+    # Extract query tokens for title/URL ranking signals
+    query_tokens = _tokenize(query)
+
+    # Apply full ranking pipeline (with title/URL bonuses)
     ranked = rank_local_results(
         raw_results,
         authority_fn=authority_fn,
+        query_tokens=query_tokens,
         limit=limit,
     )
+
+    # Passage selection: re-select snippets from full text for top results
+    if ranked:
+        _enhance_snippets(store, ranked, query)
 
     elapsed = (time.monotonic() - start) * 1000
     logger.info(
@@ -147,6 +157,54 @@ def search_local(
         elapsed_ms=elapsed,
         source="local",
     )
+
+
+def _enhance_snippets(
+    store: LocalStore,
+    results: list[RankedResult],
+    query: str,
+    *,
+    max_enhance: int = 10,
+) -> None:
+    """Replace FTS5 snippets with passage-selected snippets.
+
+    Loads full document text for the top results and selects the
+    most relevant passage as the snippet.  Mutates the list in-place
+    by replacing RankedResult objects (frozen dataclass → new instance).
+
+    Args:
+        store: Local document store (for full-text retrieval).
+        results: Ranked results list (modified in-place).
+        query: Original user query.
+        max_enhance: Maximum results to enhance (to limit I/O).
+    """
+    from infomesh.search.passage import select_best_passage
+
+    for i, r in enumerate(results[:max_enhance]):
+        doc = store.get_document(
+            int(r.doc_id) if isinstance(r.doc_id, str) else r.doc_id,
+        )
+        if doc is None or not doc.text:
+            continue
+
+        passage = select_best_passage(doc.text, query, max_length=300)
+        if passage and len(passage) > len(r.snippet):
+            # Replace with better passage snippet
+            results[i] = RankedResult(
+                doc_id=r.doc_id,
+                url=r.url,
+                title=r.title,
+                snippet=passage,
+                bm25_score=r.bm25_score,
+                freshness_score=r.freshness_score,
+                trust_score=r.trust_score,
+                authority_score=r.authority_score,
+                combined_score=r.combined_score,
+                crawled_at=r.crawled_at,
+                peer_id=r.peer_id,
+                title_match_score=r.title_match_score,
+                url_path_score=r.url_path_score,
+            )
 
 
 def search_hybrid(

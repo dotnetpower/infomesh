@@ -123,6 +123,7 @@ class TestIndexDocument:
             raw_html_hash="abc123",
             text_hash="def456",
             language="en",
+            js_required=False,
         )
 
     def test_indexes_to_fts_and_vector(self) -> None:
