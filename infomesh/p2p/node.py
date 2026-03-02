@@ -42,6 +42,7 @@ from infomesh.p2p.pex import (
     PeerExchange,
 )
 from infomesh.p2p.protocol import (
+    PROTOCOL_CREDIT_SYNC,
     PROTOCOL_INDEX_SUBMIT,
     PROTOCOL_PEX,
     PROTOCOL_PING,
@@ -102,11 +103,13 @@ class InfoMeshNode:
         local_search_fn: object | None = None,
         store_fn: object | None = None,
         index_submit_receiver: object | None = None,
+        credit_sync_manager: object | None = None,
     ) -> None:
         self._config = config
         self._local_search_fn = local_search_fn
         self._store_fn = store_fn
         self._index_submit_receiver = index_submit_receiver
+        self._credit_sync_manager = credit_sync_manager
 
         self._state = NodeState.STOPPED
         self._peer_id: str = ""
@@ -482,6 +485,9 @@ class InfoMeshNode:
                 # ── Publish pending key revocations to DHT ──
                 await self._publish_pending_revocations()
 
+                # ── Announce credit identity to connected peers ──
+                await self._announce_credit_sync()
+
                 # Update status after bootstrap (peer count may have changed)
                 self._write_status_file()
 
@@ -489,9 +495,11 @@ class InfoMeshNode:
                 refresh_interval = 300  # refresh routing every 5 min
                 status_interval = 10  # update status file every 10s
                 pex_interval = PEX_ROUND_INTERVAL
+                credit_sync_interval = 300  # credit sync every 5 min
                 last_refresh = time.time()
                 last_status = time.time()
                 last_pex = time.time()
+                last_credit_sync = time.time()
 
                 while not self._stop_event.is_set():
                     await trio.sleep(1)
@@ -510,6 +518,11 @@ class InfoMeshNode:
                     if now - last_pex >= pex_interval:
                         last_pex = now
                         await self._run_pex_round()
+
+                    # Periodic credit sync with same-owner peers
+                    if now - last_credit_sync >= credit_sync_interval:
+                        last_credit_sync = now
+                        await self._run_credit_sync_round()
 
                     # Update status file periodically
                     if now - last_status >= status_interval:
@@ -654,6 +667,68 @@ class InfoMeshNode:
 
             self._host.set_stream_handler(PROTOCOL_INDEX_SUBMIT, _handle_index_submit)  # type: ignore[attr-defined]
 
+        # Credit sync handler — always registered if manager is available
+        if self._credit_sync_manager is not None:
+            sync_mgr = self._credit_sync_manager
+
+            async def _handle_credit_sync(stream: object) -> None:
+                try:
+                    data = await stream.read(4096)  # type: ignore[attr-defined]
+                    msg_type, payload = decode_message(data)
+
+                    if msg_type == MessageType.CREDIT_SYNC_ANNOUNCE:
+                        # Peer announced their email hash
+                        remote_hash = str(
+                            payload.get("owner_email_hash", "")
+                            if isinstance(payload, dict)
+                            else ""
+                        )
+                        remote_peer = str(
+                            payload.get("peer_id", "")
+                            if isinstance(payload, dict)
+                            else ""
+                        )
+                        if (
+                            remote_hash and remote_hash == sync_mgr.owner_email_hash  # type: ignore[attr-defined]
+                        ):
+                            # Same owner! Send back our announce + summary
+                            sync_mgr.register_same_owner_peer(remote_peer)  # type: ignore[attr-defined]
+                            summary = sync_mgr.build_summary()  # type: ignore[attr-defined]
+                            resp = encode_message(
+                                MessageType.CREDIT_SYNC_EXCHANGE,
+                                summary.to_dict(),
+                            )
+                            await stream.write(resp)  # type: ignore[attr-defined]
+                        else:
+                            # Different owner, send empty response
+                            resp = encode_message(
+                                MessageType.CREDIT_SYNC_ANNOUNCE,
+                                {
+                                    "peer_id": self._peer_id,
+                                    "owner_email_hash": "",
+                                },
+                            )
+                            await stream.write(resp)  # type: ignore[attr-defined]
+
+                    elif msg_type == MessageType.CREDIT_SYNC_EXCHANGE:
+                        # Peer sent their credit summary
+                        from infomesh.credits.sync import (
+                            CreditSummary,
+                        )
+
+                        if isinstance(payload, dict):
+                            summary = CreditSummary.from_dict(payload)
+                            sync_mgr.receive_summary(  # type: ignore[attr-defined]
+                                summary,
+                                verify_signature=False,
+                            )
+                except Exception:
+                    logger.debug("credit_sync_handler_error")
+                finally:
+                    await stream.close()  # type: ignore[attr-defined]
+
+            self._host.set_stream_handler(PROTOCOL_CREDIT_SYNC, _handle_credit_sync)  # type: ignore[attr-defined]
+
         logger.info(
             "handlers_registered",
             role=role,
@@ -671,6 +746,8 @@ class InfoMeshNode:
                 protocols.append(PROTOCOL_REPLICATE)
         if role == NodeRole.SEARCH and self._index_submit_receiver is not None:
             protocols.append(PROTOCOL_INDEX_SUBMIT)
+        if self._credit_sync_manager is not None:
+            protocols.append(PROTOCOL_CREDIT_SYNC)
         return protocols
 
     async def _bootstrap(self) -> None:
@@ -787,7 +864,7 @@ class InfoMeshNode:
             from infomesh.p2p.sybil import _count_leading_zero_bits_fast
 
             if _count_leading_zero_bits_fast(pow_hash) >= difficulty:
-                return nonce
+                return int(nonce)
             return None
         except Exception:
             return None
@@ -1126,3 +1203,136 @@ class InfoMeshNode:
                     logger.info("revocation_published", key=old_key_hex[:16])
             except Exception:
                 logger.debug("revocation_publish_failed", file=str(rev_file))
+
+    async def _announce_credit_sync(self) -> None:
+        """Announce owner email hash to all connected peers.
+
+        Called once after bootstrap to discover same-owner nodes.
+        """
+        if self._credit_sync_manager is None or self._host is None:
+            return
+
+        mgr = self._credit_sync_manager
+        if not mgr.has_identity:  # type: ignore[attr-defined]
+            return
+
+        connected = self.get_connected_peers()
+        if not connected:
+            return
+
+        import trio as _trio
+        from libp2p.peer.id import ID as PeerID
+
+        for target_pid in connected:
+            try:
+                stream = await self._host.new_stream(  # type: ignore[attr-defined]
+                    PeerID.from_base58(target_pid),
+                    [PROTOCOL_CREDIT_SYNC],
+                )
+                announce = encode_message(
+                    MessageType.CREDIT_SYNC_ANNOUNCE,
+                    {
+                        "peer_id": self._peer_id,
+                        "owner_email_hash": (
+                            mgr.owner_email_hash  # type: ignore[attr-defined]
+                        ),
+                    },
+                )
+                await stream.write(announce)
+
+                # Read response (may be a summary exchange or empty)
+                data = b""
+                timed_out = True
+                with _trio.move_on_after(5):
+                    data = await stream.read(65536)
+                    timed_out = False
+                await stream.close()
+
+                if timed_out or not data:
+                    continue
+
+                msg_type, payload = decode_message(data)
+                if msg_type == MessageType.CREDIT_SYNC_EXCHANGE and isinstance(
+                    payload, dict
+                ):
+                    from infomesh.credits.sync import CreditSummary
+
+                    summary = CreditSummary.from_dict(payload)
+                    mgr.receive_summary(  # type: ignore[attr-defined]
+                        summary,
+                        verify_signature=False,
+                    )
+                    logger.info(
+                        "credit_sync_peer_matched",
+                        peer_id=target_pid[:16],
+                    )
+
+            except Exception:
+                logger.debug(
+                    "credit_sync_announce_failed",
+                    target=target_pid[:16],
+                )
+
+    async def _run_credit_sync_round(self) -> None:
+        """Periodic credit sync: re-exchange summaries with same-owner peers."""
+        if self._credit_sync_manager is None or self._host is None:
+            return
+
+        mgr = self._credit_sync_manager
+        if not mgr.has_identity:  # type: ignore[attr-defined]
+            return
+
+        # Purge stale summaries
+        mgr.purge_stale()  # type: ignore[attr-defined]
+
+        same_owner = mgr.get_same_owner_peers()  # type: ignore[attr-defined]
+        if not same_owner:
+            return
+
+        import trio as _trio
+        from libp2p.peer.id import ID as PeerID
+
+        for target_pid in same_owner:
+            if not mgr.needs_sync(target_pid):  # type: ignore[attr-defined]
+                continue
+            try:
+                stream = await self._host.new_stream(  # type: ignore[attr-defined]
+                    PeerID.from_base58(target_pid),
+                    [PROTOCOL_CREDIT_SYNC],
+                )
+                # Send our summary
+                summary = mgr.build_summary()  # type: ignore[attr-defined]
+                msg = encode_message(
+                    MessageType.CREDIT_SYNC_EXCHANGE,
+                    summary.to_dict(),
+                )
+                await stream.write(msg)
+
+                # Read peer's updated summary
+                data = b""
+                timed_out = True
+                with _trio.move_on_after(5):
+                    data = await stream.read(65536)
+                    timed_out = False
+                await stream.close()
+
+                if timed_out or not data:
+                    continue
+
+                msg_type, payload = decode_message(data)
+                if msg_type == MessageType.CREDIT_SYNC_EXCHANGE and isinstance(
+                    payload, dict
+                ):
+                    from infomesh.credits.sync import CreditSummary
+
+                    peer_summary = CreditSummary.from_dict(payload)
+                    mgr.receive_summary(  # type: ignore[attr-defined]
+                        peer_summary,
+                        verify_signature=False,
+                    )
+
+            except Exception:
+                logger.debug(
+                    "credit_sync_round_failed",
+                    target=target_pid[:16],
+                )

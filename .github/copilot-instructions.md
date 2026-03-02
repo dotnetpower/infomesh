@@ -117,6 +117,7 @@ infomesh/
 │   ├── credits/             # Incentive system
 │   │   ├── types.py         #   ActionType, CreditState, dataclasses, constants
 │   │   ├── ledger.py        #   SQLite-backed credit ledger (imports types from types.py)
+│   │   ├── sync.py          #   Cross-node credit sync (CreditSyncStore, CreditSyncManager)
 │   │   ├── farming.py       #   Credit farming detection (probation, anomaly detection)
 │   │   ├── scheduling.py    #   Energy-aware scheduling (off-peak LLM bonus + TZ verification)
 │   │   ├── timezone_verify.py #   Off-peak timezone verification (IP cross-check)
@@ -407,7 +408,8 @@ Every code change that affects **user-facing behavior, API surface, or configura
 - **SPA/JS rendering**: Phase 0 focuses on static HTML. For JS-heavy pages, use `js_required` DHT tag to delegate to Playwright-capable nodes (Phase 4).
 - **Bandwidth limits**: Default ≤5 Mbps upload / 10 Mbps download for P2P. Configurable via `~/.infomesh/config.toml`. Max 5 concurrent crawl connections per node.
 - **`crawl_url()` rate limiting**: 60 URLs/hr per node, 10 pending URLs/domain, depth unlimited by default (0=unlimited, configurable).
-- **Force re-crawl**: `crawl_url(url, force=True)` bypasses URL dedup to re-crawl previously visited pages. Useful for refreshing stale content or discovering new child links after depth limits were changed.
+- **Force re-crawl**: `crawl_url(url, force=True)` bypasses all dedup checks (URL, content hash, near-duplicate) to re-crawl previously visited pages. CLI prompts user to re-crawl when URL is already seen.
+- **Same-domain scope**: Link following is restricted to the same domain + path prefix as the starting URL. External links are discovered but not followed.
 
 ### Indexing
 
@@ -432,7 +434,7 @@ The MCP server exposes 5 consolidated tools (v0.3.0 — legacy names still suppo
 |------|-------------|
 | `web_search(query, top_k, ...)` | Unified web search — P2P + local, RAG, explain, answer extraction. Set `local_only=true` for offline. |
 | `fetch_page(url)` | Return full text for a URL (from index or live crawl, max 100KB) |
-| `crawl_url(url, depth, force)` | Add a URL to the network and crawl it. `force=True` bypasses dedup. |
+| `crawl_url(url, depth, force)` | Add a URL to the network and crawl it. Stays within same domain. `force=True` bypasses all dedup checks (URL, content hash, near-duplicate). |
 | `fact_check(claim, top_k)` | Cross-reference claims against multiple indexed sources |
 | `status()` | Node status: index size, peer count, credits, analytics |
 
@@ -536,6 +538,18 @@ When credits are exhausted (balance ≤ 0), the node enters a grace/debt cycle:
 - Recovery: earn credits through normal contribution (crawling, hosting, uptime).
 - When balance returns to positive, the debt state resets to NORMAL.
 - Constants: `GRACE_PERIOD_HOURS = 72.0`, `DEBT_COST_MULTIPLIER = 2.0`.
+
+#### Cross-Node Credit Sync
+
+When a user runs InfoMesh on multiple devices with the same GitHub email, each device has its own local ledger. The credit sync system (`infomesh/credits/sync.py`) enables those nodes to discover each other and display **aggregated** credit stats.
+
+- **Protocol**: `PROTOCOL_CREDIT_SYNC = "/infomesh/credit-sync/1.0.0"` with message types `CREDIT_SYNC_ANNOUNCE (72)` and `CREDIT_SYNC_EXCHANGE (73)`.
+- **Privacy**: Only SHA-256 hash of the email exchanged on wire (never plaintext).
+- **Flow**: On connect → announce email_hash → if match → exchange signed summaries → store → aggregate.
+- **Periodic**: Re-exchange every 300 seconds with known same-owner peers.
+- **Stale sweep**: Summaries older than 72 hours purged automatically.
+- **DoS limit**: Max 20 peer summaries stored per owner.
+- **Display**: MCP `status`/`credit_balance` tools include a `network` sub-object when multiple same-owner nodes are synced. Dashboard and text report show network totals.
 
 ### Content Integrity & Trust
 

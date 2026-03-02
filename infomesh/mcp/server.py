@@ -98,6 +98,7 @@ def _create_app(
         scheduler = ctx.scheduler
         link_graph = ctx.link_graph
         ledger = ctx.ledger
+        credit_sync_manager = ctx.credit_sync_manager
     except Exception:
         ctx.close()
         raise
@@ -158,6 +159,7 @@ def _create_app(
                     p2p_node=p2p_node,
                     distributed_index=distributed_index,
                     analytics=analytics,
+                    credit_sync_manager=credit_sync_manager,
                 )
             # ── Legacy backward-compatible aliases ─────
             case "search" | "search_local":
@@ -207,6 +209,7 @@ def _create_app(
                     p2p_node=p2p_node,
                     distributed_index=distributed_index,
                     analytics=analytics,
+                    credit_sync_manager=credit_sync_manager,
                 )
             case "batch_search":
                 return await handle_batch(
@@ -358,6 +361,7 @@ def _create_app(
                 return handle_credit_balance(
                     arguments,
                     ledger=ledger,
+                    credit_sync_manager=credit_sync_manager,
                 )
             case "index_stats":
                 return handle_index_stats(

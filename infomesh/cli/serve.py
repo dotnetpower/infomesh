@@ -354,8 +354,48 @@ def serve(seeds: str | None, role: str | None) -> None:
     pid_file.write_text(str(os.getpid()))
     _serve_logger.info("serve_started", pid=os.getpid(), role=config.node.role)
 
+    # ── Initialize credit sync (before P2P so the handler is wired) ──
+    _credit_sync_mgr: object | None = None
+    try:
+        from infomesh.credits.github_identity import resolve_github_email
+        from infomesh.credits.ledger import CreditLedger
+        from infomesh.credits.sync import CreditSyncManager, CreditSyncStore
+
+        _gh_email = resolve_github_email(config) or ""
+        if _gh_email:
+            _cs_ledger = CreditLedger(
+                config.node.data_dir / "credits.db",
+                owner_email=_gh_email,
+            )
+            _cs_store = CreditSyncStore(
+                config.node.data_dir / "credit_sync.db",
+            )
+            _kp = None
+            try:
+                from infomesh.p2p.keys import ensure_keys
+
+                _kp = ensure_keys(config.node.data_dir)
+            except Exception:  # noqa: BLE001
+                pass
+            _credit_sync_mgr = CreditSyncManager(
+                ledger=_cs_ledger,
+                store=_cs_store,
+                owner_email=_gh_email,
+                key_pair=_kp,
+            )
+            _serve_logger.info(
+                "credit_sync_initialized",
+                email_hash=_credit_sync_mgr.owner_email_hash[:16],
+            )
+    except Exception:  # noqa: BLE001
+        _serve_logger.debug("credit_sync_init_skipped")
+
     # ── P2P node (best-effort) ─────────────────────────────────
-    p2p_node = _try_start_p2p(config, _serve_logger)
+    p2p_node = _try_start_p2p(
+        config,
+        _serve_logger,
+        credit_sync_manager=_credit_sync_mgr,
+    )
 
     async def _run() -> None:
         from infomesh.services import AppContext, seed_and_crawl_loop
@@ -390,6 +430,8 @@ def serve(seeds: str | None, role: str | None) -> None:
 def _try_start_p2p(
     config: Config,
     log: structlog.stdlib.BoundLogger,
+    *,
+    credit_sync_manager: object | None = None,
 ) -> object | None:
     """Try to start the P2P node. Returns the node or None on failure.
 
@@ -406,7 +448,10 @@ def _try_start_p2p(
         return None
 
     try:
-        node = InfoMeshNode(config)
+        node = InfoMeshNode(
+            config,
+            credit_sync_manager=credit_sync_manager,
+        )
         node.start(blocking=False)
         log.info(
             "p2p_started",

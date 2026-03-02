@@ -25,6 +25,8 @@ class LiveLog(RichLog):
     LiveLog {
         height: 100%;
         border: round $accent;
+        overflow-x: hidden;
+        scrollbar-size-vertical: 1;
     }
     """
 
@@ -40,6 +42,7 @@ class LiveLog(RichLog):
             max_lines=max_lines,
             highlight=True,
             markup=True,
+            wrap=True,
             auto_scroll=True,
             name=name,
             id=id,

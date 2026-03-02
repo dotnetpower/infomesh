@@ -31,6 +31,7 @@ PROTOCOL_CRAWL = "/infomesh/crawl/1.0.0"
 PROTOCOL_REPLICATE = "/infomesh/replicate/1.0.0"
 PROTOCOL_PING = "/infomesh/ping/1.0.0"
 PROTOCOL_CREDIT = "/infomesh/credit/1.0.0"
+PROTOCOL_CREDIT_SYNC = "/infomesh/credit-sync/1.0.0"
 PROTOCOL_INDEX_SUBMIT = "/infomesh/index-submit/1.0.0"
 PROTOCOL_PEX = "/infomesh/pex/1.0.0"
 
@@ -84,6 +85,10 @@ class MessageType(IntEnum):
     # Peer Exchange (PEX)
     PEX_REQUEST = 90
     PEX_RESPONSE = 91
+
+    # Credit sync (cross-node credit aggregation)
+    CREDIT_SYNC_ANNOUNCE = 72
+    CREDIT_SYNC_EXCHANGE = 73
 
     # Signed envelope (wraps any message for authentication)
     SIGNED_ENVELOPE = 100
@@ -236,6 +241,39 @@ class CreditProofResponse:
     sample_proofs: list[dict[str, Any]]  # list of MerkleProof as dicts
     timestamp: float = field(default_factory=time.time)
     public_key: str = ""  # hex-encoded 32-byte raw public key
+
+
+@dataclass(frozen=True)
+class CreditSyncAnnounce:
+    """Announce owner identity hash to a newly-connected peer.
+
+    If the remote peer has the same ``owner_email_hash``, they
+    will respond with their own announce and initiate a credit
+    summary exchange.
+    """
+
+    peer_id: str
+    owner_email_hash: str  # SHA-256 of normalized email
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class CreditSyncExchange:
+    """Exchange credit summary with a same-owner peer.
+
+    Contains a signed snapshot of local credit stats so the
+    remote node can compute aggregated totals.
+    """
+
+    peer_id: str
+    owner_email_hash: str
+    total_earned: float
+    total_spent: float
+    contribution_score: float
+    entry_count: int
+    tier: str
+    timestamp: float = field(default_factory=time.time)
+    signature: str = ""
 
 
 @dataclass(frozen=True)

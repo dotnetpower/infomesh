@@ -559,9 +559,11 @@ class SettingsPane(Widget):
             # Update the app-level config reference
             app.config = new_config  # type: ignore[attr-defined]
 
-            # Apply theme change immediately
-            if hasattr(app, "theme"):
-                app.theme = new_config.dashboard.theme
+            # Apply theme change only when it actually differs
+            # (avoids full CSS rebuild + visual flicker on every save)
+            new_theme = new_config.dashboard.theme
+            if hasattr(app, "theme") and app.theme != new_theme:
+                app.theme = new_theme
 
             # Update dashboard data cache refresh interval
             if hasattr(app, "_data_cache"):

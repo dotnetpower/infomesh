@@ -30,6 +30,16 @@ _DOMAIN_EXPR = """SUBSTR(
 
 
 @dataclass
+class RecentDoc:
+    """A recently crawled document (for LiveLog display)."""
+
+    doc_id: int
+    url: str
+    title: str
+    crawled_at: float
+
+
+@dataclass
 class CachedStats:
     """Cached dashboard statistics."""
 
@@ -40,6 +50,8 @@ class CachedStats:
     pages_last_hour: int = 0
     domain_count: int = 0
     last_crawl_at: float = 0.0
+    # Most recently crawled documents (newest first)
+    recent_docs: list[RecentDoc] = field(default_factory=list)
 
 
 class DashboardDataCache:
@@ -133,6 +145,21 @@ class DashboardDataCache:
                 float(row_last["ts"]) if row_last and row_last["ts"] else 0.0
             )
 
+            # Recent documents for LiveLog feed (last 10)
+            recent_rows = conn.execute(
+                "SELECT doc_id, url, title, crawled_at "
+                "FROM documents ORDER BY crawled_at DESC LIMIT 10",
+            ).fetchall()
+            recent_docs = [
+                RecentDoc(
+                    doc_id=int(r["doc_id"]),
+                    url=str(r["url"]),
+                    title=str(r["title"]) if r["title"] else "",
+                    crawled_at=float(r["crawled_at"]),
+                )
+                for r in recent_rows
+            ]
+
             self._cache = CachedStats(
                 document_count=doc_count,
                 top_domains=[(r["domain"], r["cnt"]) for r in domain_rows],
@@ -140,6 +167,7 @@ class DashboardDataCache:
                 pages_last_hour=pages_last_hour,
                 domain_count=domain_count,
                 last_crawl_at=last_crawl_at,
+                recent_docs=recent_docs,
             )
         except Exception:  # noqa: BLE001
             # DB not ready yet (e.g. node hasn't started) — return stale cache

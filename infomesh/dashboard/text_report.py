@@ -197,6 +197,44 @@ def _credits_section(config: Config) -> Panel:
         table.add_row("Spent", f"{stats.total_spent:,.2f}")
         table.add_row("Search cost", f"{stats.search_cost:.3f}")
         table.add_row("Score", f"{stats.contribution_score:,.2f}")
+
+        # Network-wide stats
+        try:
+            from infomesh.credits.sync import (
+                CreditSyncManager,
+                CreditSyncStore,
+            )
+
+            sync_path = config.node.data_dir / "credit_sync.db"
+            if sync_path.exists():
+                ss = CreditSyncStore(sync_path)
+                try:
+                    mgr = CreditSyncManager(
+                        ledger=ledger,
+                        store=ss,
+                        owner_email="",
+                        key_pair=None,
+                        local_peer_id="",
+                    )
+                    agg = mgr.aggregated_stats()
+                    if agg.node_count > 1:
+                        table.add_row("", "")
+                        table.add_row(
+                            "[bold]Network[/]",
+                            f"{agg.node_count} nodes",
+                        )
+                        table.add_row(
+                            "Net Balance",
+                            (f"[bold cyan]{agg.balance:,.2f}[/] credits"),
+                        )
+                        table.add_row(
+                            "Net Earned",
+                            f"{agg.total_earned:,.2f}",
+                        )
+                finally:
+                    ss.close()
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as exc:  # noqa: BLE001
         table.add_row("Error", str(exc))
 

@@ -19,11 +19,13 @@ if TYPE_CHECKING:
 @click.option(
     "--depth",
     "-d",
-    default=0,
+    default=None,
+    type=int,
     help=(
-        "Link follow depth (0=single page only, "
-        "N=follow links N levels deep). "
-        "Default config: unlimited (controlled by rate limits & dedup)."
+        "Link follow depth. "
+        "If omitted, follows links unlimited (controlled by "
+        "rate limits & dedup). "
+        "Use --depth 0 for single page only."
     ),
 )
 @click.option(
@@ -36,7 +38,7 @@ if TYPE_CHECKING:
         "Useful for refreshing content or discovering new child links."
     ),
 )
-def crawl(url: str, depth: int, force: bool) -> None:
+def crawl(url: str, depth: int | None, force: bool) -> None:
     """Crawl a URL and add it to the local index."""
 
     async def _crawl() -> None:
@@ -45,7 +47,17 @@ def crawl(url: str, depth: int, force: bool) -> None:
         from infomesh.services import AppContext, index_document
 
         config = load_config()
-        max_depth = min(depth, config.crawl.max_depth)
+
+        # depth=None → use config default (0=unlimited)
+        # depth=0   → single page only
+        # depth=N   → follow links N levels deep
+        if depth is None:
+            max_depth = config.crawl.max_depth
+        else:
+            if config.crawl.max_depth > 0:
+                max_depth = min(depth, config.crawl.max_depth)
+            else:
+                max_depth = depth
 
         # Override max_depth so the worker only follows links up to user's limit
         if max_depth != config.crawl.max_depth:
@@ -57,7 +69,7 @@ def crawl(url: str, depth: int, force: bool) -> None:
         ctx = AppContext(config_adj)
 
         try:
-            if max_depth == 0:
+            if depth == 0:
                 # Single URL — simple output
                 # Pass depth=max_depth so worker won't schedule child links
                 crawl_depth = config_adj.crawl.max_depth
@@ -65,6 +77,18 @@ def crawl(url: str, depth: int, force: bool) -> None:
                     click.echo("✗ Crawler not available")
                     return
                 result = await ctx.worker.crawl_url(url, depth=crawl_depth, force=force)
+                if (
+                    not result.success
+                    and result.error == "already_seen"
+                    and not force
+                    and click.confirm(
+                        "This URL was already crawled. Re-crawl?",
+                        default=True,
+                    )
+                ):
+                    result = await ctx.worker.crawl_url(
+                        url, depth=crawl_depth, force=True
+                    )
                 if result.success and result.page:
                     index_document(result.page, ctx.store, ctx.vector_store)
                     click.echo(f"✓ Crawled: {url}")
@@ -76,6 +100,7 @@ def crawl(url: str, depth: int, force: bool) -> None:
                     click.echo(f"✗ Failed: {url} — {result.error}")
             else:
                 # Multi-page mode with progress output
+                # max_depth 0 = unlimited (scheduler enforces via dedup/rate)
                 await _crawl_with_progress(
                     ctx, url, max_depth, index_document, force=force
                 )
@@ -100,12 +125,30 @@ async def _crawl_with_progress(
     skipped = 0
     total_chars = 0
 
-    click.echo(f"\n🕷️  Crawling {url} (depth: {max_depth})\n")
+    depth_label = "unlimited" if max_depth == 0 else str(max_depth)
+    click.echo(f"\n🕷️  Crawling {url} (depth: {depth_label})\n")
 
     # Phase 1: Crawl the initial URL (depth=0 so links are discovered)
     assert ctx.worker is not None
     assert ctx.scheduler is not None
+
+    # Restrict link following to the same domain + path prefix
+    ctx.worker.set_scope(url)
+
     result = await ctx.worker.crawl_url(url, depth=0, force=force)
+
+    if (
+        not result.success
+        and result.error == "already_seen"
+        and not force
+        and click.confirm(
+            "This URL was already crawled. Re-crawl?",
+            default=True,
+        )
+    ):
+        force = True
+        result = await ctx.worker.crawl_url(url, depth=0, force=True)
+
     pending = ctx.scheduler.pending_count
 
     if result.success and result.page:

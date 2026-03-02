@@ -110,6 +110,12 @@ class BalancePanel(Static):
                 f"  Spent:     {spent_str:>{V}}"
                 f"            Score:       {score_str}"
             )
+
+            # Network-wide credit info (cross-node sync)
+            net_text = self._network_credit_text()
+            if net_text:
+                text += f"\n\n{net_text}"
+
             self.update(text)
         except Exception:  # noqa: BLE001
             self.update(
@@ -118,6 +124,58 @@ class BalancePanel(Static):
 
     def refresh_data(self) -> None:
         self._update()
+
+    def _network_credit_text(self) -> str:
+        """Load network-wide credit info from sync store."""
+        try:
+            from infomesh.credits.sync import (
+                CreditSyncManager,
+                CreditSyncStore,
+            )
+
+            sync_path = self._config.node.data_dir / "credit_sync.db"
+            if not sync_path.exists():
+                return ""
+
+            from infomesh.credits.ledger import CreditLedger
+
+            db_path = self._config.node.data_dir / "credits.db"
+            if not db_path.exists():
+                return ""
+
+            ledger = CreditLedger(db_path)
+            sync_store = CreditSyncStore(sync_path)
+            try:
+                mgr = CreditSyncManager(
+                    ledger=ledger,
+                    store=sync_store,
+                    owner_email="",
+                    key_pair=None,
+                    local_peer_id="",
+                )
+                agg = mgr.aggregated_stats()
+            finally:
+                sync_store.close()
+                ledger.close()
+
+            if agg.node_count <= 1:
+                return ""
+
+            net_bal = (
+                f"{int(agg.balance):,}"
+                if agg.balance == int(agg.balance)
+                else f"{agg.balance:,.2f}"
+            )
+            return (
+                "[bold]Network (all nodes)[/bold]\n"
+                f"  Nodes:     {agg.node_count}\n"
+                f"  Balance:   [bold cyan]{net_bal}[/bold cyan]"
+                " credits\n"
+                f"  Earned:    {agg.total_earned:,.2f}\n"
+                f"  Score:     {int(agg.contribution_score):,}"
+            )
+        except Exception:  # noqa: BLE001
+            return ""
 
 
 class EarningsBreakdownPanel(Widget):

@@ -441,10 +441,10 @@ MCP 서버 코드는 **단일 책임 원칙 (SRP)** 에 따라 4개의 전문 �
 
 | 모듈 | 책임 | 대략적인 라인 수 |
 |------|------|------------------|
-| `mcp/server.py` | 연결 레이어 — `Server` 인스턴스 생성, 툴 등록, 핸들러로 디스패치, stdio/HTTP 서버 실행 | ~330 |
-| `mcp/tools.py` | 툴 스키마 정의 (`get_all_tools()`), 필터 추출 (`extract_filters()`), API 키 확인 | ~340 |
-| `mcp/handlers.py` | 모든 `handle_*` 함수 — 인자 검증, 서비스 레이어 위임, 응답 포맷팅 | ~900 |
-| `mcp/session.py` | `SearchSession`, `AnalyticsTracker`, `WebhookRegistry` 헬퍼 클래스 | ~110 |
+| `mcp/server.py` | 연결 레이어 — `Server` 인스턴스 생성, 툴 등록, 핸들러로 디스패치, stdio/HTTP 서버 실행 | ~570 |
+| `mcp/tools.py` | 툴 스키마 정의 (`get_all_tools()`), 필터 추출 (`extract_filters()`), API 키 확인 | ~330 |
+| `mcp/handlers.py` | 모든 `handle_*` 함수 — 인자 검증, 서비스 레이어 위임, 응답 포맷팅 | ~1,480 |
+| `mcp/session.py` | `SearchSession`, `AnalyticsTracker`, `WebhookRegistry` 헬퍼 클래스 | ~230 |
 
 이 분리를 통해 **`server.py`에 비즈니스 로직이 포함되지 않습니다** — 핸들러로만 디스패치하고,
 핸들러는 다시 `infomesh.services` 함수로 위임합니다.

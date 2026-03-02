@@ -70,6 +70,32 @@ class CrawlWorker:
         self._robots = robots
         self._dht = dht
         self._client: httpx.AsyncClient | None = None
+        self._scope_domain: str | None = None
+        self._scope_path: str | None = None
+
+    def set_scope(self, url: str) -> None:
+        """Restrict link following to the same domain + path prefix."""
+        parsed = urlparse(url)
+        self._scope_domain = parsed.netloc
+        # Use the directory of the URL as path prefix
+        path = parsed.path.rstrip("/")
+        self._scope_path = path if path else "/"
+
+    def clear_scope(self) -> None:
+        """Remove domain/path scope restriction."""
+        self._scope_domain = None
+        self._scope_path = None
+
+    def _in_scope(self, link: str) -> bool:
+        """Check if a link is within the crawl scope."""
+        if self._scope_domain is None:
+            return True
+        parsed = urlparse(link)
+        if parsed.netloc != self._scope_domain:
+            return False
+        if self._scope_path and self._scope_path != "/":
+            return parsed.path.startswith(self._scope_path)
+        return True
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -149,6 +175,7 @@ class CrawlWorker:
             validate_url(url)
         except SSRFError as exc:
             logger.warning("crawl_ssrf_blocked", url=url, reason=str(exc))
+            self._scheduler.mark_done(url)
             return CrawlResult(
                 url=url,
                 success=False,
@@ -158,6 +185,7 @@ class CrawlWorker:
 
         # Check dedup (URL) — skip when force=True
         if not force and self._dedup.is_url_seen(url):
+            self._scheduler.mark_done(url)
             return CrawlResult(
                 url=url,
                 success=False,
@@ -172,6 +200,7 @@ class CrawlWorker:
             allowed = await self._robots.is_allowed(client, url)
             if not allowed:
                 logger.info("crawl_blocked_robots", url=url)
+                self._scheduler.mark_done(url)
                 return CrawlResult(
                     url=url,
                     success=False,
@@ -191,6 +220,7 @@ class CrawlWorker:
         # Fetch page with retry on 5xx
         fetch_result = await self._fetch_with_retry(client, url, start)
         if isinstance(fetch_result, CrawlResult):
+            self._scheduler.mark_done(url)
             return fetch_result  # error already wrapped
         resp = fetch_result
 
@@ -257,8 +287,8 @@ class CrawlWorker:
                 elapsed_ms=_elapsed(start),
             )
 
-        # Check dedup (content hash)
-        if self._dedup.is_content_seen(page.text_hash):
+        # Check dedup (content hash) — skip when force=True
+        if not force and self._dedup.is_content_seen(page.text_hash):
             logger.debug("crawl_duplicate_content", url=url)
             self._dedup.mark_seen(url, page.text_hash, page.text)
             self._scheduler.mark_done(url)
@@ -269,8 +299,8 @@ class CrawlWorker:
                 elapsed_ms=_elapsed(start),
             )
 
-        # Check near-duplicate (SimHash)
-        if self._dedup.is_near_duplicate(page.text):
+        # Check near-duplicate (SimHash) — skip when force=True
+        if not force and self._dedup.is_near_duplicate(page.text):
             logger.debug("crawl_near_duplicate", url=url)
             self._dedup.mark_seen(url, page.text_hash, page.text)
             self._scheduler.mark_done(url)
@@ -291,6 +321,8 @@ class CrawlWorker:
             discovered = extract_links(html, url)
             scheduled = 0
             for link in discovered:
+                if not self._in_scope(link):
+                    continue
                 if not self._dedup.is_url_seen(link):
                     added = await self._scheduler.add_url(link, depth=depth + 1)
                     if added:

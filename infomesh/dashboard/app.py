@@ -11,10 +11,11 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
+from textual.system_commands import SystemCommandsProvider
 from textual.widgets import Button, Footer, Header, Label, TabbedContent, TabPane
 
 from infomesh import __version__
-from infomesh.config import Config, load_config
+from infomesh.config import Config, load_config, save_config
 from infomesh.dashboard.bgm import _BGM_CACHE_DIR, BGMPlayer, ensure_bgm_assets
 from infomesh.dashboard.data_cache import DashboardDataCache
 from infomesh.dashboard.screens.crawl import CrawlPane
@@ -175,8 +176,7 @@ class DashboardApp(App[None]):
     SUB_TITLE = f"v{__version__}"
 
     CSS_PATH = _CSS_PATH
-    THEME = "catppuccin-mocha"
-    COMMANDS = {DashboardCommandProvider}
+    COMMANDS = {SystemCommandsProvider, DashboardCommandProvider}
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
@@ -199,6 +199,8 @@ class DashboardApp(App[None]):
     ) -> None:
         super().__init__()
         self.config = config or load_config()
+        # Apply configured theme (Textual 8+ no longer uses THEME class var)
+        self.theme = self.config.dashboard.theme
         self._initial_tab = initial_tab
         self._node_pid = node_pid
         self.exit_action: str = "dashboard_only"
@@ -206,6 +208,30 @@ class DashboardApp(App[None]):
         self._data_cache = DashboardDataCache(self.config, ttl=0.5)
         # Track whether BGM was auto-stopped due to crawl idleness
         self._bgm_idle_stopped: bool = False
+        # Guard to skip persistence during __init__ theme assignment
+        self._theme_ready: bool = True
+
+    def watch_theme(self, new_theme: str) -> None:
+        """Persist theme to config.toml when changed via command palette."""
+        if not getattr(self, "_theme_ready", False):
+            return
+        if new_theme == self.config.dashboard.theme:
+            return
+        try:
+            from dataclasses import replace
+
+            new_dashboard = replace(self.config.dashboard, theme=new_theme)
+            new_config = replace(self.config, dashboard=new_dashboard)
+            save_config(new_config)
+            self.config = new_config
+            # Sync settings pane if mounted
+            with contextlib.suppress(Exception):
+                from infomesh.dashboard.screens.settings import SettingsPane
+
+                pane = self.query_one(SettingsPane)
+                pane._config = new_config
+        except Exception:  # noqa: BLE001
+            pass
 
     def compose(self) -> ComposeResult:
         yield Header(icon="🌐")

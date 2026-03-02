@@ -64,6 +64,28 @@ logger = structlog.get_logger()
 MCP_API_VERSION = "2025.1"
 SERVER_VERSION = "0.2.0"
 
+
+def _inject_network_credits(
+    cr: dict[str, object],
+    credit_sync_manager: Any,
+) -> None:
+    """Add network-wide credit stats to a credit dict if available."""
+    if credit_sync_manager is None:
+        return
+    try:
+        agg = credit_sync_manager.aggregated_stats()
+        if agg.node_count > 1:
+            cr["network"] = {
+                "total_earned": round(agg.total_earned, 2),
+                "total_spent": round(agg.total_spent, 2),
+                "balance": round(agg.balance, 2),
+                "contribution_score": round(agg.contribution_score, 2),
+                "node_count": agg.node_count,
+            }
+    except Exception:  # noqa: BLE001
+        pass
+
+
 _SEARCH_ATTRIBUTION = (
     "\n---\n"
     "Attribution: All results sourced from their "
@@ -479,10 +501,12 @@ async def handle_crawl(
 ) -> list[TextContent]:
     """Handle crawl_url tool call."""
     url = arguments.get("url", "")
-    depth = min(
-        arguments.get("depth", 0),
-        config.crawl.max_depth,
-    )
+    # depth=0 means single page; config.crawl.max_depth=0 means unlimited
+    raw_depth = int(arguments.get("depth", 0))
+    if config.crawl.max_depth > 0:
+        depth = min(raw_depth, config.crawl.max_depth)
+    else:
+        depth = raw_depth
     force = bool(arguments.get("force", False))
     webhook_url = arguments.get("webhook_url")
 
@@ -509,6 +533,10 @@ async def handle_crawl(
 
     if webhook_url:
         webhooks.register(webhook_url)
+
+    # Restrict link following to same domain + path prefix
+    if depth > 0 and hasattr(worker, "set_scope"):
+        worker.set_scope(url)
 
     ci = await crawl_and_index(
         url,
@@ -565,6 +593,7 @@ def handle_stats(
     p2p_node: Any,
     distributed_index: Any,
     analytics: AnalyticsTracker,
+    credit_sync_manager: Any = None,
 ) -> list[TextContent]:
     """Handle network_stats tool call."""
     fmt = arguments.get("format", "text")
@@ -608,6 +637,7 @@ def handle_stats(
             cr["grace_remaining_hours"] = round(al.grace_remaining_hours, 1)
         elif al.state.value == "debt":
             cr["debt_amount"] = round(al.debt_amount, 2)
+        _inject_network_credits(cr, credit_sync_manager)
         data["credits"] = cr
 
     if p2p_node is not None:
@@ -1058,6 +1088,7 @@ def handle_credit_balance(
     arguments: dict[str, Any],
     *,
     ledger: Any,
+    credit_sync_manager: Any = None,
 ) -> list[TextContent]:
     """Handle credit_balance tool."""
     fmt = arguments.get("format", "json")
@@ -1089,6 +1120,7 @@ def handle_credit_balance(
                 al.debt_amount,
                 2,
             )
+        _inject_network_credits(data, credit_sync_manager)
 
     if fmt == "text":
         lines = [
@@ -1354,6 +1386,7 @@ def handle_status(
     p2p_node: Any,
     distributed_index: Any,
     analytics: AnalyticsTracker,
+    credit_sync_manager: Any = None,
 ) -> list[TextContent]:
     """Unified status — merges network_stats + credit + index + ping.
 
@@ -1408,6 +1441,7 @@ def handle_status(
             cr["grace_remaining_hours"] = round(al.grace_remaining_hours, 1)
         elif al.state.value == "debt":
             cr["debt_amount"] = round(al.debt_amount, 2)
+        _inject_network_credits(cr, credit_sync_manager)
         data["credits"] = cr
 
     # P2P

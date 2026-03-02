@@ -285,8 +285,8 @@ def fetch_page(url: str) -> PageContent:
     """특정 URL의 전문 텍스트 반환 (인덱스에 있으면 즉시, 없으면 크롤링)."""
 
 @mcp.tool()
-def crawl_url(url: str, depth: int = 1) -> CrawlResult:
-    """새 URL을 네트워크에 추가하고 크롤링."""
+def crawl_url(url: str, depth: int = 0, force: bool = False) -> CrawlResult:
+    """새 URL을 네트워크에 추가하고 크롤링. 같은 도메인만 따라감."""
 
 @mcp.tool()
 def fact_check(claim: str, top_k: int = 5) -> FactCheckResult:

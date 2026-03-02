@@ -285,8 +285,8 @@ def fetch_page(url: str) -> PageContent:
     """Return full text for a URL (instant from index, or live crawl)."""
 
 @mcp.tool()
-def crawl_url(url: str, depth: int = 1) -> CrawlResult:
-    """Add a URL to the network and crawl it."""
+def crawl_url(url: str, depth: int = 0, force: bool = False) -> CrawlResult:
+    """Add a URL to the network and crawl it. Stays within same domain."""
 
 @mcp.tool()
 def fact_check(claim: str, top_k: int = 5) -> FactCheckResult:

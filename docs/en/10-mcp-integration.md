@@ -466,10 +466,10 @@ The MCP server code follows the **Single Responsibility Principle (SRP)** — sp
 
 | Module | Responsibility | Approx. Lines |
 |--------|---------------|---------------|
-| `mcp/server.py` | Thin wiring — creates the `Server` instance, registers tools, dispatches calls to handlers, runs stdio/HTTP servers | ~330 |
-| `mcp/tools.py` | Tool schema definitions (`get_all_tools()`), filter extraction (`extract_filters()`), API key check | ~340 |
-| `mcp/handlers.py` | All `handle_*` functions — validate arguments, delegate to service layer, format responses | ~900 |
-| `mcp/session.py` | `SearchSession`, `AnalyticsTracker`, `WebhookRegistry` helper classes | ~110 |
+| `mcp/server.py` | Thin wiring — creates the `Server` instance, registers tools, dispatches calls to handlers, runs stdio/HTTP servers | ~570 |
+| `mcp/tools.py` | Tool schema definitions (`get_all_tools()`), filter extraction (`extract_filters()`), API key check | ~330 |
+| `mcp/handlers.py` | All `handle_*` functions — validate arguments, delegate to service layer, format responses | ~1,480 |
+| `mcp/session.py` | `SearchSession`, `AnalyticsTracker`, `WebhookRegistry` helper classes | ~230 |
 
 This split enforces that **no business logic lives in `server.py`** — it only dispatches to handlers,
 which in turn delegate to `infomesh.services` functions.

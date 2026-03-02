@@ -184,12 +184,20 @@ def get_all_tools(
                     },
                     "depth": {
                         "type": "integer",
-                        "description": ("Link-follow depth (0=this page only, max: 3)"),
+                        "description": (
+                            "Link-follow depth "
+                            "(0=this page only). "
+                            "Stays within same domain."
+                        ),
                         "default": 0,
                     },
                     "force": {
                         "type": "boolean",
-                        "description": ("Force re-crawl even if previously crawled"),
+                        "description": (
+                            "Force re-crawl even if "
+                            "previously crawled "
+                            "(bypasses all dedup checks)"
+                        ),
                         "default": False,
                     },
                 },

@@ -124,8 +124,17 @@ def extract_content(html: str, url: str, *, raw_hash: str = "") -> ParsedPage | 
         return None
 
 
-# Pattern for valid HTTP(S) links
-_HREF_RE = re.compile(r'<a\s[^>]*href=["\']([^"\'#][^"\']*)["\']', re.IGNORECASE)
+# Pattern for valid HTTP(S) links — supports quoted and unquoted href values
+# Group 1: quoted href (single or double quotes)
+# Group 2: unquoted href (no spaces, no >)
+_HREF_RE = re.compile(
+    r"<a\s[^>]*href=(?:"
+    r'["\']([^"\'#][^"\']*)["\']'  # quoted: href="..." or href='...'
+    r"|"
+    r'([^\s>"\'#][^\s>"\']*))'  # unquoted: href=path/to/page
+    r"",
+    re.IGNORECASE,
+)
 
 
 def _extract_image_alts(html: str) -> list[str]:
@@ -225,7 +234,7 @@ def extract_links(html: str, base_url: str) -> list[str]:
     links: list[str] = []
 
     for match in _HREF_RE.finditer(html):
-        href = match.group(1).strip()
+        href = (match.group(1) or match.group(2) or "").strip()
 
         # Skip non-HTTP schemes
         if href.startswith(("mailto:", "javascript:", "tel:", "data:")):

@@ -9,6 +9,7 @@ Extracted from CLI and MCP handlers to enforce SRP:
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 
@@ -393,6 +394,27 @@ class AppContext:
                 self.key_pair,
             )
 
+        # ── Credit sync (cross-node credit aggregation) ────
+        self.credit_sync_manager: object | None = None
+        if self.ledger is not None and self.github_email:
+            try:
+                from infomesh.credits.sync import (
+                    CreditSyncManager,
+                    CreditSyncStore,
+                )
+
+                sync_store = CreditSyncStore(
+                    c.node.data_dir / "credit_sync.db",
+                )
+                self.credit_sync_manager = CreditSyncManager(
+                    ledger=self.ledger,
+                    store=sync_store,
+                    owner_email=self.github_email,
+                    key_pair=self.key_pair,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("credit_sync_unavailable")
+
         logger.info(
             "app_context_initialized",
             role=role,
@@ -400,6 +422,7 @@ class AppContext:
             has_search=self.link_graph is not None,
             has_index_sender=self.index_submit_sender is not None,
             has_index_receiver=self.index_submit_receiver is not None,
+            has_credit_sync=self.credit_sync_manager is not None,
         )
 
     def close(self) -> None:
@@ -409,6 +432,9 @@ class AppContext:
            event loop — this does **not** close the async HTTP client
            held by the crawl worker.
         """
+        if self.credit_sync_manager is not None:
+            with contextlib.suppress(Exception):
+                self.credit_sync_manager._store.close()  # type: ignore[attr-defined]
         if self.vector_store is not None:
             self.vector_store.close()
         if self.ledger is not None:

@@ -13,7 +13,7 @@ from textual.widgets import Static
 from infomesh import __version__
 from infomesh.config import Config
 from infomesh.credits.github_identity import resolve_github_email
-from infomesh.dashboard.data_cache import DashboardDataCache
+from infomesh.dashboard.data_cache import DashboardDataCache, RecentDoc
 from infomesh.dashboard.utils import (
     format_uptime,
     get_peer_id,
@@ -255,6 +255,9 @@ class OverviewPane(Widget):
         self._config = config
         self._data_cache = data_cache
         self._refresh_timer: Timer | None = None
+        # Track doc IDs already logged so LiveLog only shows new arrivals
+        self._seen_doc_ids: set[int] = set()
+        self._last_doc_count: int = 0
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -275,6 +278,10 @@ class OverviewPane(Widget):
                 stats = self._data_cache.get_stats()
                 act_panel = self.query_one("#activity", ActivityPanel)
                 act_panel.update_index(stats.document_count)
+                self._last_doc_count = stats.document_count
+                # Seed seen IDs so initial docs aren't re-logged on next tick
+                for doc in stats.recent_docs:
+                    self._seen_doc_ids.add(doc.doc_id)
             else:
                 from infomesh.index.local_store import LocalStore
 
@@ -286,6 +293,7 @@ class OverviewPane(Widget):
                 raw = store.get_stats()
                 act_panel = self.query_one("#activity", ActivityPanel)
                 act_panel.update_index(raw["document_count"])
+                self._last_doc_count = int(raw["document_count"])
                 store.close()
         except Exception:  # noqa: BLE001
             pass
@@ -294,6 +302,12 @@ class OverviewPane(Widget):
         try:
             log = self.query_one("#events-log", LiveLog)
             log.log_event("Dashboard started", style="bold green")
+            # Show the most recent docs as initial log entries
+            if self._data_cache is not None:
+                stats = self._data_cache.get_stats()
+                # Show last 5 in reverse-chronological order (oldest first)
+                for doc in reversed(stats.recent_docs[:5]):
+                    log.log_crawl(self._format_doc_line(doc), success=True)
         except Exception:  # noqa: BLE001
             pass
 
@@ -318,6 +332,9 @@ class OverviewPane(Widget):
                 act_panel = self.query_one("#activity", ActivityPanel)
                 act_panel.update_index(stats.document_count)
                 act_panel.update_crawl(stats.pages_last_hour)
+
+                # Push newly crawled docs to LiveLog
+                self._push_new_docs_to_log(stats.recent_docs, stats.document_count)
             else:
                 from infomesh.index.local_store import LocalStore
 
@@ -333,6 +350,44 @@ class OverviewPane(Widget):
                 store.close()
         except Exception:  # noqa: BLE001
             pass
+
+    @staticmethod
+    def _format_doc_line(doc: RecentDoc) -> str:
+        """Format a recent doc for log display."""
+        title = doc.title[:40] + "…" if len(doc.title) > 40 else doc.title
+        if title:
+            return f"{doc.url}  ({title})"
+        return doc.url
+
+    def _push_new_docs_to_log(
+        self,
+        recent_docs: list[RecentDoc],
+        doc_count: int,
+    ) -> None:
+        """Detect newly indexed documents and log them to LiveLog."""
+        if doc_count <= self._last_doc_count and not recent_docs:
+            return
+
+        new_docs = [d for d in recent_docs if d.doc_id not in self._seen_doc_ids]
+        if not new_docs:
+            self._last_doc_count = doc_count
+            return
+
+        try:
+            log = self.query_one("#events-log", LiveLog)
+            # Show oldest-first so log reads chronologically
+            for doc in sorted(new_docs, key=lambda d: d.crawled_at):
+                log.log_crawl(self._format_doc_line(doc), success=True)
+                self._seen_doc_ids.add(doc.doc_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Prevent unbounded growth — keep only the newest 500 IDs
+        if len(self._seen_doc_ids) > 500:
+            sorted_ids = sorted(self._seen_doc_ids)
+            self._seen_doc_ids = set(sorted_ids[-300:])
+
+        self._last_doc_count = doc_count
 
     def refresh_data(self) -> None:
         """Manual refresh."""

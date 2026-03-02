@@ -57,11 +57,11 @@
     },
     {
       "name": "crawl_url",
-      "description": "Add a URL to the crawl queue and index it. Rate limited to 60 URLs/hour.",
+      "description": "Add a URL to the crawl queue and index it. Stays within same domain + path prefix. Rate limited to 60 URLs/hour.",
       "parameters": {
         "url": { "type": "string", "description": "URL to crawl" },
-        "depth": { "type": "integer", "description": "Link-follow depth (0=this page only)", "default": 0 },
-        "force": { "type": "boolean", "description": "Force re-crawl even if previously crawled", "default": false }
+        "depth": { "type": "integer", "description": "Link-follow depth (0=this page only, default unlimited via config)", "default": 0 },
+        "force": { "type": "boolean", "description": "Bypass all dedup checks (URL, content hash, near-duplicate) to force re-crawl", "default": false }
       }
     },
     {

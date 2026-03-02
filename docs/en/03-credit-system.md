@@ -171,7 +171,44 @@ LLM-related earnings are designed to never exceed ~60% of a node's total credits
 | Free-rider prevention | Rate-limited when net credit balance is negative |
 | Contribution priority | Higher score → higher trust + query routing priority |
 | Credit farming defense | New node probation + statistical anomaly detection (see [Trust & Integrity](07-trust-integrity.md#54-credit-farming-prevention)) |
-| `crawl_url()` rate limit | 60 URLs/hr per node, 10/domain pending queue, max depth=3 |
+| `crawl_url()` rate limit | 60 URLs/hr per node, 10/domain pending queue, depth unlimited (0=unlimited, configurable). Same-domain only. |
+
+## Cross-Node Credit Synchronization
+
+When you run InfoMesh on multiple devices (e.g., PC and laptop) with the **same GitHub email**, each device maintains its own local credit ledger. The credit sync system enables those nodes to discover each other and display **aggregated** credit statistics across all your devices.
+
+### How It Works
+
+1. **Peer discovery**: On connect, each node announces a SHA-256 hash of its GitHub email (privacy-preserving — the plaintext email is never sent on the wire).
+2. **Same-owner matching**: If two peers share the same email hash, they recognize each other as same-owner nodes.
+3. **Summary exchange**: Matched peers exchange signed credit summaries containing total earned, total spent, contribution score, and tier.
+4. **Aggregation**: Each node computes a unified view by merging its local stats with received peer summaries.
+5. **Periodic sync**: Summaries are re-exchanged every 5 minutes to stay current.
+
+### Requirements
+
+- Set your GitHub email in `~/.infomesh/config.toml` under `[node]`:
+  ```toml
+  github_email = "you@example.com"
+  ```
+  Or configure it in `git config user.email` (auto-detected).
+- P2P mode must be enabled and nodes must be connected to the same network.
+
+### Privacy & Security
+
+| Aspect | Detail |
+|--------|--------|
+| Email privacy | Only SHA-256 hash exchanged, never plaintext |
+| Integrity | Each summary is signed with the node's Ed25519 key |
+| No double-counting | Summaries keyed by peer_id; each contributes exactly one |
+| Stale sweep | Peer summaries older than 72 hours are purged |
+| DoS limit | Maximum 20 peer summaries stored per owner |
+
+### Viewing Aggregated Credits
+
+- **MCP `status` / `credit_balance` tools**: Include a `network` sub-object when multiple same-owner nodes are synced.
+- **Dashboard**: The Credits tab shows both local and network-wide balance.
+- **Text report** (`infomesh dashboard --tab credits`): Displays network totals below local stats.
 
 ---
 
