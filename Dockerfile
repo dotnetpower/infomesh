@@ -1,7 +1,7 @@
 # ── Build stage ──────────────────────────────────────────────────────────
 FROM python:3.13-slim AS builder
 
-# Install build tools for native extensions (fastecdsa, etc.)
+# Install build tools for native extensions (P2P: fastecdsa, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libgmp-dev libffi-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -15,7 +15,7 @@ WORKDIR /app
 # README.md is needed because hatchling validates metadata during resolution
 COPY pyproject.toml uv.lock README.md ./
 
-# Install production dependencies only (including P2P support)
+# Install production dependencies only (with P2P support)
 RUN uv sync --frozen --no-dev --no-install-project --extra p2p
 
 # Copy source code
@@ -24,7 +24,7 @@ COPY seeds/ seeds/
 COPY bootstrap/ bootstrap/
 
 # Install the project itself
-RUN uv sync --frozen --no-dev --extra p2p
+RUN uv sync --frozen --no-dev
 
 
 # ── Runtime stage ────────────────────────────────────────────────────────

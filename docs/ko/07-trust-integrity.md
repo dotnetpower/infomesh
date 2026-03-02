@@ -220,6 +220,19 @@ class SummarizedDocument:
      → timestamp 차이가 크면 자연스러운 변경으로 판단
 ```
 
+#### 4.3.1 감사 증명 (Proof-of-Audit)
+
+감사자가 실제로 재크롤링하지 않고 "통과"라고 거짓 보고하는 것을 방지합니다:
+
+- **증거 제출**: 각 `AuditResult`에는 감사자가 독립적으로 재크롤링하여 얻은
+  `actual_text_hash`와 `actual_raw_hash`가 포함됩니다.
+- **교차 검증**: `_cross_validate_auditor_hashes()`가 3명의 감사자 해시를
+  비교합니다. 다수결 합의에서 벗어나는 감사자는 `suspicious_auditors`로 플래그됩니다.
+- **감사자 서명**: 각 `AuditResult`에는 정규화된 감사 증거에 대한
+  `auditor_signature` (Ed25519)가 포함되어 감사자가 해당 결과를 생성했음을 증명합니다.
+- **정규화**: `audit_result_canonical(result)`가 감사 데이터의 결정론적
+  바이트 표현을 생성하여 서명 검증을 보장합니다.
+
 ### 4.4 통합 신뢰 점수
 
 ```
@@ -332,7 +345,39 @@ DHT 발행 검증:
 | 교체 | `infomesh keys rotate`로 지원; 이전 키가 DHT에서 새 키로의 인수 서명 |
 | 폐기 | 키 유출 시: DHT에 서명된 폐기 레코드 발행; ~1시간 내에 네트워크가 이전 키 거부 (가십 전파) |
 
-### 5.6 `crawl_url()` 남용 방지
+### 5.6 P2P 메시지 인증
+
+모든 P2P 메시지는 인증 및 재전송 방지를 위해 **SignedEnvelope**로
+래핑됩니다 (`infomesh/p2p/message_auth.py`):
+
+```
+SignedEnvelope:
+  payload:    bytes      # 내부 메시지 바이트
+  peer_id:    str        # 발신자 신원
+  signature:  bytes      # canonical(peer_id, nonce, timestamp, payload)에 대한 Ed25519
+  nonce:      int        # 단조 증가 카운터
+  timestamp:  float      # UTC 에포크 — 300초 초과 시 거부
+
+5단계 검증:
+  1. 격리 확인  — 네트워크 격리된 피어는 거부 (TrustStore.is_isolated)
+  2. 키 조회    — 피어의 공개 키가 알려지지 않으면 거부 (PeerKeyRegistry)
+  3. 신선도     — 타임스탬프가 MAX_MESSAGE_AGE_SECONDS(300초)보다 오래되면 거부
+  4. 재전송     — 해당 피어의 마지막 nonce 이하이면 거부 (NonceTracker)
+  5. 서명       — canonical 바이트에 대해 Ed25519 검증
+```
+
+프로토콜 통합:
+- `MessageType.SIGNED_ENVELOPE = 100` (`protocol.py`)
+- `encode_signed_envelope()` / `decode_signed_envelope()` 와이어 포맷 헬퍼
+
+| 컴포넌트 | 용도 |
+|---------|------|
+| `NonceCounter` | 아웃바운드 메시지용 스레드 안전 단조 nonce 생성기 |
+| `PeerKeyRegistry` | `peer_id → public_key_bytes` 인메모리 매핑 |
+| `NonceTracker` | 피어별 최고 nonce 추적으로 재전송 방지 |
+| `VerificationError` | 검증 실패 시 사용자 정의 예외 (구체적 사유 포함) |
+
+### 5.7 `crawl_url()` 남용 방지
 
 MCP `crawl_url()` 도구가 네트워크를 과도한 요청으로 압도하는 데 악용될 수 있습니다.
 

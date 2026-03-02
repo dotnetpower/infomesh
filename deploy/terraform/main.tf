@@ -77,7 +77,7 @@ output "cloud_init" {
     chown infomesh:infomesh ${var.data_dir}
 
     # Install InfoMesh
-    uv pip install infomesh
+    uv pip install 'infomesh[p2p]'
 
     # Install systemd service
     cat > /etc/systemd/system/infomesh.service << 'EOF'

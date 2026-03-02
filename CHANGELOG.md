@@ -169,6 +169,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.4] — 2026-02-18
+
+### Changed
+
+- **P2P made optional** — `libp2p` and `trio` moved to `[p2p]` optional
+  dependency group. Core install no longer requires native build tools
+  (`gcc`, `libgmp-dev`). Install P2P support with `pip install 'infomesh[p2p]'`
+- MCP tools consolidated from 19 to 5 (`web_search`, `fetch_page`, `crawl_url`,
+  `fact_check`, `status`). Legacy tool names still supported for backward
+  compatibility
+- Fixed 26 code-documentation inconsistencies across README, docs (EN/KO),
+  smithery.json, llms.txt, Helm values, Terraform config
+
+---
+
+## [0.1.5] — 2026-02-25
+
+### Added
+
+- **P2P Message Authentication** — `SignedEnvelope` wrapping all inter-node
+  messages with Ed25519 signatures, monotonic nonce replay protection, and
+  300-second timestamp freshness (`infomesh/p2p/message_auth.py`)
+- **Proof-of-Audit** — auditors must submit actual content hashes as evidence;
+  cross-validation detects dishonest auditors via majority consensus
+  (`_cross_validate_auditor_hashes()` in `audit.py`)
+- **Transport isolation enforcement** — `TrustStore.is_isolated()` checked at
+  message verification level, blocking all communication from isolated peers
+- **DMCA SQLite persistence** — takedown notices, acknowledgments, and
+  propagation records survive node restarts (`_TakedownStore`)
+- **GDPR SQLite persistence** — deletion requests, confirmations, propagation
+  records, and URL blocklist survive node restarts (`_GDPRStore`)
+- `SIGNED_ENVELOPE = 100` message type in P2P protocol
+- 32 new security hardening tests (total: 1476 → 1508 tests)
+
+---
+
+## [0.1.6] — 2026-03-01
+
+### Fixed
+
+- **CRITICAL**: `_verify_raw()` called non-existent
+  `Ed25519PublicKey.from_public_key_bytes()` — corrected to
+  `from_public_bytes()`. Real Ed25519 verification was silently failing
+- Fixed 14 wrong `# type: ignore[union-attr]` → `[attr-defined]` in
+  `node.py` (eliminated mypy false positives)
+- Fixed `no-any-return` mypy errors in `github_identity.py`
+
+### Added
+
+- 4 new tests exercising real `cryptography` Ed25519 verification
+  (no mocking), catching bugs like the `from_public_bytes` typo
+- `pytest-timeout` added to dev dependencies
+
+---
+
 ## [0.1.2] — 2026-02-01
 
 ### Added
@@ -205,7 +260,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - zstd compression for index snapshots
 - Common Crawl data import
 
-[0.2.0]: https://github.com/dotnetpower/infomesh/compare/v0.1.3...v0.2.0
+[0.2.0]: https://github.com/dotnetpower/infomesh/compare/v0.1.6...v0.2.0
+[0.1.6]: https://github.com/dotnetpower/infomesh/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/dotnetpower/infomesh/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/dotnetpower/infomesh/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/dotnetpower/infomesh/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/dotnetpower/infomesh/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/dotnetpower/infomesh/compare/v0.1.0...v0.1.1

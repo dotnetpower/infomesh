@@ -26,6 +26,7 @@ from typing import Any
 
 import structlog
 
+from infomesh.db import SQLiteStore
 from infomesh.hashing import content_hash, short_hash
 from infomesh.types import KeyPairLike
 
@@ -100,14 +101,22 @@ class DeletionRecord:
 class DeletionManager:
     """Manages GDPR deletion requests — creation, verification, compliance.
 
-    Maintains a local registry of deletion requests and a blocklist of
-    URLs that must never be re-crawled.
+    Maintains a **persistent** registry of deletion requests and a
+    blocklist of URLs that must never be re-crawled, backed by SQLite
+    so records survive restarts.  A node cannot evade GDPR obligations
+    by simply restarting.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: str | None = None) -> None:
         self._records: dict[str, DeletionRecord] = {}
         self._url_deletions: dict[str, str] = {}  # url → request_id
         self._blocklist: set[str] = set()  # URLs permanently blocked
+
+        # Persistent storage
+        self._store: _GDPRStore | None = None
+        if db_path is not None:
+            self._store = _GDPRStore(db_path)
+            self._load_from_store()
 
     def create_request(
         self,
@@ -151,6 +160,8 @@ class DeletionManager:
         self._records[request_id] = DeletionRecord(request=request)
         self._url_deletions[url] = request_id
         self._blocklist.add(url)
+        self._persist_request(request)
+        self._persist_blocklist(url)
 
         logger.info(
             "gdpr_deletion_created",
@@ -220,8 +231,10 @@ class DeletionManager:
 
         if request.request_id not in self._records:
             self._records[request.request_id] = DeletionRecord(request=request)
+            self._persist_request(request)
         self._url_deletions[request.url] = request.request_id
         self._blocklist.add(request.url)
+        self._persist_blocklist(request.url)
         logger.info(
             "gdpr_request_accepted",
             request_id=request.request_id,
@@ -259,6 +272,7 @@ class DeletionManager:
             detail=f"deleted at {now:.0f}",
         )
         record.confirmations.append(confirmation)
+        self._persist_confirmation(confirmation)
 
         logger.info(
             "gdpr_deletion_confirmed",
@@ -272,6 +286,7 @@ class DeletionManager:
         record = self._records.get(request_id)
         if record and peer_id not in record.propagated_to:
             record.propagated_to.append(peer_id)
+            self._persist_propagation(request_id, peer_id)
 
     def is_blocked(self, url: str) -> bool:
         """Check if a URL is on the permanent deletion blocklist.
@@ -298,6 +313,7 @@ class DeletionManager:
 
         # Remove from blocklist
         self._blocklist.discard(url)
+        self._remove_from_blocklist(url)
 
         # Mark the record as invalid
         request_id = self._url_deletions.pop(url, None)
@@ -347,6 +363,221 @@ class DeletionManager:
     def blocklist_size(self) -> int:
         """Number of URLs on the blocklist."""
         return len(self._blocklist)
+
+    # -- persistence helpers --
+
+    def _load_from_store(self) -> None:
+        """Load all records from SQLite into memory caches."""
+        if self._store is None:
+            return
+        for req, confs, props in self._store.load_all():
+            self._records[req.request_id] = DeletionRecord(
+                request=req,
+                confirmations=list(confs),
+                propagated_to=list(props),
+            )
+            self._url_deletions[req.url] = req.request_id
+        # Reload blocklist
+        for url in self._store.load_blocklist():
+            self._blocklist.add(url)
+
+    def _persist_request(self, request: DeletionRequest) -> None:
+        if self._store is not None:
+            self._store.save_request(request)
+
+    def _persist_confirmation(self, confirmation: DeletionConfirmation) -> None:
+        if self._store is not None:
+            self._store.save_confirmation(confirmation)
+
+    def _persist_propagation(self, request_id: str, peer_id: str) -> None:
+        if self._store is not None:
+            self._store.save_propagation(request_id, peer_id)
+
+    def _persist_blocklist(self, url: str) -> None:
+        if self._store is not None:
+            self._store.add_blocklist(url)
+
+    def _remove_from_blocklist(self, url: str) -> None:
+        if self._store is not None:
+            self._store.remove_blocklist(url)
+
+    def close(self) -> None:
+        """Close the underlying store, if any."""
+        if self._store is not None:
+            self._store.close()
+
+
+# --- Persistent store -------------------------------------------------------
+
+
+class _GDPRStore(SQLiteStore):
+    """SQLite-backed GDPR record persistence."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS gdpr_requests (
+            request_id  TEXT PRIMARY KEY,
+            url         TEXT NOT NULL,
+            requester_id TEXT NOT NULL,
+            basis       TEXT NOT NULL,
+            reason      TEXT NOT NULL,
+            signature   BLOB NOT NULL,
+            created_at  REAL NOT NULL,
+            personal_data_fields TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE INDEX IF NOT EXISTS idx_gdpr_url
+            ON gdpr_requests(url);
+
+        CREATE TABLE IF NOT EXISTS gdpr_confirmations (
+            request_id  TEXT NOT NULL,
+            peer_id     TEXT NOT NULL,
+            status      TEXT NOT NULL,
+            deleted_at  REAL,
+            detail      TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (request_id, peer_id, status)
+        );
+
+        CREATE TABLE IF NOT EXISTS gdpr_propagations (
+            request_id  TEXT NOT NULL,
+            peer_id     TEXT NOT NULL,
+            PRIMARY KEY (request_id, peer_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS gdpr_blocklist (
+            url TEXT PRIMARY KEY
+        );
+    """
+
+    # -- write --
+
+    def save_request(self, request: DeletionRequest) -> None:
+        import json
+
+        self._conn.execute(
+            "INSERT OR REPLACE INTO gdpr_requests "
+            "(request_id, url, requester_id, basis, reason, "
+            "signature, created_at, personal_data_fields) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                request.request_id,
+                request.url,
+                request.requester_id,
+                request.basis.value,
+                request.reason,
+                request.signature,
+                request.created_at,
+                json.dumps(request.personal_data_fields),
+            ),
+        )
+        self._conn.commit()
+
+    def save_confirmation(self, confirmation: DeletionConfirmation) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO gdpr_confirmations "
+            "(request_id, peer_id, status, deleted_at, detail) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                confirmation.request_id,
+                confirmation.peer_id,
+                confirmation.status.value,
+                confirmation.deleted_at,
+                confirmation.detail,
+            ),
+        )
+        self._conn.commit()
+
+    def save_propagation(self, request_id: str, peer_id: str) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO gdpr_propagations "
+            "(request_id, peer_id) VALUES (?, ?)",
+            (request_id, peer_id),
+        )
+        self._conn.commit()
+
+    def add_blocklist(self, url: str) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO gdpr_blocklist (url) VALUES (?)",
+            (url,),
+        )
+        self._conn.commit()
+
+    def remove_blocklist(self, url: str) -> None:
+        self._conn.execute(
+            "DELETE FROM gdpr_blocklist WHERE url = ?",
+            (url,),
+        )
+        self._conn.commit()
+
+    # -- read --
+
+    def load_all(
+        self,
+    ) -> list[
+        tuple[
+            DeletionRequest,
+            list[DeletionConfirmation],
+            list[str],
+        ]
+    ]:
+        import json
+
+        rows = self._conn.execute(
+            "SELECT request_id, url, requester_id, basis, reason, "
+            "signature, created_at, personal_data_fields "
+            "FROM gdpr_requests"
+        ).fetchall()
+
+        results: list[
+            tuple[
+                DeletionRequest,
+                list[DeletionConfirmation],
+                list[str],
+            ]
+        ] = []
+        for row in rows:
+            fields_raw = row[7]
+            fields = json.loads(fields_raw) if isinstance(fields_raw, str) else []
+            req = DeletionRequest(
+                request_id=row[0],
+                url=row[1],
+                requester_id=row[2],
+                basis=DeletionBasis(row[3]),
+                reason=row[4],
+                signature=bytes(row[5]),
+                created_at=row[6],
+                personal_data_fields=fields,
+            )
+            confs = self._load_confirmations(req.request_id)
+            props = self._load_propagations(req.request_id)
+            results.append((req, confs, props))
+        return results
+
+    def _load_confirmations(self, request_id: str) -> list[DeletionConfirmation]:
+        rows = self._conn.execute(
+            "SELECT request_id, peer_id, status, deleted_at, detail "
+            "FROM gdpr_confirmations WHERE request_id = ?",
+            (request_id,),
+        ).fetchall()
+        return [
+            DeletionConfirmation(
+                request_id=r[0],
+                peer_id=r[1],
+                status=DeletionStatus(r[2]),
+                deleted_at=r[3],
+                detail=r[4],
+            )
+            for r in rows
+        ]
+
+    def _load_propagations(self, request_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT peer_id FROM gdpr_propagations WHERE request_id = ?",
+            (request_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def load_blocklist(self) -> list[str]:
+        rows = self._conn.execute("SELECT url FROM gdpr_blocklist").fetchall()
+        return [r[0] for r in rows]
 
 
 # --- Serialization ----------------------------------------------------------

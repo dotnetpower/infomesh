@@ -18,7 +18,7 @@ InfoMesh uses **hatchling** as its build backend. Key packaging files:
 ```
 infomesh/
 ├── pyproject.toml          # Package metadata, dependencies, build config
-├── infomesh/__init__.py    # __version__ = "0.1.0"
+├── infomesh/__init__.py    # __version__ = "0.1.6"
 ├── infomesh/__main__.py    # CLI entry point
 ├── LICENSE                 # MIT License
 ├── README.md               # PyPI long description
@@ -34,7 +34,7 @@ infomesh/
 ```toml
 [project]
 name = "infomesh"
-version = "0.1.0"
+version = "0.1.6"
 requires-python = ">=3.12"
 license = "MIT"
 
@@ -42,7 +42,7 @@ license = "MIT"
 infomesh = "infomesh.__main__:main"      # CLI entry point
 
 [project.optional-dependencies]
-p2p = ["libp2p>=0.2"]                    # P2P networking
+p2p = ["trio>=0.22", "libp2p>=0.2"]   # P2P networking
 vector = ["chromadb>=0.5", ...]          # Semantic search
 llm = ["ollama>=0.3"]                    # Local LLM
 all = ["infomesh[p2p,vector,llm]"]       # Everything
@@ -55,19 +55,19 @@ build-backend = "hatchling.build"
 ## Installation Options (After Publishing)
 
 ```bash
-# Core only (search + crawl + MCP)
+# Core (search + crawl + MCP)
 pip install infomesh
+
+# With P2P networking (requires native build tools)
+pip install 'infomesh[p2p]'
 
 # With semantic vector search
 pip install infomesh[vector]
 
-# With P2P networking
-pip install infomesh[p2p]
-
 # With local LLM summarization
 pip install infomesh[llm]
 
-# Everything
+# Everything (P2P + vector + LLM)
 pip install infomesh[all]
 
 # Using uv

@@ -160,10 +160,12 @@ def run_first_start_checks(config: Config, interactive: bool = True) -> str | No
 
         # Even without git, user can set email manually in interactive mode
         if is_tty:
-            email_input = click.prompt(
-                "  Enter GitHub email (or press Enter to skip)",
-                default="",
-                show_default=False,
+            email_input: str = str(
+                click.prompt(
+                    "  Enter GitHub email (or press Enter to skip)",
+                    default="",
+                    show_default=False,
+                )
             )
             if email_input and is_valid_email(email_input):
                 from dataclasses import replace as dc_replace
@@ -206,10 +208,12 @@ def run_first_start_checks(config: Config, interactive: bool = True) -> str | No
         "  Link your GitHub account now? (enables cross-node credits)",
         default=True,
     ):
-        email_input = click.prompt(
-            "  GitHub email",
-            default="",
-            show_default=False,
+        email_input = str(
+            click.prompt(
+                "  GitHub email",
+                default="",
+                show_default=False,
+            )
         )
         if email_input and is_valid_email(email_input):
             from dataclasses import replace as dc_replace

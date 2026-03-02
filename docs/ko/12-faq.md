@@ -36,10 +36,9 @@ P2P 네트워크를 통해 웹을 크롤링, 인덱싱, 검색하며 MCP(Model C
 - **psutil** — 선택 사항, 대시보드의 시스템 리소스 모니터링용
 - 첫 설치와 크롤링에 인터넷 필요 (로컬 검색은 오프라인 가능)
 
-#### P2P용 시스템 패키지 (선택)
+#### P2P용 시스템 패키지
 
-`p2p` 추가 기능(`libp2p`)은 C 확장(`fastecdsa`, `coincurve`, `pynacl`)을 포함하며, 네이티브 빌드 도구가 필요합니다.
-기본 설치에서는 **불필요**하며, `uv sync --extra p2p` 또는 `pip install infomesh[p2p]` 사용 시에만 필요합니다.
+P2P 네트워킹(`libp2p`)은 **선택적** 의존성입니다. 기본 설치(`pip install infomesh`)는 네이티브 빌드 도구 없이 작동합니다. P2P를 활성화하려면 `pip install 'infomesh[p2p]'`로 설치하세요. P2P 확장에는 네이티브 빌드 도구가 필요한 C 확장(`fastecdsa`, `coincurve`, `pynacl`)이 포함됩니다.
 
 **Linux (Debian / Ubuntu):**
 ```bash
@@ -83,9 +82,8 @@ docker run -p 4001:4001 -p 8080:8080 infomesh
 
 ```bash
 pip install infomesh[vector]   # ChromaDB 벡터 검색
-pip install infomesh[p2p]      # libp2p P2P 네트워킹
 pip install infomesh[llm]      # 로컬 LLM 요약
-pip install infomesh[all]      # 모두 포함
+pip install infomesh[all]      # 전체 (벡터 + LLM)
 ```
 
 ---

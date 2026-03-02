@@ -852,8 +852,8 @@ class InfoMeshNode:
         result: list[tuple[str, str]] = []
         for pid in self.get_connected_peers():
             try:
-                peerstore = self._host.get_peerstore()  # type: ignore[union-attr]
-                addrs = peerstore.addrs(pid)  # type: ignore[arg-type]
+                peerstore = self._host.get_peerstore()  # type: ignore[attr-defined]
+                addrs = peerstore.addrs(pid)
                 if addrs:
                     maddr = f"{addrs[0]}/p2p/{pid}"
                     result.append((str(pid), str(maddr)))
@@ -886,7 +886,7 @@ class InfoMeshNode:
             try:
                 from libp2p.peer.id import ID as PeerID
 
-                stream = await self._host.new_stream(  # type: ignore[union-attr]
+                stream = await self._host.new_stream(  # type: ignore[attr-defined]
                     PeerID.from_base58(target_pid),
                     [PROTOCOL_PEX],
                 )
@@ -894,14 +894,14 @@ class InfoMeshNode:
                     MessageType.PEX_REQUEST,
                     {"peer_id": self._peer_id, "max_peers": PEX_MAX_PEERS},
                 )
-                await stream.write(req)  # type: ignore[attr-defined]
+                await stream.write(req)
 
                 data = b""
                 timed_out = True
                 with _trio.move_on_after(5):
-                    data = await stream.read(65536)  # type: ignore[attr-defined]
+                    data = await stream.read(65536)
                     timed_out = False
-                await stream.close()  # type: ignore[attr-defined]
+                await stream.close()
 
                 if timed_out or not data:
                     continue
@@ -914,7 +914,7 @@ class InfoMeshNode:
                 if isinstance(payload, dict):
                     raw = payload.get("peers", [])
                     if isinstance(raw, list):
-                        peers_data = raw  # type: ignore[assignment]
+                        peers_data = raw
 
                 new_peers = self._pex.process_response(
                     target_pid,
@@ -969,7 +969,7 @@ class InfoMeshNode:
                 peer_info = info_from_p2p_addr(maddr)
                 timed_out = True
                 with _trio.move_on_after(5):
-                    await self._host.connect(peer_info)  # type: ignore[union-attr]
+                    await self._host.connect(peer_info)  # type: ignore[attr-defined]
                     connected += 1
                     timed_out = False
                     self._peer_store.upsert(entry.peer_id, entry.multiaddr)
@@ -1007,8 +1007,8 @@ class InfoMeshNode:
                 # Build multiaddr: /ip4/0.0.0.0/tcp/4001/p2p/<peer_id>
                 # We use the peer's network stream addresses when available
                 try:
-                    peerstore = self._host.get_peerstore()  # type: ignore[union-attr]
-                    peer_addrs = peerstore.addrs(pid)  # type: ignore[arg-type]
+                    peerstore = self._host.get_peerstore()  # type: ignore[attr-defined]
+                    peer_addrs = peerstore.addrs(pid)
                     if peer_addrs:
                         maddr = f"{peer_addrs[0]}/p2p/{pid}"
                         peers_to_save.append((str(pid), str(maddr)))

@@ -40,8 +40,8 @@
 ---
 
 > [!TIP]
-> **P2P Bootstrap Node Available**
-> InfoMesh ships with a default bootstrap node — your node connects automatically on first start. To add more peers manually:
+> **P2P Bootstrap Nodes Active**
+> InfoMesh ships with multiple bootstrap nodes across Azure regions — your node connects automatically on first start. To add more peers manually:
 > ```bash
 > infomesh peer add /ip4/<IP>/tcp/4001/p2p/<PEER_ID>
 > infomesh peer test
@@ -244,7 +244,7 @@ If you want to contribute code or run from source:
 
 #### System Prerequisites
 
-The P2P optional dependency (`libp2p`) includes C extensions (`fastecdsa`, `coincurve`, `pynacl`) that require native build tools.
+The P2P optional dependency (`libp2p`) includes C extensions (`fastecdsa`, `coincurve`, `pynacl`) that require native build tools. These are only needed if you install with `pip install 'infomesh[p2p]'`.
 
 **Linux (Debian / Ubuntu):**
 
@@ -378,9 +378,6 @@ InfoMesh exposes **15 MCP tools completely free** — no API key, no billing:
 ### Optional Add-ons
 
 ```bash
-# P2P network support (libp2p + Kademlia DHT)
-uv sync --extra p2p
-
 # Vector search with ChromaDB + sentence-transformers
 uv sync --extra vector
 
@@ -841,8 +838,8 @@ All core phases are **complete**. Current focus is on community growth and produ
 
 ### What's Next
 
-- 🌍 **Public bootstrap nodes** — volunteer-run seed nodes for easy onboarding
-  > ⚠️ **Note**: Public bootstrap node setup is currently in progress. Until official bootstrap nodes are available, you can connect peers manually using `infomesh peer add /ip4/<IP>/tcp/4001/p2p/<PEER_ID>` or configure bootstrap nodes in `~/.infomesh/config.toml`. Use `infomesh peer test` to verify connectivity. This will be resolved shortly.
+- 🌍 **Public bootstrap nodes** — community-maintained seed nodes across multiple Azure regions
+  > ✅ **Active**: Bootstrap nodes are live in US East and US East 2. Your node connects automatically via `bootstrap/nodes.json`. No manual configuration needed.
 - 🎭 **JS rendering** — Playwright-based SPA crawling for JS-heavy sites
 - 📱 **Web dashboard** — optional browser UI alongside the TUI
 - 🔍 **Semantic search fusion** — BM25 + vector hybrid ranking with RRF

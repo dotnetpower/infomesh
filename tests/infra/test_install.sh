@@ -338,21 +338,32 @@ if command -v docker &>/dev/null; then
   if docker build -t infomesh-test . 2>&1 | tail -3; then
     record "docker" "build" "PASS"
 
-    log "Testing: docker run infomesh --version"
-    if ver=$(docker run --rm infomesh-test infomesh --version 2>&1); then
-      record "docker" "infomesh --version" "PASS" "$ver"
+    log "Testing: docker run --version"
+    if ver=$(docker run --rm infomesh-test --version 2>&1); then
+      record "docker" "--version" "PASS" "$ver"
     else
-      record "docker" "infomesh --version" "FAIL" "$ver"
+      record "docker" "--version" "FAIL" "$ver"
     fi
 
-    log "Testing: docker run infomesh status"
-    if status_out=$(docker run --rm infomesh-test infomesh status 2>&1); then
-      record "docker" "infomesh status" "PASS"
+    log "Testing: docker run status"
+    if status_out=$(docker run --rm infomesh-test status 2>&1); then
+      record "docker" "status" "PASS"
     else
       if echo "$status_out" | grep -qi "traceback\|modulenotfound"; then
-        record "docker" "infomesh status" "FAIL"
+        record "docker" "status" "FAIL" "$(echo "$status_out" | tail -2 | head -1)"
       else
-        record "docker" "infomesh status" "PASS" "exit non-zero but no crash"
+        record "docker" "status" "PASS" "exit non-zero but no crash"
+      fi
+    fi
+
+    log "Testing: docker run crawl"
+    if crawl_out=$(docker run --rm infomesh-test crawl https://example.com 2>&1); then
+      record "docker" "crawl" "PASS"
+    else
+      if echo "$crawl_out" | grep -qi "traceback\|modulenotfound"; then
+        record "docker" "crawl" "FAIL" "$(echo "$crawl_out" | tail -2 | head -1)"
+      else
+        record "docker" "crawl" "PASS" "$(echo "$crawl_out" | head -1)"
       fi
     fi
 
@@ -371,20 +382,31 @@ else
     if sudo docker build -t infomesh-test . 2>&1 | tail -3; then
       record "docker" "build" "PASS"
 
-      if ver=$(sudo docker run --rm infomesh-test infomesh --version 2>&1); then
-        record "docker" "infomesh --version" "PASS" "$ver"
+      if ver=$(sudo docker run --rm infomesh-test --version 2>&1); then
+        record "docker" "--version" "PASS" "$ver"
       else
-        record "docker" "infomesh --version" "FAIL" "$ver"
+        record "docker" "--version" "FAIL" "$ver"
       fi
 
-      log "Testing: docker run infomesh status"
-      if status_out=$(sudo docker run --rm infomesh-test infomesh status 2>&1); then
-        record "docker" "infomesh status" "PASS"
+      log "Testing: docker run status"
+      if status_out=$(sudo docker run --rm infomesh-test status 2>&1); then
+        record "docker" "status" "PASS"
       else
         if echo "$status_out" | grep -qi "traceback\|modulenotfound"; then
-          record "docker" "infomesh status" "FAIL"
+          record "docker" "status" "FAIL" "$(echo "$status_out" | tail -2 | head -1)"
         else
-          record "docker" "infomesh status" "PASS" "exit non-zero but no crash"
+          record "docker" "status" "PASS" "exit non-zero but no crash"
+        fi
+      fi
+
+      log "Testing: docker run crawl"
+      if crawl_out=$(sudo docker run --rm infomesh-test crawl https://example.com 2>&1); then
+        record "docker" "crawl" "PASS"
+      else
+        if echo "$crawl_out" | grep -qi "traceback\|modulenotfound"; then
+          record "docker" "crawl" "FAIL" "$(echo "$crawl_out" | tail -2 | head -1)"
+        else
+          record "docker" "crawl" "PASS" "$(echo "$crawl_out" | head -1)"
         fi
       fi
 

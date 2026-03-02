@@ -401,7 +401,7 @@ def _try_start_p2p(
         log.warning(
             "p2p_unavailable",
             reason="libp2p not installed",
-            hint="pip install 'infomesh[p2p]'  OR  uv sync --extra p2p",
+            hint="pip install 'infomesh[p2p]'",
         )
         return None
 

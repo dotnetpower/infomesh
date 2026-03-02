@@ -26,27 +26,11 @@ AI assistants to external tools.
 
 ## MCP Tools Provided
 
-### Core Search
-- `search(query, limit, format, language, ...)` — Full network web search, merges local + remote results with BM25 + freshness + trust ranking
-- `search_local(query, limit, format, language, ...)` — Local-only search (works offline, <10ms)
-- `batch_search(queries, limit, format)` — Run up to 10 search queries in one call
-- `suggest(prefix, limit)` — Autocomplete / search suggestions
-
-### Content Access
-- `fetch_page(url, format)` — Fetch and return full text of any web page (max 100KB)
-- `crawl_url(url, depth, force)` — Crawl a URL and add it to the index
-
-### Intelligence (NEW in v0.2.0)
-- `explain(query)` — Score breakdown for each result (BM25, freshness, trust components)
-- `search_rag(query)` — RAG-optimized chunked output with source attribution
-- `extract_answer(query)` — Direct answer extraction with confidence scores
-- `fact_check(claim)` — Cross-reference claims against multiple indexed sources
-- `search_history(action)` — View or clear search history with latency stats
-
-### Infrastructure
-- `network_stats(format)` — Network status: peer count, index size, credits
-- `analytics(format)` — Search/crawl/fetch counts and average latency
-- `register_webhook(url)` — Register webhook for crawl completion notifications
+- `web_search(query, top_k, ...)` — Unified web search (P2P + local). Supports RAG (`chunk_size`), score explanation (`explain`), answer extraction (`answer_mode`), offline mode (`local_only`), domain filtering, language filtering, and re-ranking.
+- `fetch_page(url)` — Fetch full extracted text of any web page (max 100KB). Returns cached content or crawls live.
+- `crawl_url(url, depth, force)` — Add a URL to the crawl queue and index it. `force=true` bypasses dedup for re-crawl.
+- `fact_check(claim, top_k)` — Cross-reference a claim against indexed web content. Returns verdict with supporting/contradicting sources.
+- `status()` — Node status: index size, peer count, credit balance, search quota, analytics.
 
 ## MCP Configuration
 
@@ -70,9 +54,9 @@ AI assistants to external tools.
 | Commercial search APIs | Limited / paid | Required | No | No | Logged by provider |
 | Self-hosted search | Depends on setup | Not required | No (single instance) | Varies | Self-hosted |
 
-## Key Capabilities (v0.2.0)
+## Key Capabilities
 
-- 19 MCP tools for search, RAG, fact-checking, analytics, index management
+- 5 consolidated MCP tools for search, content fetching, crawling, fact-checking, and status
 - NLP query processing: stop-words (9 languages), synonyms, spelling correction
 - Search facets, result clustering, snippet highlighting
 - RAG support with chunked output and source attribution

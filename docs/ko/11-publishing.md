@@ -18,7 +18,7 @@ InfoMesh는 **hatchling**을 빌드 백엔드로 사용합니다. 주요 패키�
 ```
 infomesh/
 ├── pyproject.toml          # 패키지 메타데이터, 의존성, 빌드 설정
-├── infomesh/__init__.py    # __version__ = "0.1.0"
+├── infomesh/__init__.py    # __version__ = "0.1.6"
 ├── infomesh/__main__.py    # CLI 엔트리 포인트
 ├── LICENSE                 # MIT 라이선스
 ├── README.md               # PyPI 상세 설명
@@ -34,7 +34,7 @@ infomesh/
 ```toml
 [project]
 name = "infomesh"
-version = "0.1.0"
+version = "0.1.6"
 requires-python = ">=3.12"
 license = "MIT"
 
@@ -42,7 +42,7 @@ license = "MIT"
 infomesh = "infomesh.__main__:main"      # CLI 엔트리 포인트
 
 [project.optional-dependencies]
-p2p = ["libp2p>=0.2"]                    # P2P 네트워킹
+p2p = ["trio>=0.22", "libp2p>=0.2"]   # P2P 네트워킹
 vector = ["chromadb>=0.5", ...]          # 시맨틱 검색
 llm = ["ollama>=0.3"]                    # 로컬 LLM
 all = ["infomesh[p2p,vector,llm]"]       # 전체
@@ -55,19 +55,19 @@ build-backend = "hatchling.build"
 ## 설치 옵션 (퍼블리싱 후)
 
 ```bash
-# 코어만 (검색 + 크롤 + MCP)
+# 코어 (검색 + 크롤 + MCP)
 pip install infomesh
+
+# P2P 네트워킹 포함 (네이티브 빌드 도구 필요)
+pip install 'infomesh[p2p]'
 
 # 시맨틱 벡터 검색 포함
 pip install infomesh[vector]
 
-# P2P 네트워킹 포함
-pip install infomesh[p2p]
-
 # 로컬 LLM 요약 포함
 pip install infomesh[llm]
 
-# 전체
+# 전체 (P2P + 벡터 + LLM)
 pip install infomesh[all]
 
 # uv 사용

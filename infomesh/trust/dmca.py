@@ -23,6 +23,7 @@ from typing import Any
 
 import structlog
 
+from infomesh.db import SQLiteStore
 from infomesh.hashing import content_hash, short_hash
 from infomesh.types import KeyPairLike
 
@@ -91,17 +92,29 @@ class TakedownRecord:
 class TakedownManager:
     """Manages DMCA takedown notices — creation, verification, compliance.
 
-    Maintains a local registry of active takedowns and tracks compliance.
+    Maintains a **persistent** registry of active takedowns backed by
+    SQLite so records survive restarts.  A node cannot evade DMCA
+    obligations by simply restarting.
     """
 
     # Rate limit: max notices per requester per hour
     MAX_NOTICES_PER_HOUR: int = 10
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        db_path: str | None = None,
+    ) -> None:
+        # In-memory caches loaded from / synced to SQLite
         self._records: dict[str, TakedownRecord] = {}
         self._url_takedowns: dict[str, str] = {}  # url → notice_id
         # Rate limiting: requester_id → list of creation timestamps
         self._rate_window: dict[str, list[float]] = {}
+
+        # Persistent storage
+        self._store: _TakedownStore | None = None
+        if db_path is not None:
+            self._store = _TakedownStore(db_path)
+            self._load_from_store()
 
     def _check_rate_limit(self, requester_id: str, now: float) -> bool:
         """Return ``True`` if the requester is within rate limits."""
@@ -161,6 +174,7 @@ class TakedownManager:
         self._records[notice_id] = TakedownRecord(notice=notice)
         self._url_takedowns[url] = notice_id
         self._rate_window.setdefault(key_pair.peer_id, []).append(now)
+        self._persist_notice(notice)
 
         logger.info(
             "takedown_created",
@@ -222,6 +236,7 @@ class TakedownManager:
             detail=f"acknowledged at {now:.0f}",
         )
         record.acknowledgments.append(ack)
+        self._persist_ack(ack)
 
         logger.info(
             "takedown_acknowledged",
@@ -257,6 +272,7 @@ class TakedownManager:
         record = self._records.get(notice_id)
         if record and peer_id not in record.propagated_to:
             record.propagated_to.append(peer_id)
+            self._persist_propagation(notice_id, peer_id)
 
     def is_taken_down(self, url: str) -> bool:
         """Check if a URL has an active takedown notice."""
@@ -331,6 +347,175 @@ class TakedownManager:
             if status not in (TakedownStatus.COMPLIED, TakedownStatus.INVALID):
                 result.append(record.notice)
         return result
+
+    def _load_from_store(self) -> None:
+        """Load all notices and acks from SQLite into memory caches."""
+        if self._store is None:
+            return
+        for notice, acks, propagated in self._store.load_all():
+            self._records[notice.notice_id] = TakedownRecord(
+                notice=notice,
+                acknowledgments=list(acks),
+                propagated_to=list(propagated),
+            )
+            self._url_takedowns[notice.url] = notice.notice_id
+
+    def _persist_notice(self, notice: TakedownNotice) -> None:
+        """Write a new notice to persistent store."""
+        if self._store is None:
+            return
+        self._store.save_notice(notice)
+
+    def _persist_ack(self, ack: TakedownAck) -> None:
+        """Write an acknowledgment to persistent store."""
+        if self._store is None:
+            return
+        self._store.save_ack(ack)
+
+    def _persist_propagation(self, notice_id: str, peer_id: str) -> None:
+        """Write a propagation record to persistent store."""
+        if self._store is None:
+            return
+        self._store.save_propagation(notice_id, peer_id)
+
+    def close(self) -> None:
+        """Close the underlying store, if any."""
+        if self._store is not None:
+            self._store.close()
+
+
+# --- Persistent store -------------------------------------------------------
+
+
+class _TakedownStore(SQLiteStore):
+    """SQLite-backed DMCA record persistence."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS dmca_notices (
+            notice_id   TEXT PRIMARY KEY,
+            url         TEXT NOT NULL,
+            requester_id TEXT NOT NULL,
+            reason      TEXT NOT NULL,
+            signature   BLOB NOT NULL,
+            created_at  REAL NOT NULL,
+            deadline    REAL NOT NULL,
+            contact_info TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_dmca_url
+            ON dmca_notices(url);
+
+        CREATE TABLE IF NOT EXISTS dmca_acks (
+            notice_id   TEXT NOT NULL,
+            peer_id     TEXT NOT NULL,
+            status      TEXT NOT NULL,
+            complied_at REAL,
+            detail      TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (notice_id, peer_id, status)
+        );
+
+        CREATE TABLE IF NOT EXISTS dmca_propagations (
+            notice_id   TEXT NOT NULL,
+            peer_id     TEXT NOT NULL,
+            PRIMARY KEY (notice_id, peer_id)
+        );
+    """
+
+    # -- write helpers --
+
+    def save_notice(self, notice: TakedownNotice) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO dmca_notices "
+            "(notice_id, url, requester_id, reason, signature, "
+            "created_at, deadline, contact_info) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                notice.notice_id,
+                notice.url,
+                notice.requester_id,
+                notice.reason,
+                notice.signature,
+                notice.created_at,
+                notice.deadline,
+                notice.contact_info,
+            ),
+        )
+        self._conn.commit()
+
+    def save_ack(self, ack: TakedownAck) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO dmca_acks "
+            "(notice_id, peer_id, status, complied_at, detail) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                ack.notice_id,
+                ack.peer_id,
+                ack.status.value,
+                ack.complied_at,
+                ack.detail,
+            ),
+        )
+        self._conn.commit()
+
+    def save_propagation(self, notice_id: str, peer_id: str) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO dmca_propagations "
+            "(notice_id, peer_id) VALUES (?, ?)",
+            (notice_id, peer_id),
+        )
+        self._conn.commit()
+
+    # -- read helpers --
+
+    def load_all(
+        self,
+    ) -> list[tuple[TakedownNotice, list[TakedownAck], list[str]]]:
+        """Return all notices with their acks and propagation lists."""
+        rows = self._conn.execute(
+            "SELECT notice_id, url, requester_id, reason, "
+            "signature, created_at, deadline, contact_info "
+            "FROM dmca_notices"
+        ).fetchall()
+
+        results: list[tuple[TakedownNotice, list[TakedownAck], list[str]]] = []
+        for row in rows:
+            notice = TakedownNotice(
+                notice_id=row[0],
+                url=row[1],
+                requester_id=row[2],
+                reason=row[3],
+                signature=bytes(row[4]),
+                created_at=row[5],
+                deadline=row[6],
+                contact_info=row[7],
+            )
+            acks = self._load_acks(notice.notice_id)
+            props = self._load_propagations(notice.notice_id)
+            results.append((notice, acks, props))
+        return results
+
+    def _load_acks(self, notice_id: str) -> list[TakedownAck]:
+        rows = self._conn.execute(
+            "SELECT notice_id, peer_id, status, complied_at, detail "
+            "FROM dmca_acks WHERE notice_id = ?",
+            (notice_id,),
+        ).fetchall()
+        return [
+            TakedownAck(
+                notice_id=r[0],
+                peer_id=r[1],
+                status=TakedownStatus(r[2]),
+                complied_at=r[3],
+                detail=r[4],
+            )
+            for r in rows
+        ]
+
+    def _load_propagations(self, notice_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT peer_id FROM dmca_propagations WHERE notice_id = ?",
+            (notice_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
 
 
 # --- Serialization ----------------------------------------------------------

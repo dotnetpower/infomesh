@@ -42,11 +42,11 @@ dependencies = [
     "tomli>=2.0; python_version < '3.11'",
     "click>=8.1",
     "textual>=1.0",
-    "trio>=0.22",
 ]
 
 [project.optional-dependencies]
 p2p = [
+    "trio>=0.22",
     "libp2p>=0.2",
 ]
 vector = [
@@ -75,6 +75,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
+    "pytest-timeout>=2.3",
     "ruff>=0.7",
     "mypy>=1.11",
     "httpx[http2]>=0.27",

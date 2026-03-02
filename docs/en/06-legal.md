@@ -114,6 +114,7 @@ legal risk while providing a useful search service.
 - Deletion record format: `(url, content_hash, reason, requester_signature, timestamp)`
 - Nodes that fail to comply after 3 audit checks receive trust score penalties
 - Maintain a public `DMCA_LOG` (hashes only, no content) for transparency
+- **Persistence**: All takedown notices, acknowledgments, and propagation records are persisted in SQLite (`_TakedownStore`). A node cannot evade DMCA obligations by restarting — records survive across restarts and are loaded on startup.
 
 ---
 
@@ -155,6 +156,7 @@ In a P2P network, deletion requests must propagate to all nodes holding the data
 - Nodes joining later receive accumulated deletion records during sync
 - `infomesh delete --url <URL>` CLI command for local operators
 - Log deletion requests (hash only) for audit trail
+- **Persistence**: All deletion requests, confirmations, propagation records, and the URL blocklist are persisted in SQLite (`_GDPRStore`). Obligations survive node restarts — blocked URLs remain blocked even after reboot.
 
 ---
 

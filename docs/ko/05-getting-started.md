@@ -27,14 +27,11 @@ uv tool install infomesh
 pip install infomesh
 ```
 
-### 방법 D: P2P 지원 포함 설치
-
-```bash
-pip install "infomesh[p2p]"
-```
-
-> **참고**: `p2p` 추가 기능은 네이티브 빌드 도구(`build-essential`, `libgmp-dev` 등)가
-> 필요합니다. 자세한 내용은 [FAQ](12-faq.md)를 참조하세요.
+> **참고**: 기본 설치에는 MCP, 크롤링, 로컬 검색에 필요한 모든 것이 포함됩니다
+> — 네이티브 빌드 도구가 필요 없습니다. P2P 네트워킹을 활성화하려면
+> `pip install 'infomesh[p2p]'`로 설치하세요 (Linux에서 `build-essential`,
+> `libgmp-dev` 등이 필요합니다).
+> 자세한 내용은 [FAQ](12-faq.md)를 참조하세요.
 
 설치 후 확인:
 
@@ -149,10 +146,20 @@ infomesh config set node.github_email "alice@example.com"
 ### 부트스트랩 동작 방식
 
 1. InfoMesh는 내장된 부트스트랩 노드 목록(`bootstrap/nodes.json`)을 가지고 있습니다.
+   이 노드들은 안정성을 위해 여러 Azure 리전에 배포되어 있습니다.
 2. 노드가 TCP 4001 포트를 통해 알려진 피어에 연결합니다.
 3. Kademlia DHT를 통해 추가 피어를 발견합니다.
 4. 연결되면 노드가 분산 해시 테이블에 참여합니다.
 5. 성공적으로 연결된 모든 피어가 `~/.infomesh/peer_store.db`에 저장됩니다.
+
+### 현재 부트스트랩 노드
+
+| 리전 | 주소 | 비고 |
+|------|------|------|
+| US East | `20.42.12.161:4001` | Azure B1s 부트스트래퍼 |
+
+부트스트랩 노드는 커뮤니티에서 관리합니다. 더 많은 노드가 참여할수록
+네트워크는 이러한 초기 진입점에 대한 의존도가 낮아집니다.
 
 ### 부트스트랩 노드가 다운된 경우?
 
@@ -250,7 +257,7 @@ infomesh index stats
 두 번째 머신에서:
 
 ```bash
-pip install "infomesh[p2p]"
+pip install 'infomesh[p2p]'
 infomesh start
 ```
 
@@ -357,13 +364,21 @@ github_email = "alice@example.com"
 role = "full"
 
 [crawl]
-max_depth = 3
+max_depth = 0
 politeness_delay = 1.0
 
 [network]
 listen_port = 4001
+bootstrap_nodes = ["default"]   # 내장된 bootstrap/nodes.json 사용
+```
+
+기본값 대신 (또는 추가로) 사용자 지정 부트스트랩 노드를 사용하려면:
+
+```toml
+[network]
 bootstrap_nodes = [
-  "/ip4/20.42.12.161/tcp/4001/p2p/12D3KooWEXwYVk9amWHKkNAPHsZEpmZ6H811RKrN6aBY3ayEEdty"
+  "default",
+  "/ip4/YOUR.IP.HERE/tcp/4001/p2p/12D3KooW..."
 ]
 ```
 

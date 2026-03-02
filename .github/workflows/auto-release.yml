@@ -74,12 +74,17 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          # Get the highest semver tag across ALL tags (not just reachable from HEAD)
-          latest_tag=$(git tag -l 'v*' | sort -V | tail -n1)
+          # Use REMOTE tags to avoid stale local tag state after fresh CI checkout
+          latest_tag=$(
+            git ls-remote --tags origin 'refs/tags/v*' \
+              | sed 's|.*refs/tags/||' \
+              | sort -V \
+              | tail -n1
+          )
           if [ -z "$latest_tag" ]; then
             latest_tag="v0.1.0"
           fi
-          echo "Latest tag: $latest_tag"
+          echo "Latest tag (from remote): $latest_tag"
 
           # Parse major.minor.patch
           version_str="${latest_tag#v}"
@@ -90,8 +95,8 @@ jobs:
           new_version="${major}.${minor}.${patch}"
           new_tag="v${new_version}"
 
-          # Check if tag already exists on REMOTE (local may not have it after fresh checkout)
-          if git ls-remote --tags origin "$new_tag" | grep -q "$new_tag"; then
+          # Check if tag already exists on REMOTE
+          if git ls-remote --tags origin "refs/tags/${new_tag}" | grep -q "$new_tag"; then
             echo "⚠️ Tag $new_tag already exists on remote — skipping release"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -120,10 +125,15 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         id: notes
         run: |
-          # Use the latest_tag from the version step (the tag we're releasing FROM)
+          # Use REMOTE tags for consistency (local checkout may be stale)
           # This must run BEFORE the version bump commit, while HEAD is still
           # the developer's last real commit.
-          latest_tag=$(git tag -l 'v*' | sort -V | tail -n1)
+          latest_tag=$(
+            git ls-remote --tags origin 'refs/tags/v*' \
+              | sed 's|.*refs/tags/||' \
+              | sort -V \
+              | tail -n1
+          )
           if [ -z "$latest_tag" ]; then
             range="HEAD"
           else
@@ -237,8 +247,9 @@ jobs:
           fi
           # Force-create tag (may already exist locally from a previous failed run)
           git tag -f "${{ steps.version.outputs.tag }}"
-          git push origin main --follow-tags
-          # Explicitly push tag in case --follow-tags didn't (no new commits)
+          # Push commit (if any) — continue even if already up-to-date
+          git push origin main --follow-tags || true
+          # Explicitly push the tag (handles case where --follow-tags silently skips)
           git push origin "${{ steps.version.outputs.tag }}" --force
 
       - name: Create GitHub Release
@@ -246,18 +257,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ steps.notes.outputs.use_generate }}" = "true" ]; then
+          # Skip if release already exists (e.g., from a partial retry)
+          if gh release view "${{ steps.version.outputs.tag }}" &>/dev/null; then
+            echo "Release ${{ steps.version.outputs.tag }} already exists — skipping"
+          elif [ "${{ steps.notes.outputs.use_generate }}" = "true" ]; then
             gh release create "${{ steps.version.outputs.tag }}" \
               dist/* \
               --title "v${{ steps.version.outputs.version }}" \
+              --target "${{ github.sha }}" \
               --generate-notes
           else
             gh release create "${{ steps.version.outputs.tag }}" \
               dist/* \
               --title "v${{ steps.version.outputs.version }}" \
+              --target "${{ github.sha }}" \
               --notes-file /tmp/release-notes.md
           fi
 
       - name: Publish to PyPI
         if: steps.version.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

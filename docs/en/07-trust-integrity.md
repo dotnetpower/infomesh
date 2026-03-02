@@ -207,7 +207,8 @@ Process:
   1. Randomly select audit target (node + URL) via DHT
   2. 3 audit nodes independently crawl the same URL
   3. Compare content_hash: original node vs audit nodes
-  4. Result handling:
+  4. Cross-validate auditor evidence hashes (Proof-of-Audit)
+  5. Result handling:
 
   ┌──────────────────┬────────────────────────┐
   │ Audit Result     │ Action                 │
@@ -222,6 +223,20 @@ Process:
   ※ Also considers whether the source site genuinely changed
      → large timestamp difference = natural update
 ```
+
+#### 4.3.1 Proof-of-Audit
+
+Auditors must submit the actual content hashes they obtained from their
+independent re-crawl (not just a pass/fail verdict). This prevents
+colluding auditors from rubber-stamping malicious nodes:
+
+- Each `AuditResult` contains `actual_text_hash` and `actual_raw_hash`
+- `_cross_validate_auditor_hashes()` compares all auditor hashes
+- The **majority hash** (most votes) is taken as the consensus
+- Any auditor whose hash diverges from the majority is flagged as
+  **suspicious** and recorded in `AuditSummary.suspicious_auditors`
+- Each `AuditResult` includes an `auditor_signature` (Ed25519) over a
+  deterministic canonical representation (`audit_result_canonical()`)
 
 ### 4.4 Unified Trust Score
 
@@ -335,7 +350,39 @@ Additional measures:
 | Rotation | Supported via `infomesh keys rotate`; old key signs handover to new key on DHT |
 | Revocation | On compromise: publish signed revocation record to DHT; network stops accepting old key within ~1 hour (gossip propagation) |
 
-### 5.6 `crawl_url()` Abuse Prevention
+### 5.6 P2P Message Authentication
+
+All P2P messages are wrapped in a **SignedEnvelope** for authentication and
+replay protection (`infomesh/p2p/message_auth.py`):
+
+```
+SignedEnvelope:
+  payload:    bytes      # The inner message bytes
+  peer_id:    str        # Sender's identity
+  signature:  bytes      # Ed25519 over canonical(peer_id, nonce, timestamp, payload)
+  nonce:      int        # Monotonically increasing counter
+  timestamp:  float      # UTC epoch — rejected if >300s old
+
+5-step verification:
+  1. Isolation check — reject if peer is network-isolated (TrustStore.is_isolated)
+  2. Key lookup      — reject if peer's public key is unknown (PeerKeyRegistry)
+  3. Freshness       — reject if timestamp is older than MAX_MESSAGE_AGE_SECONDS (300s)
+  4. Replay          — reject if nonce ≤ last-seen nonce from that peer (NonceTracker)
+  5. Signature       — verify Ed25519 against canonical bytes
+```
+
+Protocol integration:
+- `MessageType.SIGNED_ENVELOPE = 100` in `protocol.py`
+- `encode_signed_envelope()` / `decode_signed_envelope()` helpers for wire format
+
+| Component | Purpose |
+|-----------|---------|
+| `NonceCounter` | Thread-safe monotonic nonce generator for outbound messages |
+| `PeerKeyRegistry` | In-memory mapping of `peer_id → public_key_bytes` |
+| `NonceTracker` | Per-peer tracking of highest-seen nonce to prevent replays |
+| `VerificationError` | Custom exception for failed verification (with specific reason) |
+
+### 5.7 `crawl_url()` Abuse Prevention
 
 The MCP `crawl_url()` tool could be abused to overwhelm the network with requests.
 

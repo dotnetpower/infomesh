@@ -36,10 +36,9 @@ MCP mode, or `infomesh start` for the full node with P2P, crawling, and the dash
 - **psutil** — optional, for system resource monitoring in the dashboard
 - Internet connection for first install and crawling (local search works offline)
 
-#### System packages for P2P (optional)
+#### System packages for P2P
 
-The `p2p` extra (`libp2p`) includes C extensions (`fastecdsa`, `coincurve`, `pynacl`) that need native build tools.
-These are **not** required for the base install — only for `uv sync --extra p2p` or `pip install infomesh[p2p]`.
+P2P networking (`libp2p`) is an **optional** dependency. The base install (`pip install infomesh`) works without native build tools. To enable P2P, install with `pip install 'infomesh[p2p]'`. The P2P extra has C extensions (`fastecdsa`, `coincurve`, `pynacl`) that need native build tools.
 
 **Linux (Debian / Ubuntu):**
 ```bash
@@ -83,9 +82,8 @@ docker run -p 4001:4001 -p 8080:8080 infomesh
 
 ```bash
 pip install infomesh[vector]   # ChromaDB vector search
-pip install infomesh[p2p]      # libp2p P2P networking
 pip install infomesh[llm]      # Local LLM summarization
-pip install infomesh[all]      # Everything
+pip install infomesh[all]      # Everything (vector + LLM)
 ```
 
 ---

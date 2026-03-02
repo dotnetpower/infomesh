@@ -85,6 +85,9 @@ class MessageType(IntEnum):
     PEX_REQUEST = 90
     PEX_RESPONSE = 91
 
+    # Signed envelope (wraps any message for authentication)
+    SIGNED_ENVELOPE = 100
+
     # Error
     ERROR = 99
 
@@ -389,3 +392,26 @@ def keyword_to_dht_key(keyword: str) -> str:
     """
     h = content_hash(keyword.lower())
     return f"/infomesh/kw/{h}"
+
+
+# ─── Signed envelope wire helpers ──────────────────────────────────
+
+
+def encode_signed_envelope(envelope_dict: dict[str, Any]) -> bytes:
+    """Encode a :class:`SignedEnvelope` (as dict) into wire format.
+
+    The signed envelope wraps the inner message for authentication.
+    """
+    return encode_message(MessageType.SIGNED_ENVELOPE, envelope_dict)
+
+
+def decode_signed_envelope(
+    data: bytes,
+) -> dict[str, Any] | None:
+    """Decode wire bytes and return the envelope dict if it is a
+    ``SIGNED_ENVELOPE``, otherwise ``None``.
+    """
+    msg_type, payload = decode_message(data)
+    if msg_type == MessageType.SIGNED_ENVELOPE:
+        return payload
+    return None

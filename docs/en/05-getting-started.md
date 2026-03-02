@@ -28,14 +28,11 @@ uv tool install infomesh
 pip install infomesh
 ```
 
-### Option D: Install with P2P support
-
-```bash
-pip install "infomesh[p2p]"
-```
-
-> **Note**: The `p2p` extra requires native build tools (`build-essential`, `libgmp-dev`
-> on Linux; Xcode CLI on macOS). See the [FAQ](12-faq.md) for details.
+> **Note**: The base install includes everything needed for MCP, crawling, and
+> local search — no native build tools required. To enable P2P networking,
+> install with: `pip install 'infomesh[p2p]'` (requires `build-essential`,
+> `libgmp-dev` on Linux; Xcode CLI on macOS).
+> See the [FAQ](12-faq.md) for details.
 
 After installation, verify:
 
@@ -151,10 +148,20 @@ After startup, InfoMesh connects to bootstrap nodes to join the P2P network:
 ### How bootstrapping works
 
 1. InfoMesh ships with a bundled list of bootstrap nodes (`bootstrap/nodes.json`).
+   These are deployed across multiple Azure regions for redundancy.
 2. Your node contacts these known peers via TCP on port 4001.
 3. Through Kademlia DHT, your node discovers additional peers.
 4. Once connected, your node participates in the distributed hash table.
 5. All successfully connected peers are saved to `~/.infomesh/peer_store.db`.
+
+### Current bootstrap nodes
+
+| Region | Address | Note |
+|--------|---------|------|
+| US East | `20.42.12.161:4001` | Azure B1s bootstrapper |
+
+Bootstrap nodes are community-maintained. As more nodes join, the network
+becomes less dependent on these initial entry points.
 
 ### What if bootstrap nodes are down?
 
@@ -253,7 +260,7 @@ automatically discover each other and collaborate.
 On a second machine:
 
 ```bash
-pip install "infomesh[p2p]"
+pip install 'infomesh[p2p]'
 infomesh start
 ```
 
@@ -360,13 +367,21 @@ github_email = "alice@example.com"
 role = "full"
 
 [crawl]
-max_depth = 3
+max_depth = 0
 politeness_delay = 1.0
 
 [network]
 listen_port = 4001
+bootstrap_nodes = ["default"]   # uses bundled bootstrap/nodes.json
+```
+
+To use custom bootstrap nodes instead of (or in addition to) the defaults:
+
+```toml
+[network]
 bootstrap_nodes = [
-  "/ip4/20.42.12.161/tcp/4001/p2p/12D3KooWEXwYVk9amWHKkNAPHsZEpmZ6H811RKrN6aBY3ayEEdty"
+  "default",
+  "/ip4/YOUR.IP.HERE/tcp/4001/p2p/12D3KooW..."
 ]
 ```
 

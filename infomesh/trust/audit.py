@@ -70,7 +70,13 @@ class AuditRequest:
 
 @dataclass(frozen=True)
 class AuditResult:
-    """Result from a single auditor's re-crawl."""
+    """Result from a single auditor's re-crawl.
+
+    The auditor **must** submit the hashes it obtained from its own
+    independent re-crawl (``actual_text_hash``, ``actual_raw_hash``).
+    Other auditors cross-compare these hashes to detect dishonest
+    auditors that lie about pass/fail verdicts.
+    """
 
     audit_id: str
     auditor_peer_id: str
@@ -81,6 +87,9 @@ class AuditResult:
     verdict: AuditVerdict
     detail: str
     completed_at: float
+    # Signature over the canonical audit evidence (Ed25519).
+    # Proves the auditor actually produced this result.
+    auditor_signature: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -95,6 +104,8 @@ class AuditSummary:
     pass_count: int
     fail_count: int
     error_count: int
+    # Auditors whose evidence hashes diverged from the majority.
+    suspicious_auditors: list[str] = field(default_factory=list)
 
 
 # --- Audit scheduler -------------------------------------------------------
@@ -219,6 +230,10 @@ class AuditScheduler:
         fail_count = sum(1 for r in results if r.verdict == AuditVerdict.FAIL)
         error_count = sum(1 for r in results if r.verdict == AuditVerdict.ERROR)
 
+        # Cross-validate auditor evidence: detect dishonest auditors
+        # whose hashes diverge from the majority.
+        suspicious_auditors = _cross_validate_auditor_hashes(results)
+
         if fail_count >= AUDIT_MAJORITY:
             final = AuditVerdict.FAIL
         elif pass_count >= AUDIT_MAJORITY:
@@ -237,6 +252,7 @@ class AuditScheduler:
             pass_count=pass_count,
             fail_count=fail_count,
             error_count=error_count,
+            suspicious_auditors=suspicious_auditors,
         )
 
         self._completed.append(summary)
@@ -247,6 +263,7 @@ class AuditScheduler:
             verdict=final.value,
             pass_count=pass_count,
             fail_count=fail_count,
+            suspicious_auditors=suspicious_auditors,
         )
         return summary
 
@@ -449,3 +466,59 @@ def _generate_audit_id(peer_id: str, url: str, timestamp: float) -> str:
     """Deterministic audit ID from peer + url + time."""
     raw = f"{peer_id}|{url}|{timestamp}".encode()
     return short_hash(raw, length=24)
+
+
+# --- Auditor evidence cross-validation ------------------------------------
+
+
+def _cross_validate_auditor_hashes(
+    results: list[AuditResult],
+) -> list[str]:
+    """Identify auditors whose evidence hashes diverge from the majority.
+
+    For each non-error result, collect the ``actual_text_hash``.
+    The hash submitted by the majority is the "consensus".
+    Any auditor whose hash differs is flagged as suspicious.
+
+    Returns:
+        List of ``auditor_peer_id`` values that diverged.
+    """
+    hash_votes: dict[str | None, list[str]] = {}
+    for r in results:
+        if r.verdict == AuditVerdict.ERROR:
+            continue
+        hash_votes.setdefault(r.actual_text_hash, []).append(
+            r.auditor_peer_id,
+        )
+
+    if not hash_votes:
+        return []
+
+    # Find the consensus hash (most votes)
+    consensus_hash = max(hash_votes, key=lambda h: len(hash_votes[h]))
+
+    suspicious: list[str] = []
+    for h, peers in hash_votes.items():
+        if h != consensus_hash:
+            suspicious.extend(peers)
+    return suspicious
+
+
+def audit_result_canonical(result: AuditResult) -> bytes:
+    """Produce canonical bytes for signing an :class:`AuditResult`.
+
+    The signed payload covers the audit ID, auditor, target, URL,
+    both evidence hashes, the verdict, and the timestamp.  This
+    prevents an auditor from changing its verdict after signing.
+    """
+    parts = [
+        result.audit_id,
+        result.auditor_peer_id,
+        result.target_peer_id,
+        result.url,
+        result.actual_text_hash or "",
+        result.actual_raw_hash or "",
+        result.verdict.value,
+        f"{result.completed_at:.6f}",
+    ]
+    return "|".join(parts).encode()

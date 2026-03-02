@@ -27,7 +27,7 @@ search providers.
 | Layer | Technology | Notes |
 |-------|------------|-------|
 | Language | **Python 3.12+** | Use modern Python features (type hints, `match`, `type` statement, `StrEnum`, etc.) |
-| P2P Network | **libp2p (py-libp2p)** | DHT, Noise encryption built-in. **Uses trio, not asyncio** — see note below |
+| P2P Network | **libp2p (py-libp2p)** | Optional (`pip install 'infomesh[p2p]'`). DHT, Noise encryption built-in. **Uses trio, not asyncio** — see note below |
 | DHT | **Kademlia** | Distributed hash table for index & crawl coordination |
 | Crawling | **httpx + asyncio** | Async-first HTTP client |
 | HTML Parsing | **trafilatura** | Best accuracy for main-content extraction |
@@ -71,6 +71,7 @@ infomesh/
 │   │   ├── routing.py       #   Query routing (latency-aware)
 │   │   ├── replication.py   #   Document/index replication
 │   │   ├── protocol.py      #   Message protocol definitions (msgpack)
+│   │   ├── message_auth.py  #   P2P message authentication (SignedEnvelope, replay protection)
 │   │   ├── peer_profile.py  #   Peer latency tracking & bandwidth classification
 │   │   ├── peer_store.py    #   Persistent peer cache (SQLite, survives restarts)
 │   │   ├── pex.py           #   PEX (Peer Exchange) gossip protocol for peer discovery
@@ -274,11 +275,14 @@ The `auto-release.yml` workflow bumps version, tags, builds, and publishes. The 
 |---------|------------|------------|
 | **`git commit` fails: "nothing to commit"** | Version files already bumped by a previous failed run. `sed` makes no changes → `git add` has nothing staged. | Always check `git diff --cached --quiet` before `git commit`. Skip commit if no changes. |
 | **Tag exists locally but not on remote** | Previous run created tag + committed but `git push --follow-tags` failed or was skipped. Next fresh checkout doesn't have the local tag, but the commit is already bumped. | Use `git tag -f` to force-create, then **explicitly push the tag**: `git push origin <tag> --force`. Don't rely solely on `--follow-tags`. |
-| **`--follow-tags` doesn't push tags** | `--follow-tags` only pushes tags reachable from commits being pushed. If "nothing to push" (already up-to-date), tags are silently skipped. | Always add an explicit `git push origin <tag>` after `git push --follow-tags`. |
-| **Tag existence check misses remote state** | `git rev-parse <tag>` checks local repo only. In CI fresh checkout, local tags from previous failed runs don't exist. | Check **remote** tags: `git ls-remote --tags origin <tag>`. |
+| **`--follow-tags` doesn't push tags** | `--follow-tags` only pushes tags reachable from commits being pushed. If "nothing to push" (already up-to-date), tags are silently skipped. | Always add an explicit `git push origin <tag>` after `git push --follow-tags`. Add `|| true` to `--follow-tags` push so explicit tag push still runs. |
+| **Tag existence check misses remote state** | `git rev-parse <tag>` or `git tag -l` checks local repo only. In CI fresh checkout, local tags from previous failed runs don't exist. | Check **remote** tags: `git ls-remote --tags origin <tag>`. Use `git ls-remote` for ALL tag lookups (version detection + release notes). |
 | **sed BRE regex fails on parenthesized scope** | `\([^)]*\)\?` in basic regex consumes the entire line. | Use ERE: `sed -E 's/^feat([(][^)]*[)])?…/'`. |
 | **YAML indentation error in workflow** | A step at column 0 instead of proper indentation (6 spaces for steps). YAML parses but the step falls outside the job. | Always validate workflow YAML indentation: steps under `jobs.<id>.steps` need consistent indentation. |
 | **PyPI Trusted Publisher not configured** | `pypa/gh-action-pypi-publish` uses OIDC trusted publishing. Requires configuration on pypi.org. | Configure Trusted Publisher on PyPI: Settings → Publishing → add GitHub repo + workflow + environment (`pypi`). |
+| **GitHub Release already exists on retry** | A partial run created the release but failed at PyPI publish. Next retry fails at `gh release create`. | Check `gh release view <tag>` before creating. Skip if exists. |
+| **PyPI version already exists on retry** | A partial run published to PyPI but failed on a later step. Retry fails with "file already exists". | Set `skip-existing: true` on `pypa/gh-action-pypi-publish`. |
+| **`gh release create` tag-not-pushed error** | `gh release create` requires the tag to exist on the remote. If push was partial, it fails. | Add `--target ${{ github.sha }}` to `gh release create` so it creates the tag at the correct commit. |
 
 ### No Private API Access in Consumers
 
@@ -537,8 +541,18 @@ When credits are exhausted (balance ≤ 0), the node enters a grace/debt cycle:
 
 - **Content attestation**: On crawl, compute `SHA-256(raw_response)` + `SHA-256(extracted_text)`, sign with peer private key, publish to DHT.
 - **Random audits**: ~1/hr per node. 3 audit nodes independently re-crawl a random URL and compare `content_hash` against the original node. Mismatch = trust penalty.
+- **Proof-of-Audit**: Auditors must submit the actual content hashes they obtained from their independent re-crawl. Cross-validation compares hashes across auditors — any auditor whose hash diverges from the majority is flagged as suspicious.
+- **Audit signatures**: Each `AuditResult` includes an `auditor_signature` field (Ed25519) over the canonical audit evidence, proving the auditor produced the result.
 - **Unified trust score**: `Trust = 0.15×uptime + 0.25×contribution + 0.40×audit_pass_rate + 0.20×summary_quality`. Tiers: Trusted (≥0.8), Normal (0.5–0.8), Suspect (0.3–0.5), Untrusted (<0.3).
 - **Tamper detection**: 3x audit failures → network isolation. Source URL is always re-crawlable as ground truth.
+- **Transport isolation**: `TrustStore.is_isolated(peer_id)` checks the DB isolation flag. Isolated peers are rejected at message verification level before any processing.
+
+### P2P Message Authentication
+
+- **Signed envelopes**: All P2P messages are wrapped in a `SignedEnvelope` (payload, peer_id, Ed25519 signature, nonce, timestamp). Module: `infomesh/p2p/message_auth.py`.
+- **5-step verification**: (1) Check peer is not isolated, (2) Look up peer's public key in `PeerKeyRegistry`, (3) Reject timestamps older than 300 seconds, (4) Reject replayed nonces (per-peer monotonic tracking), (5) Verify Ed25519 signature.
+- **Protocol type**: `MessageType.SIGNED_ENVELOPE = 100` in `protocol.py` with `encode_signed_envelope()` / `decode_signed_envelope()` helpers.
+- **Replay protection**: `NonceTracker` maintains per-peer highest-seen nonce; any nonce ≤ previous is rejected.
 
 ### Network Security
 
@@ -552,9 +566,9 @@ When credits are exhausted (balance ≤ 0), the node enters a grace/debt cycle:
 
 - **robots.txt**: Strictly enforced.
 - **Copyright**: Store full text as cache only; return snippets in search results.
-- **GDPR**: Provide option to exclude pages with personal data. Distributed deletion via signed DHT records.
+- **GDPR**: Provide option to exclude pages with personal data. Distributed deletion via signed DHT records. **Deletion records are persisted in SQLite** (`_GDPRStore`) so obligations survive node restarts. Blocklist is also persisted.
 - **ToS**: Maintain a blocklist of sites that prohibit crawling. Auto-detect ToS patterns beyond robots.txt.
-- **DMCA**: Signed takedown propagation via DHT; nodes must comply within 24 hours.
+- **DMCA**: Signed takedown propagation via DHT; nodes must comply within 24 hours. **Takedown records are persisted in SQLite** (`_TakedownStore`) — notices, acknowledgments, and propagation records survive restarts. A node cannot evade DMCA obligations by restarting.
 - **`fetch_page()`**: Paywall detection, cache TTL (7 days), max 100KB per call, attribution required.
 - **LLM summaries**: Label as AI-generated, include `content_hash` linking to source, always provide original URL.
 

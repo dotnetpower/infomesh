@@ -49,7 +49,7 @@ config:
   mcpHttp: true
   # Bootstrap nodes (multiaddr format)
   bootstrapNodes:
-    - "/ip4/20.42.12.161/tcp/4001/p2p/12D3KooWEXwYVk9amWHKkNAPHsZEpmZ6H811RKrN6aBY3ayEEdty"
+    - "/ip4/20.42.12.161/tcp/4001/p2p/12D3KooWKLomR1fLxJpDEVdqE2CZsRWPvkZvjbKvEJzcF13s33N9"
   # Seed categories to crawl
   seedCategories:
     - tech-docs

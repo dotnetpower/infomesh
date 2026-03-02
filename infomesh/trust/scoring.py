@@ -334,6 +334,23 @@ class TrustStore(SQLiteStore):
         )
         self._conn.commit()
 
+    def is_isolated(self, peer_id: str) -> bool:
+        """Check whether a peer is currently network-isolated.
+
+        Used by transport-level handlers to reject connections and
+        messages from banned peers.
+
+        Returns:
+            ``True`` if the peer is flagged as isolated.
+        """
+        row = self._conn.execute(
+            "SELECT isolated FROM peer_trust WHERE peer_id = ?",
+            (peer_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        return bool(row[0])
+
     # close() inherited from SQLiteStore
 
 
