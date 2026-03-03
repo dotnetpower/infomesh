@@ -184,7 +184,13 @@ class TestWebhookRegistrySecurity:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with (
+            patch("httpx.AsyncClient") as mock_client_cls,
+            patch(
+                "infomesh.security.validate_url",
+                return_value="https://hooks.example.com/1",
+            ),
+        ):
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(

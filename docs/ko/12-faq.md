@@ -270,6 +270,16 @@ CPU를 놓고 경쟁합니다. 해결 방법:
    profile = "minimal"
    ```
 
+### 크롤링 유휴 시 BGM이 멈출 때
+
+설계상 크롤링 활동이 10초간 없으면 BGM이 자동 정지되고,
+크롤링이 재개되면 다시 재생됩니다. BGM을 계속 재생하려면:
+
+```toml
+[dashboard]
+bgm_idle_stop = false
+```
+
 ### BGM이 재생되지 않을 때
 
 **ffplay** (ffmpeg의 일부) 또는 **mpv**가 설치되어 있는지 확인하세요:

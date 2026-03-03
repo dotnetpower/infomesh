@@ -273,6 +273,16 @@ competes with crawling and indexing for CPU time. Solutions:
    profile = "minimal"
    ```
 
+### BGM stops when crawling is idle
+
+By design, BGM auto-stops after 10 seconds of no crawl activity and
+resumes when crawling restarts. To keep BGM playing regardless:
+
+```toml
+[dashboard]
+bgm_idle_stop = false
+```
+
 ### BGM does not play
 
 Make sure **ffplay** (part of ffmpeg) or **mpv** is installed:

@@ -140,10 +140,13 @@ class NodeLoadGuard:
         """Refresh observable stats."""
         self._prune_old_timestamps()
         self._stats.concurrent = self._concurrent
-        # Prune peer entries with zero counts to prevent unbounded growth
-        stale = [pid for pid, cnt in self._peer_counts.items() if cnt <= 0]
-        for pid in stale:
-            del self._peer_counts[pid]
+        # Evict least-active peers when exceeding max tracked peers
+        if len(self._peer_counts) > self._max_tracked_peers:
+            # Sort by count ascending and remove the least active
+            sorted_peers = sorted(self._peer_counts.items(), key=lambda x: x[1])
+            to_remove = len(self._peer_counts) - self._max_tracked_peers
+            for pid, _cnt in sorted_peers[:to_remove]:
+                del self._peer_counts[pid]
         self._stats.queries_this_minute = len(self._timestamps)
         self._stats.is_overloaded = self.is_overloaded
 

@@ -75,6 +75,10 @@ class BandwidthBucket:
     async def acquire(self, nbytes: int) -> float:
         """Wait until *nbytes* tokens are available, then consume them.
 
+        For transfers larger than the 1-second burst capacity, the
+        request is processed in chunks to avoid an infinite loop (the
+        bucket cap would otherwise prevent accumulating enough tokens).
+
         Args:
             nbytes: Number of bytes to transfer.
 
@@ -89,16 +93,22 @@ class BandwidthBucket:
             return 0.0
 
         waited = 0.0
-        async with self._lock:
-            self._refill()
-            while self._tokens < nbytes:
-                # How long until enough tokens?
-                deficit = nbytes - self._tokens
-                sleep_time = deficit / self._rate_bps
-                await asyncio.sleep(sleep_time)
-                waited += sleep_time
+        remaining = float(nbytes)
+
+        # Process in chunks no larger than the bucket capacity to
+        # prevent infinite loops when nbytes > rate_bps.
+        while remaining > 0:
+            chunk = min(remaining, self._rate_bps)
+            async with self._lock:
                 self._refill()
-            self._tokens -= nbytes
+                while self._tokens < chunk:
+                    deficit = chunk - self._tokens
+                    sleep_time = deficit / self._rate_bps
+                    await asyncio.sleep(sleep_time)
+                    waited += sleep_time
+                    self._refill()
+                self._tokens -= chunk
+            remaining -= chunk
         return waited
 
 

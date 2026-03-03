@@ -712,3 +712,121 @@ class TestTextReport:
         bar = _make_bar(0.95, width=10)
         text = str(bar)
         assert "95%" in text
+
+
+# ─── BGM Player Tests ──────────────────────────────────
+
+
+class TestBGMPlayer:
+    """Tests for BGMPlayer auto-restart and orphan detection."""
+
+    def test_check_and_restart_when_intentionally_stopped(self) -> None:
+        """check_and_restart should not restart after stop()."""
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        player = BGMPlayer()
+        player._intentionally_stopped = True
+        player._current_file = Path("/tmp/fake.mp3")
+        assert player.check_and_restart() is False
+
+    def test_check_and_restart_no_current_file(self) -> None:
+        """check_and_restart should not restart if no file was set."""
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        player = BGMPlayer()
+        assert player.check_and_restart() is False
+
+    def test_check_and_restart_still_playing(self) -> None:
+        """check_and_restart returns False when BGM is still playing."""
+        from unittest.mock import MagicMock
+
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        player = BGMPlayer()
+        player._current_file = Path("/tmp/fake.mp3")
+        player._intentionally_stopped = False
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # still alive
+        player._proc = mock_proc
+        assert player.check_and_restart() is False
+        # Counter should be reset
+        assert player._auto_restart_count == 0
+
+    def test_check_and_restart_limit_reached(self) -> None:
+        """check_and_restart gives up after max retries."""
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        player = BGMPlayer()
+        player._current_file = Path("/tmp/fake.mp3")
+        player._intentionally_stopped = False
+        player._auto_restart_count = BGMPlayer._MAX_AUTO_RESTARTS
+        assert player.check_and_restart() is False
+
+    def test_stop_sets_intentionally_stopped(self) -> None:
+        """stop() should set _intentionally_stopped flag."""
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        player = BGMPlayer()
+        player.stop()
+        assert player._intentionally_stopped is True
+
+    def test_play_resets_flags(self) -> None:
+        """play() should reset _intentionally_stopped and counter."""
+        from unittest.mock import patch
+
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        player = BGMPlayer()
+        player._intentionally_stopped = True
+        player._auto_restart_count = 3
+
+        # Mock player availability and file existence
+        player._player_cmd = "ffplay"
+        player._player_args = ["-nodisp"]
+
+        fake_path = Path("/tmp/bgm_test_fake.mp3")
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "resolve", return_value=fake_path),
+            patch("infomesh.dashboard.bgm.kill_orphaned_bgm"),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            mock_popen.return_value.poll.return_value = None
+            result = player.play(fake_path, volume=50)
+            assert result is True
+            assert player._intentionally_stopped is False
+            assert player._auto_restart_count == 0
+
+    def test_kill_orphaned_bgm_patterns(self) -> None:
+        """kill_orphaned_bgm uses both patterns."""
+        from unittest.mock import patch
+
+        from infomesh.dashboard.bgm import kill_orphaned_bgm
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.stdout = ""
+            kill_orphaned_bgm()
+            # Should search for both patterns for each player
+            pgrep_calls = [c for c in mock_run.call_args_list if c[0][0][0] == "pgrep"]
+            patterns_used = [c[0][0][2] for c in pgrep_calls]
+            # Verify both old and new patterns
+            assert any("assets/bgm" in p for p in patterns_used)
+            assert any(".infomesh/bgm" in p for p in patterns_used)
+
+
+class TestBGMIdleStopConfig:
+    """Tests for bgm_idle_stop configuration option."""
+
+    def test_bgm_idle_stop_default_true(self) -> None:
+        """bgm_idle_stop defaults to True."""
+        from infomesh.config import DashboardConfig
+
+        dc = DashboardConfig()
+        assert dc.bgm_idle_stop is True
+
+    def test_bgm_idle_stop_can_be_disabled(self) -> None:
+        """bgm_idle_stop can be set to False."""
+        from infomesh.config import DashboardConfig
+
+        dc = DashboardConfig(bgm_idle_stop=False)
+        assert dc.bgm_idle_stop is False

@@ -82,6 +82,13 @@ class DashboardDataCache:
             return self._conn
 
         db_path = str(self._config.index.db_path)
+
+        # Check if DB file exists before attempting connection
+        from pathlib import Path
+
+        if not Path(db_path).exists():
+            raise FileNotFoundError(f"Index database not found: {db_path}")
+
         # Open in read-only mode via URI to avoid accidental writes;
         # fall back to normal connect for :memory: DBs used in tests.
         try:
@@ -106,11 +113,21 @@ class DashboardDataCache:
         try:
             conn = self._ensure_conn()
 
-            # Document count
+            one_hour_ago = time.time() - 3600
+
+            # Combined query: total count, pages last hour, last crawl time
+            # COALESCE wraps SUM/MAX because they return NULL on empty tables.
             row = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM documents",
+                "SELECT COUNT(*) AS cnt, "
+                "COALESCE(SUM(CASE WHEN crawled_at > ?"
+                " THEN 1 ELSE 0 END), 0) AS recent, "
+                "COALESCE(MAX(crawled_at), 0) AS last_ts "
+                "FROM documents",
+                (one_hour_ago,),
             ).fetchone()
             doc_count = row["cnt"] if row else 0
+            pages_last_hour = row["recent"] if row else 0
+            last_crawl_at = float(row["last_ts"]) if row else 0.0
 
             # Top domains (GROUP BY)
             domain_rows = conn.execute(
@@ -123,27 +140,11 @@ class DashboardDataCache:
                    LIMIT 7""",
             ).fetchall()
 
-            # Pages crawled in last hour
-            one_hour_ago = time.time() - 3600
-            row_hr = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM documents WHERE crawled_at > ?",
-                (one_hour_ago,),
-            ).fetchone()
-            pages_last_hour = row_hr["cnt"] if row_hr else 0
-
             # Distinct domain count
             row_dc = conn.execute(
                 f"SELECT COUNT(DISTINCT {_DOMAIN_EXPR}) AS cnt FROM documents",
             ).fetchone()
             domain_count = row_dc["cnt"] if row_dc else 0
-
-            # Most recent crawl timestamp
-            row_last = conn.execute(
-                "SELECT MAX(crawled_at) AS ts FROM documents",
-            ).fetchone()
-            last_crawl_at = (
-                float(row_last["ts"]) if row_last and row_last["ts"] else 0.0
-            )
 
             # Recent documents for LiveLog feed (last 10)
             recent_rows = conn.execute(
@@ -170,8 +171,16 @@ class DashboardDataCache:
                 recent_docs=recent_docs,
             )
         except Exception:  # noqa: BLE001
-            # DB not ready yet (e.g. node hasn't started) — return stale cache
-            logger.debug("data_cache_refresh_failed")
+            # DB not ready yet (e.g. node hasn't started) — return stale cache.
+            # Reset connection so next call re-opens (handles replaced/corrupt DB).
+            if self._conn is not None:
+                with contextlib.suppress(Exception):
+                    self._conn.close()
+                self._conn = None
+            logger.debug(
+                "data_cache_refresh_failed",
+                db_path=str(self._config.index.db_path),
+            )
 
         return self._cache
 

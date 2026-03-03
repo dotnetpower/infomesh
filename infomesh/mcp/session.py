@@ -223,8 +223,15 @@ class WebhookRegistry:
             url: str,
         ) -> bool:
             try:
+                from infomesh.security import SSRFError, validate_url
+
+                # Re-validate with DNS resolution to block rebinding
+                validate_url(url, resolve_dns=True)
                 resp = await client.post(url, json=body)
                 return resp.status_code < 400
+            except SSRFError:
+                logger.warning("webhook_ssrf_blocked", url=url)
+                return False
             except Exception:  # noqa: BLE001
                 logger.debug("webhook_failed", url=url)
                 return False

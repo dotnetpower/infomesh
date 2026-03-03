@@ -95,7 +95,11 @@ def _canonical_bytes(
 
 
 class NonceCounter:
-    """Thread-safe monotonic nonce generator."""
+    """Monotonic nonce generator for single-threaded async use.
+
+    Not thread-safe — designed for asyncio event loops where only
+    one coroutine executes at a time.
+    """
 
     def __init__(self, start: int = 0) -> None:
         self._value = start
@@ -199,22 +203,31 @@ class NonceTracker:
     """Per-peer nonce anti-replay tracker.
 
     Records the highest nonce seen from each peer and rejects any
-    nonce ≤ that value.  In addition a sliding set of the last
-    ``MAX_NONCE_HISTORY`` nonces is kept for gap detection.
+    nonce ≤ that value.  Tracks at most ``MAX_NONCE_HISTORY`` peers;
+    when the limit is reached the oldest entry is evicted.
     """
 
     def __init__(self) -> None:
-        self._highest: dict[str, int] = {}
+        from collections import OrderedDict
+
+        self._highest: OrderedDict[str, int] = OrderedDict()
 
     def check_and_record(self, peer_id: str, nonce: int) -> bool:
         """Return ``True`` if the nonce is fresh (not replayed).
 
         A nonce is fresh iff ``nonce > highest_seen[peer_id]``.
+        Evicts the oldest peer entry when the tracker exceeds
+        ``MAX_NONCE_HISTORY`` peers.
         """
         prev = self._highest.get(peer_id, 0)
         if nonce <= prev:
             return False
+        # Move to end (most recently seen) and update
         self._highest[peer_id] = nonce
+        self._highest.move_to_end(peer_id)
+        # Evict oldest entries if over capacity
+        while len(self._highest) > MAX_NONCE_HISTORY:
+            self._highest.popitem(last=False)
         return True
 
     def highest(self, peer_id: str) -> int:

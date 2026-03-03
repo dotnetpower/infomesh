@@ -416,10 +416,7 @@ class LocalStore:
             (doc_id,),
         )
         if cur.rowcount > 0:
-            self._conn.execute(
-                "DELETE FROM documents_fts WHERE rowid = ?",
-                (doc_id,),
-            )
+            # FTS5 cleanup handled by AFTER DELETE trigger (documents_ad)
             self._conn.commit()
             return True
         return False

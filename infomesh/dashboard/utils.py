@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Sequence
 
 from infomesh.config import Config
 
@@ -114,3 +115,62 @@ def format_bytes(n: int | float) -> str:
             return f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} PB"
+
+
+def format_doc_line(url: str, title: str) -> str:
+    """Format a crawled document URL + title for LiveLog display.
+
+    Shared helper used by both OverviewPane and CrawlPane to avoid
+    code duplication.
+    """
+    short_title = title[:40] + "\u2026" if len(title) > 40 else title
+    if short_title:
+        return f"{url}  ({short_title})"
+    return url
+
+
+def push_new_docs_to_log(
+    recent_docs: Sequence[object],
+    doc_count: int,
+    seen_ids: set[int],
+    last_count: int,
+    log_widget: object,
+) -> tuple[set[int], int]:
+    """Detect newly indexed documents and log them to a LiveLog widget.
+
+    Shared helper used by OverviewPane and CrawlPane.
+
+    Args:
+        recent_docs: List of RecentDoc objects (must have doc_id,
+            url, title, crawled_at attributes).
+        doc_count: Current total document count.
+        seen_ids: Set of already-seen doc IDs (mutated in place).
+        last_count: Previous document count.
+        log_widget: LiveLog widget instance (must have ``log_crawl`` method).
+
+    Returns:
+        Updated (seen_ids, last_count) tuple.
+    """
+    if doc_count <= last_count and not recent_docs:
+        return seen_ids, last_count
+
+    new_docs = [d for d in recent_docs if d.doc_id not in seen_ids]  # type: ignore[attr-defined]
+    if not new_docs:
+        return seen_ids, doc_count
+
+    try:
+        for doc in sorted(new_docs, key=lambda d: d.crawled_at):  # type: ignore[attr-defined]
+            log_widget.log_crawl(  # type: ignore[attr-defined]
+                format_doc_line(doc.url, doc.title),  # type: ignore[attr-defined]
+                success=True,
+            )
+            seen_ids.add(doc.doc_id)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Prevent unbounded growth — keep only the newest 300 IDs
+    if len(seen_ids) > 500:
+        sorted_ids = sorted(seen_ids)
+        seen_ids = set(sorted_ids[-300:])
+
+    return seen_ids, doc_count

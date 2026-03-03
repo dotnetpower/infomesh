@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -13,11 +14,13 @@ from textual.widgets import Static
 from infomesh import __version__
 from infomesh.config import Config
 from infomesh.credits.github_identity import resolve_github_email
-from infomesh.dashboard.data_cache import DashboardDataCache, RecentDoc
+from infomesh.dashboard.data_cache import DashboardDataCache
 from infomesh.dashboard.utils import (
+    format_doc_line,
     format_uptime,
     get_peer_id,
     is_node_running,
+    push_new_docs_to_log,
 )
 from infomesh.dashboard.widgets.live_log import LiveLog
 from infomesh.dashboard.widgets.resource_bar import ResourceBar
@@ -40,20 +43,33 @@ class NodeInfoPanel(Static):
         self._config = config
         # Resolve GitHub email once (avoids subprocess spawn on every tick)
         self._github_email: str | None = resolve_github_email(self._config)
+        # Throttle node-running checks (file I/O + os.kill) to every 5s
+        self._node_check_ttl = 5.0
+        self._node_last_check = 0.0
+        self._node_running_cached = False
+        self._node_uptime_cached = 0.0
 
     def on_mount(self) -> None:
         self._update()
 
     def _update(self) -> None:
         peer_id = get_peer_id(self._config)
-        running = is_node_running(self._config)
-        state_icon = "🟢 Running" if running else "🔴 Stopped"
 
-        # Calculate uptime from PID file modification time
-        pid_file = self._config.node.data_dir / "infomesh.pid"
-        uptime = 0.0
-        if running and pid_file.exists():
-            uptime = time.time() - pid_file.stat().st_mtime
+        # Throttle file I/O-heavy node-running check
+        now = time.monotonic()
+        if now - self._node_last_check >= self._node_check_ttl:
+            self._node_last_check = now
+            self._node_running_cached = is_node_running(self._config)
+            if self._node_running_cached:
+                pid_file = self._config.node.data_dir / "infomesh.pid"
+                if pid_file.exists():
+                    self._node_uptime_cached = time.time() - pid_file.stat().st_mtime
+            else:
+                self._node_uptime_cached = 0.0
+
+        running = self._node_running_cached
+        uptime = self._node_uptime_cached
+        state_icon = "🟢 Running" if running else "🔴 Stopped"
 
         short_id = peer_id[:16] + "..." if len(peer_id) > 16 else peer_id
 
@@ -93,6 +109,7 @@ class ResourcePanel(Widget):
     def __init__(self, config: Config, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._config = config
+        self._proc: Any = None
 
     def compose(self) -> ComposeResult:
         yield Static("[bold]Resources[/bold]", classes="panel-title")
@@ -133,9 +150,15 @@ class ResourcePanel(Widget):
             import psutil
 
             # --- CPU & RAM (infomesh process, not system-wide) ---
-            proc = psutil.Process()
-            cpu = proc.cpu_percent(interval=None)
-            mem_info = proc.memory_info()
+            # Cache Process instance so cpu_percent() has a valid baseline
+            if not hasattr(self, "_proc") or self._proc is None:
+                self._proc = psutil.Process()
+            try:
+                cpu = self._proc.cpu_percent(interval=None)
+            except psutil.NoSuchProcess:
+                self._proc = psutil.Process()
+                cpu = self._proc.cpu_percent(interval=None)
+            mem_info = self._proc.memory_info()
             total_mem = psutil.virtual_memory().total
             mem_pct = (mem_info.rss / total_mem) * 100 if total_mem > 0 else 0
             self.query_one("#res-cpu", ResourceBar).update_value(cpu, 100)
@@ -307,7 +330,7 @@ class OverviewPane(Widget):
                 stats = self._data_cache.get_stats()
                 # Show last 5 in reverse-chronological order (oldest first)
                 for doc in reversed(stats.recent_docs[:5]):
-                    log.log_crawl(self._format_doc_line(doc), success=True)
+                    log.log_crawl(format_doc_line(doc.url, doc.title), success=True)
         except Exception:  # noqa: BLE001
             pass
 
@@ -334,7 +357,17 @@ class OverviewPane(Widget):
                 act_panel.update_crawl(stats.pages_last_hour)
 
                 # Push newly crawled docs to LiveLog
-                self._push_new_docs_to_log(stats.recent_docs, stats.document_count)
+                try:
+                    log = self.query_one("#events-log", LiveLog)
+                    self._seen_doc_ids, self._last_doc_count = push_new_docs_to_log(
+                        stats.recent_docs,
+                        stats.document_count,
+                        self._seen_doc_ids,
+                        self._last_doc_count,
+                        log,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             else:
                 from infomesh.index.local_store import LocalStore
 
@@ -350,44 +383,6 @@ class OverviewPane(Widget):
                 store.close()
         except Exception:  # noqa: BLE001
             pass
-
-    @staticmethod
-    def _format_doc_line(doc: RecentDoc) -> str:
-        """Format a recent doc for log display."""
-        title = doc.title[:40] + "…" if len(doc.title) > 40 else doc.title
-        if title:
-            return f"{doc.url}  ({title})"
-        return doc.url
-
-    def _push_new_docs_to_log(
-        self,
-        recent_docs: list[RecentDoc],
-        doc_count: int,
-    ) -> None:
-        """Detect newly indexed documents and log them to LiveLog."""
-        if doc_count <= self._last_doc_count and not recent_docs:
-            return
-
-        new_docs = [d for d in recent_docs if d.doc_id not in self._seen_doc_ids]
-        if not new_docs:
-            self._last_doc_count = doc_count
-            return
-
-        try:
-            log = self.query_one("#events-log", LiveLog)
-            # Show oldest-first so log reads chronologically
-            for doc in sorted(new_docs, key=lambda d: d.crawled_at):
-                log.log_crawl(self._format_doc_line(doc), success=True)
-                self._seen_doc_ids.add(doc.doc_id)
-        except Exception:  # noqa: BLE001
-            pass
-
-        # Prevent unbounded growth — keep only the newest 500 IDs
-        if len(self._seen_doc_ids) > 500:
-            sorted_ids = sorted(self._seen_doc_ids)
-            self._seen_doc_ids = set(sorted_ids[-300:])
-
-        self._last_doc_count = doc_count
 
     def refresh_data(self) -> None:
         """Manual refresh."""

@@ -79,8 +79,10 @@ class BalancePanel(Static):
                 return
 
             ledger = CreditLedger(db_path)
-            stats = ledger.stats()
-            ledger.close()
+            try:
+                stats = ledger.stats()
+            finally:
+                ledger.close()
 
             from infomesh.dashboard.utils import tier_label
 
@@ -275,8 +277,10 @@ class TransactionTable(Widget):
                 return
 
             ledger = CreditLedger(db_path)
-            entries = ledger.recent_entries(limit=30)
-            ledger.close()
+            try:
+                entries = ledger.recent_entries(limit=30)
+            finally:
+                ledger.close()
 
             table = self.query_one("#tx-table", DataTable)
             table.clear()
@@ -364,8 +368,10 @@ class CreditsPane(Widget):
                 return
 
             ledger = CreditLedger(db_path)
-            stats = ledger.stats()
-            ledger.close()
+            try:
+                stats = ledger.stats()
+            finally:
+                ledger.close()
 
             current_earned = stats.total_earned
             if self._prev_earned is not None and current_earned > self._prev_earned:

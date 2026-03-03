@@ -10,6 +10,11 @@ from textual.widgets import Input, Static
 from infomesh.config import Config
 
 
+def _escape_markup(text: str) -> str:
+    """Escape Rich markup characters in user/DB-sourced strings."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
+
 class SearchResultsPanel(Static):
     """Displays search results with score breakdown and scrollable content."""
 
@@ -43,17 +48,17 @@ class SearchResultsPanel(Static):
 
         top_n = results[:5]
         lines: list[str] = []
-        lines.append(f"[bold]Query:[/bold] {query}")
+        lines.append(f"[bold]Query:[/bold] {_escape_markup(query)}")
         lines.append(
             f"Found [bold]{len(results)}[/bold] results "
             f"({elapsed_ms:.0f}ms, {source}) — showing top {len(top_n)}:\n"
         )
 
         for i, r in enumerate(top_n, 1):
-            title = r.get("title", "Untitled")
-            url = r.get("url", "")
+            title = _escape_markup(str(r.get("title", "Untitled")))
+            url = _escape_markup(str(r.get("url", "")))
             score = r.get("score", 0.0)
-            snippet = str(r.get("snippet", ""))[:600]
+            snippet = _escape_markup(str(r.get("snippet", ""))[:600])
             crawled = r.get("crawled_at", "")
 
             lines.append(f"{'─' * 56}")
@@ -96,7 +101,7 @@ class SearchResultsPanel(Static):
 
     def display_error(self, message: str) -> None:
         """Display an error message."""
-        self.update(f"[bold red]Error:[/bold red] {message}")
+        self.update(f"[bold red]Error:[/bold red] {_escape_markup(message)}")
 
 
 class SearchPane(Widget):

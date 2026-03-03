@@ -193,7 +193,11 @@ class CreditProofBuilder:
     # ── Verify (static) ────────────────────────────────────────
 
     @staticmethod
-    def verify_proof(proof_data: dict[str, Any]) -> CreditVerificationResult:
+    def verify_proof(
+        proof_data: dict[str, Any],
+        *,
+        known_public_key: bytes | None = None,
+    ) -> CreditVerificationResult:
         """Verify a credit proof received from a peer.
 
         Performs three levels of verification:
@@ -207,6 +211,10 @@ class CreditProofBuilder:
 
         Args:
             proof_data: Dict as returned by :meth:`build_proof`.
+            known_public_key: If provided, use this 32-byte Ed25519
+                public key instead of the self-reported key in the
+                proof.  Callers should look up the peer's key from
+                a :class:`~infomesh.p2p.message_auth.PeerKeyRegistry`.
 
         Returns:
             :class:`CreditVerificationResult` with detailed check results.
@@ -236,7 +244,14 @@ class CreditProofBuilder:
                 Ed25519PublicKey,
             )
 
-            pub_key_bytes = bytes.fromhex(proof_data["public_key"])
+            # Prefer known_public_key from PeerKeyRegistry over
+            # the self-reported key embedded in the proof, which an
+            # attacker could forge with a freshly-generated key pair.
+            pub_key_bytes = (
+                known_public_key
+                if known_public_key is not None
+                else bytes.fromhex(proof_data["public_key"])
+            )
             pub_key = Ed25519PublicKey.from_public_bytes(pub_key_bytes)
         except Exception as exc:
             return CreditVerificationResult(

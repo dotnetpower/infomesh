@@ -104,29 +104,32 @@ def kill_orphaned_bgm() -> None:
     """Kill any orphaned BGM player processes from previous runs.
 
     Uses ``pgrep`` to find ffplay/mpv processes whose command line
-    contains the infomesh BGM asset directory, then terminates them.
+    contains the infomesh BGM cache directory, then terminates them.
     This prevents duplicate BGM playback across dashboard restarts.
     """
-    # Match both relative ("assets/bgm/…") and absolute paths
-    # by using just the directory basename pattern.
+    # Match both the cached path (~/.infomesh/bgm/) and the legacy
+    # in-tree path (assets/bgm/) so orphans from either location
+    # are cleaned up.
+    patterns = ["assets/bgm", r"\.infomesh/bgm"]
     for player in ("ffplay", "mpv"):
-        try:
-            result = subprocess.run(
-                ["pgrep", "-f", f"{player}.*assets/bgm"],
-                capture_output=True,
-                text=True,
-            )
-            for line in result.stdout.strip().splitlines():
-                pid = int(line.strip())
-                if pid == os.getpid():
-                    continue
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    logger.info("bgm_orphan_killed", pid=pid, player=player)
-                except (ProcessLookupError, PermissionError):
-                    pass
-        except (FileNotFoundError, ValueError):
-            pass
+        for pat in patterns:
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-f", f"{player}.*{pat}"],
+                    capture_output=True,
+                    text=True,
+                )
+                for line in result.stdout.strip().splitlines():
+                    pid = int(line.strip())
+                    if pid == os.getpid():
+                        continue
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        logger.info("bgm_orphan_killed", pid=pid, player=player)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+            except (FileNotFoundError, ValueError):
+                pass
 
 
 class BGMPlayer:
@@ -136,6 +139,9 @@ class BGMPlayer:
         is_playing: Whether music is currently playing.
     """
 
+    # Maximum consecutive auto-restarts before giving up.
+    _MAX_AUTO_RESTARTS: int = 5
+
     def __init__(self) -> None:
         self._proc: subprocess.Popen[bytes] | None = None
         self._current_file: Path | None = None
@@ -144,6 +150,8 @@ class BGMPlayer:
         self._player_cmd = player[0] if player else None
         self._player_args = player[1] if player else []
         self._volume: int = 100
+        self._auto_restart_count: int = 0
+        self._intentionally_stopped: bool = False
 
     @property
     def is_playing(self) -> bool:
@@ -151,6 +159,44 @@ class BGMPlayer:
         if self._proc is None:
             return False
         return self._proc.poll() is None
+
+    def check_and_restart(self) -> bool:
+        """Check if BGM crashed and auto-restart if needed.
+
+        Call this periodically (e.g. every few seconds) to detect
+        unexpected ffplay/mpv process exits and restart playback.
+
+        Returns:
+            True if BGM was restarted, False otherwise.
+        """
+        if self._intentionally_stopped:
+            return False
+        if self._current_file is None:
+            return False
+        if self.is_playing:
+            # Reset counter when confirmed alive.
+            self._auto_restart_count = 0
+            return False
+        if self._auto_restart_count >= self._MAX_AUTO_RESTARTS:
+            logger.warning(
+                "bgm_auto_restart_limit",
+                count=self._auto_restart_count,
+            )
+            return False
+
+        # Process died unexpectedly — attempt restart.
+        exit_code = self._proc.poll() if self._proc is not None else None
+        logger.info(
+            "bgm_auto_restarting",
+            file=self._current_file.name,
+            exit_code=exit_code,
+            attempt=self._auto_restart_count + 1,
+        )
+        saved_file = self._current_file
+        self._auto_restart_count += 1
+        # Don't call self.stop() — it sets _intentionally_stopped.
+        self._proc = None
+        return self.play(saved_file, volume=self._volume)
 
     @property
     def available(self) -> bool:
@@ -188,6 +234,10 @@ class BGMPlayer:
 
         # Stop any current playback (this instance)
         self.stop()
+
+        # Reset intentional stop flag — we're starting fresh.
+        self._intentionally_stopped = False
+        self._auto_restart_count = 0
 
         # Kill orphaned BGM processes from previous runs
         kill_orphaned_bgm()
@@ -275,6 +325,7 @@ class BGMPlayer:
 
     def stop(self) -> None:
         """Stop BGM and all SFX playback."""
+        self._intentionally_stopped = True
         try:
             if self._proc is not None and self._proc.poll() is None:
                 self._proc.terminate()

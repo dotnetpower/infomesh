@@ -291,7 +291,14 @@ BGM is **off by default**. Enable it with the `m` keyboard shortcut or via confi
 [dashboard]
 bgm_auto_start = true    # false by default — enable to auto-play on start
 bgm_volume = 50           # 0–100
+bgm_idle_stop = true      # auto-stop BGM when crawling is idle (set false to keep playing)
 ```
+
+### Auto-Restart
+
+If the audio player process crashes unexpectedly, BGM will automatically
+restart (up to 5 attempts). This is handled transparently — a notification
+appears when auto-restart occurs.
 
 ### Performance Note
 

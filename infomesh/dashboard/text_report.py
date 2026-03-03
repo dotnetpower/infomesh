@@ -144,9 +144,54 @@ def _index_section(config: Config) -> Panel:
 
 def _network_section(config: Config) -> Panel:
     """Build the Network panel."""
+    from infomesh.dashboard.utils import read_p2p_status
+
     table = Table.grid(padding=(0, 2))
     table.add_column("key", style="bold", min_width=14)
     table.add_column("value")
+
+    # P2P live status from p2p_status.json
+    p2p_data = read_p2p_status(config)
+    if p2p_data:
+        raw_state = str(p2p_data.get("state", "stopped"))
+        match raw_state:
+            case "running":
+                state_str = "[bold green]🟢 Online[/]"
+            case "starting":
+                state_str = "[bold yellow]🟡 Starting[/]"
+            case "error":
+                err = p2p_data.get("error", "")
+                state_str = (
+                    f"[bold red]🔴 Error: {err}[/]" if err else "[bold red]🔴 Error[/]"
+                )
+            case _:
+                state_str = "[bold red]🔴 Offline[/]"
+        raw_peers = p2p_data.get("peers", 0)
+        peers = int(raw_peers) if isinstance(raw_peers, (int, float, str)) else 0
+        table.add_row("P2P State", state_str)
+        table.add_row("Peers", f"{peers} connected")
+
+        # DHT stats
+        dht = p2p_data.get("dht", {})
+        if isinstance(dht, dict) and any(
+            dht.get(k, 0)
+            for k in (
+                "keys_stored",
+                "keys_published",
+                "gets_performed",
+                "puts_performed",
+            )
+        ):
+            table.add_row(
+                "DHT keys",
+                f"{dht.get('keys_stored', 0):,} stored, "
+                f"{dht.get('keys_published', 0):,} published",
+            )
+    else:
+        table.add_row(
+            "P2P State",
+            "[dim]Not started — run infomesh start[/]",
+        )
 
     table.add_row("Port", f"{config.node.listen_port} TCP")
     table.add_row(
@@ -184,57 +229,57 @@ def _credits_section(config: Config) -> Panel:
         ledger = CreditLedger(db_path)
         try:
             stats = ledger.stats()
+
+            from infomesh.dashboard.utils import tier_label
+
+            tier_str = tier_label(stats.tier)
+
+            table.add_row("Balance", f"[bold green]{stats.balance:,.2f}[/] credits")
+            table.add_row("Tier", tier_str)
+            table.add_row("Earned", f"{stats.total_earned:,.2f}")
+            table.add_row("Spent", f"{stats.total_spent:,.2f}")
+            table.add_row("Search cost", f"{stats.search_cost:.3f}")
+            table.add_row("Score", f"{stats.contribution_score:,.2f}")
+
+            # Network-wide stats
+            try:
+                from infomesh.credits.sync import (
+                    CreditSyncManager,
+                    CreditSyncStore,
+                )
+
+                sync_path = config.node.data_dir / "credit_sync.db"
+                if sync_path.exists():
+                    ss = CreditSyncStore(sync_path)
+                    try:
+                        mgr = CreditSyncManager(
+                            ledger=ledger,
+                            store=ss,
+                            owner_email="",
+                            key_pair=None,
+                            local_peer_id="",
+                        )
+                        agg = mgr.aggregated_stats()
+                        if agg.node_count > 1:
+                            table.add_row("", "")
+                            table.add_row(
+                                "[bold]Network[/]",
+                                f"{agg.node_count} nodes",
+                            )
+                            table.add_row(
+                                "Net Balance",
+                                (f"[bold cyan]{agg.balance:,.2f}[/] credits"),
+                            )
+                            table.add_row(
+                                "Net Earned",
+                                f"{agg.total_earned:,.2f}",
+                            )
+                    finally:
+                        ss.close()
+            except Exception:  # noqa: BLE001
+                pass
         finally:
             ledger.close()
-
-        from infomesh.dashboard.utils import tier_label
-
-        tier_str = tier_label(stats.tier)
-
-        table.add_row("Balance", f"[bold green]{stats.balance:,.2f}[/] credits")
-        table.add_row("Tier", tier_str)
-        table.add_row("Earned", f"{stats.total_earned:,.2f}")
-        table.add_row("Spent", f"{stats.total_spent:,.2f}")
-        table.add_row("Search cost", f"{stats.search_cost:.3f}")
-        table.add_row("Score", f"{stats.contribution_score:,.2f}")
-
-        # Network-wide stats
-        try:
-            from infomesh.credits.sync import (
-                CreditSyncManager,
-                CreditSyncStore,
-            )
-
-            sync_path = config.node.data_dir / "credit_sync.db"
-            if sync_path.exists():
-                ss = CreditSyncStore(sync_path)
-                try:
-                    mgr = CreditSyncManager(
-                        ledger=ledger,
-                        store=ss,
-                        owner_email="",
-                        key_pair=None,
-                        local_peer_id="",
-                    )
-                    agg = mgr.aggregated_stats()
-                    if agg.node_count > 1:
-                        table.add_row("", "")
-                        table.add_row(
-                            "[bold]Network[/]",
-                            f"{agg.node_count} nodes",
-                        )
-                        table.add_row(
-                            "Net Balance",
-                            (f"[bold cyan]{agg.balance:,.2f}[/] credits"),
-                        )
-                        table.add_row(
-                            "Net Earned",
-                            f"{agg.total_earned:,.2f}",
-                        )
-                finally:
-                    ss.close()
-        except Exception:  # noqa: BLE001
-            pass
     except Exception as exc:  # noqa: BLE001
         table.add_row("Error", str(exc))
 

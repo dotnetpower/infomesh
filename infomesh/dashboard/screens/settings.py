@@ -116,6 +116,10 @@ _NETWORK_FIELDS: dict[str, tuple[str, str]] = {
 _DASHBOARD_FIELDS: dict[str, tuple[str, str]] = {
     "bgm_auto_start": ("BGM Auto Start", "Play music when dashboard opens"),
     "bgm_volume": ("BGM Volume", "Volume (0–100 %)"),
+    "bgm_idle_stop": (
+        "BGM Idle Stop",
+        "Auto-stop BGM when crawling is idle",
+    ),
     "refresh_interval": (
         "Refresh Interval",
         "Dashboard data refresh period (0.2–5.0 s)",
@@ -557,7 +561,10 @@ class SettingsPane(Widget):
         try:
             app = self.app
             # Update the app-level config reference
-            app.config = new_config  # type: ignore[attr-defined]
+            if hasattr(app, "update_config"):
+                app.update_config(new_config)
+            else:
+                app.config = new_config  # type: ignore[attr-defined]
 
             # Apply theme change only when it actually differs
             # (avoids full CSS rebuild + visual flicker on every save)
@@ -566,8 +573,8 @@ class SettingsPane(Widget):
                 app.theme = new_theme
 
             # Update dashboard data cache refresh interval
-            if hasattr(app, "_data_cache"):
-                app._data_cache.set_ttl(new_config.dashboard.refresh_interval)
+            if hasattr(app, "set_data_cache_ttl"):
+                app.set_data_cache_ttl(new_config.dashboard.refresh_interval)
         except Exception:  # noqa: BLE001
             pass
 
@@ -592,14 +599,22 @@ class SettingsPane(Widget):
     def _restart_node(self) -> None:
         """Restart the InfoMesh node process."""
         import subprocess
+        import time as _time
 
         app = self.app
         node_pid = getattr(app, "_node_pid", None)
 
-        # Stop the current node
+        # Stop the current node and wait for it to exit
         if node_pid is not None:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(node_pid, signal.SIGTERM)
+            # Wait up to 5 seconds for the old process to exit
+            for _ in range(50):
+                try:
+                    os.kill(node_pid, 0)
+                    _time.sleep(0.1)
+                except ProcessLookupError:
+                    break
 
         # Re-launch the serve process
         serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
@@ -637,6 +652,10 @@ class SettingsPane(Widget):
         self.notify(
             "Reset to defaults — click Save to persist", title="Settings", timeout=3
         )
+
+    def update_config(self, config: Config) -> None:
+        """Public API: update config reference (e.g. from theme change)."""
+        self._config = config
 
     def refresh_data(self) -> None:
         """No-op — settings are user-driven."""

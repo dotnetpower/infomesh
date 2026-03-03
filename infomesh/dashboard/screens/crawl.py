@@ -12,6 +12,7 @@ from textual.widgets import Static
 
 from infomesh.config import Config
 from infomesh.dashboard.data_cache import DashboardDataCache
+from infomesh.dashboard.utils import format_doc_line, push_new_docs_to_log
 from infomesh.dashboard.widgets.bar_chart import BarChart, BarItem
 from infomesh.dashboard.widgets.live_log import LiveLog
 
@@ -68,6 +69,11 @@ class CrawlStatsPanel(Static):
         self._pages_per_hour = pages_per_hour
         self._domain_count = domain_count
         self._last_crawl_at = last_crawl_at
+        self._countdown = countdown
+        self._refresh_content()
+
+    def update_countdown(self, countdown: int) -> None:
+        """Update only the countdown timer without resetting stats."""
         self._countdown = countdown
         self._refresh_content()
 
@@ -172,7 +178,11 @@ class CrawlPane(Widget):
         self._config = config
         self._data_cache = data_cache
         self._refresh_timer: Timer | None = None
+        self._tick_timer: Timer | None = None
         self._last_refresh: float = 0.0
+        # Track doc IDs already logged so LiveLog only shows new arrivals
+        self._seen_doc_ids: set[int] = set()
+        self._last_doc_count: int = 0
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -184,7 +194,10 @@ class CrawlPane(Widget):
             yield LiveLog(id="crawl-feed")
 
     def on_mount(self) -> None:
-        self._refresh_timer = self.set_interval(self._TICK_INTERVAL, self._tick)
+        self._refresh_timer = self.set_interval(
+            self._REFRESH_INTERVAL, self._refresh_from_db
+        )
+        self._tick_timer = self.set_interval(self._TICK_INTERVAL, self._tick)
         self._load_initial()
 
     def _load_initial(self) -> None:
@@ -199,6 +212,15 @@ class CrawlPane(Widget):
         try:
             log = self.query_one("#crawl-feed", LiveLog)
             log.log_event("Crawl feed started", style="bold cyan")
+            # Seed seen IDs from initial data so they aren't re-logged
+            if self._data_cache is not None:
+                stats = self._data_cache.get_stats()
+                for doc in stats.recent_docs:
+                    self._seen_doc_ids.add(doc.doc_id)
+                self._last_doc_count = stats.document_count
+                # Show last 5 recent docs as initial log entries
+                for doc in reversed(stats.recent_docs[:5]):
+                    log.log_crawl(format_doc_line(doc.url, doc.title), success=True)
         except Exception:  # noqa: BLE001
             pass
 
@@ -243,20 +265,30 @@ class CrawlPane(Widget):
             pass
 
     def _tick(self) -> None:
-        """Periodic tick — refreshes DB data on interval, updates countdown."""
+        """Periodic tick — push new docs to live log feed."""
         import contextlib
 
         elapsed = time.monotonic() - self._last_refresh
         remaining = max(0, int(self._REFRESH_INTERVAL - elapsed))
 
-        if elapsed >= self._REFRESH_INTERVAL:
-            self._refresh_from_db()
-        else:
-            # Just update countdown on CrawlStatsPanel
-            with contextlib.suppress(Exception):
-                self.query_one("#crawl-stats", CrawlStatsPanel).update_stats(
-                    countdown=remaining
+        # Update countdown on CrawlStatsPanel (without resetting stats)
+        with contextlib.suppress(Exception):
+            self.query_one("#crawl-stats", CrawlStatsPanel).update_countdown(remaining)
+
+        # Push newly crawled docs to the crawl-feed LiveLog
+        if self._data_cache is not None:
+            try:
+                stats = self._data_cache.get_stats()
+                log = self.query_one("#crawl-feed", LiveLog)
+                self._seen_doc_ids, self._last_doc_count = push_new_docs_to_log(
+                    stats.recent_docs,
+                    stats.document_count,
+                    self._seen_doc_ids,
+                    self._last_doc_count,
+                    log,
                 )
+            except Exception:  # noqa: BLE001
+                pass
 
     def refresh_data(self) -> None:
         """Manual refresh."""

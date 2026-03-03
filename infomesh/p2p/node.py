@@ -229,7 +229,11 @@ class InfoMeshNode:
                 "bootstrap": self._bootstrap_results,
                 "peer_versions": self._peer_version_tracker.peer_versions,
             }
-            status_path.write_text(json.dumps(data))
+            # Atomic write: write to temp file then rename to prevent
+            # the dashboard from reading a partially-written file.
+            tmp_path = status_path.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(data))
+            tmp_path.replace(status_path)
         except OSError:
             pass  # non-critical
 

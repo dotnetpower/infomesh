@@ -92,12 +92,19 @@ class DHTPanel(Static):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__("", **kwargs)  # type: ignore[arg-type]
+        self._p2p_state: str = "stopped"
 
     def on_mount(self) -> None:
         self._refresh_content({})
 
-    def update_data(self, dht_data: dict[str, int]) -> None:
+    def update_data(
+        self,
+        dht_data: dict[str, int],
+        *,
+        p2p_state: str = "stopped",
+    ) -> None:
         """Public API: update DHT panel with new data."""
+        self._p2p_state = p2p_state
         self._refresh_content(dht_data)
 
     def _refresh_content(self, dht_data: dict[str, int]) -> None:
@@ -106,7 +113,15 @@ class DHTPanel(Static):
         gets = dht_data.get("gets_performed", 0)
         puts = dht_data.get("puts_performed", 0)
         if not any([keys, published, gets, puts]):
-            text = "[bold]DHT[/bold]\n\n  [dim]Node offline — no DHT data[/dim]"
+            if self._p2p_state == "running":
+                hint = "No DHT activity yet"
+            elif self._p2p_state in ("starting", "stopping"):
+                hint = "P2P node is starting\u2026"
+            elif self._p2p_state == "error":
+                hint = "P2P node error — check logs"
+            else:
+                hint = "P2P not started — run infomesh start"
+            text = f"[bold]DHT[/bold]\n\n  [dim]{hint}[/dim]"
         else:
             text = (
                 f"[bold]DHT[/bold]\n"
@@ -286,8 +301,11 @@ class NetworkPane(Widget):
         # DHT
         with contextlib.suppress(Exception):
             dht_data = data.get("dht", {})
+            p2p_state = str(data.get("state", "stopped"))
             if isinstance(dht_data, dict):
-                self.query_one("#dht-status", DHTPanel).update_data(dht_data)
+                self.query_one("#dht-status", DHTPanel).update_data(
+                    dht_data, p2p_state=p2p_state
+                )
 
         # Peer Table
         with contextlib.suppress(Exception):

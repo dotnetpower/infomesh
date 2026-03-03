@@ -211,6 +211,14 @@ class DashboardApp(App[None]):
         # Guard to skip persistence during __init__ theme assignment
         self._theme_ready: bool = True
 
+    def set_data_cache_ttl(self, ttl: float) -> None:
+        """Update the data cache refresh interval."""
+        self._data_cache.set_ttl(ttl)
+
+    def update_config(self, config: Config) -> None:
+        """Update the app-level config reference."""
+        self.config = config
+
     def watch_theme(self, new_theme: str) -> None:
         """Persist theme to config.toml when changed via command palette."""
         if not getattr(self, "_theme_ready", False):
@@ -229,7 +237,7 @@ class DashboardApp(App[None]):
                 from infomesh.dashboard.screens.settings import SettingsPane
 
                 pane = self.query_one(SettingsPane)
-                pane._config = new_config
+                pane.update_config(new_config)
         except Exception:  # noqa: BLE001
             pass
 
@@ -269,12 +277,30 @@ class DashboardApp(App[None]):
                     timeout=3,
                 )
                 # Start periodic crawl-idle check for auto-stop
+                if self.config.dashboard.bgm_idle_stop:
+                    self.set_interval(
+                        _CRAWL_IDLE_CHECK_INTERVAL_SECS,
+                        self._check_crawl_idle_bgm,
+                    )
+                # Start periodic health-check for auto-restart
                 self.set_interval(
                     _CRAWL_IDLE_CHECK_INTERVAL_SECS,
-                    self._check_crawl_idle_bgm,
+                    self._check_bgm_health,
                 )
         except Exception:  # noqa: BLE001
             pass  # BGM is optional — never block dashboard
+
+    def _check_bgm_health(self) -> None:
+        """Periodically check if BGM crashed and auto-restart."""
+        try:
+            if self._bgm.check_and_restart():
+                self.notify(
+                    "🎵 BGM auto-restarted",
+                    title="BGM",
+                    timeout=3,
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _check_crawl_idle_bgm(self) -> None:
         """Periodically check crawl activity; stop BGM if idle > threshold.
@@ -424,16 +450,17 @@ class DashboardApp(App[None]):
 
     def action_quit(self) -> None:  # type: ignore[override]
         """Override quit to show confirmation when node is running."""
-        self._cleanup()
         if self._node_pid is not None:
             self.push_screen(QuitConfirmScreen(), self._handle_quit_response)  # type: ignore[arg-type]
         else:
+            self._cleanup()
             self.exit()
 
     def _handle_quit_response(self, result: str) -> None:
         """Handle the quit confirmation dialog response."""
         if result == "cancel":
             return
+        self._cleanup()
         self.exit_action = result
         self.exit()
 

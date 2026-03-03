@@ -370,6 +370,7 @@ class SummarizationEngine:
 
     def __init__(self, backend: LLMBackend) -> None:
         self._backend = backend
+        self._cached_model_info: ModelInfo | None = None
 
     async def summarize(
         self,
@@ -401,7 +402,10 @@ class SummarizationEngine:
 
         c_hash = content_hash(text)
 
-        info = await self._backend.model_info()
+        # Cache model_info to avoid an HTTP round-trip on every call.
+        if self._cached_model_info is None:
+            self._cached_model_info = await self._backend.model_info()
+        info = self._cached_model_info
 
         result = SummaryResult(
             url=url,

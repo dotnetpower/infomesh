@@ -275,7 +275,15 @@ def _preprocess_search_query(
     # Re-truncate after NLP expansion to prevent oversized FTS queries
     query = query[:1000]
 
-    cache_suffix = f"|{fmt}|{offset}|{snippet_len}|{filters.get('language', '')}"
+    _inc = ",".join(sorted(filters.get("include_domains", [])))
+    _exc = ",".join(sorted(filters.get("exclude_domains", [])))
+    cache_suffix = (
+        f"|{fmt}|{offset}|{snippet_len}"
+        f"|{filters.get('language', '')}"
+        f"|{filters.get('date_from', '')}"
+        f"|{filters.get('date_to', '')}"
+        f"|{_inc}|{_exc}"
+    )
     return _SearchParams(
         query=query,
         original_query=original_query,
@@ -752,7 +760,7 @@ def _build_status_data(
         }
         if al.state.value == "grace":
             cr["grace_remaining_hours"] = round(
-                al.grace_remaining_hours,
+                al.grace_remaining_hours or 0.0,
                 1,
             )
         elif al.state.value == "debt":
@@ -1244,7 +1252,7 @@ def handle_credit_balance(
         }
         if al.state.value == "grace":
             data["grace_remaining_hours"] = round(
-                al.grace_remaining_hours,
+                al.grace_remaining_hours or 0.0,
                 1,
             )
         elif al.state.value == "debt":

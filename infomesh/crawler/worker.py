@@ -179,7 +179,7 @@ class CrawlWorker:
         """Inner crawl logic, separated to ensure lock release in finally."""
         # SSRF protection — validate URL before any network request
         try:
-            validate_url(url)
+            validate_url(url, resolve_dns=True)
         except SSRFError as exc:
             logger.warning("crawl_ssrf_blocked", url=url, reason=str(exc))
             self._scheduler.mark_done(url)
@@ -519,6 +519,9 @@ class CrawlWorker:
 
         for sitemap_url in sitemaps:
             try:
+                # SSRF protection — sitemap URLs from robots.txt are
+                # attacker-controlled and must be validated before fetch.
+                validate_url(sitemap_url)
                 resp = await client.get(
                     sitemap_url,
                     timeout=15.0,
@@ -542,6 +545,11 @@ class CrawlWorker:
                         if added:
                             total_scheduled += 1
 
+            except SSRFError:
+                logger.debug(
+                    "sitemap_ssrf_blocked",
+                    sitemap=sitemap_url,
+                )
             except (httpx.HTTPError, OSError) as exc:
                 logger.debug(
                     "sitemap_fetch_error",

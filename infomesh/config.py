@@ -9,10 +9,11 @@ import json
 import os
 import sysconfig
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace as dc_replace
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -141,6 +142,7 @@ class DashboardConfig:
 
     bgm_auto_start: bool = False
     bgm_volume: int = 50
+    bgm_idle_stop: bool = True
     refresh_interval: float = 0.5
     theme: str = "catppuccin-mocha"
 
@@ -175,6 +177,40 @@ def _env_override(section: str, key: str) -> str | None:
     """Check for INFOMESH_{SECTION}_{KEY} environment variable."""
     env_key = f"INFOMESH_{section.upper()}_{key.upper()}"
     return os.environ.get(env_key)
+
+
+def _resolve_field_type(f: Any) -> type:
+    """Resolve the target type for a dataclass field.
+
+    With ``from __future__ import annotations``, ``f.type`` is a
+    string (e.g. ``"list[str]"``) rather than the actual class.
+    This helper maps known annotation strings to their types and
+    falls back to ``type(f.default)`` or ``default_factory`` output.
+
+    Args:
+        f: A ``dataclasses.Field`` object.
+    """
+    _type_map: dict[str, type] = {
+        "int": int,
+        "float": float,
+        "bool": bool,
+        "str": str,
+        "Path": Path,
+        "list[str]": list,
+    }
+    ftype = getattr(f, "type", None)
+    if isinstance(ftype, str):
+        resolved = _type_map.get(ftype)
+        if resolved is not None:
+            return resolved
+    default = getattr(f, "default", MISSING)
+    if default is not MISSING:
+        return type(default)
+    factory = getattr(f, "default_factory", MISSING)
+    if factory is not MISSING:
+        sample = factory()
+        return type(sample)
+    return str
 
 
 def _coerce(value: str, target_type: type) -> object:
@@ -282,11 +318,10 @@ def _build_section[T](
         # env override
         env_val = _env_override(section_name, f.name)
         if env_val is not None:
-            raw = _coerce(
-                env_val, f.type if isinstance(f.type, type) else type(f.default)
-            )
+            raw = _coerce(env_val, _resolve_field_type(f))
         if raw is not None:
-            if f.type is Path or (isinstance(f.default, Path)):
+            ft = _resolve_field_type(f)
+            if ft is Path:
                 raw = Path(str(raw))
             # Validate value against constraints
             validated = _validate_value(f.name, raw)
