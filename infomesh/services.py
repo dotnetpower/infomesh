@@ -26,6 +26,8 @@ from infomesh.credits.ledger import CreditLedger
 from infomesh.index.link_graph import LinkGraph
 from infomesh.index.local_store import LocalStore
 from infomesh.p2p.keys import ensure_keys
+from infomesh.resources.governor import ResourceGovernor
+from infomesh.resources.profiles import get_profile
 from infomesh.security import SSRFError, validate_url
 from infomesh.types import KeyPairLike, VectorStoreLike
 
@@ -457,6 +459,12 @@ class AppContext:
                 )
             except Exception:  # noqa: BLE001
                 logger.warning("credit_sync_unavailable")
+
+        # ── Resource governor (throttle crawl on high load) ──
+        profile = get_profile(c.resources.profile)
+        self.governor = ResourceGovernor(profile)
+        self.governor.apply_os_priority()
+        self.governor.check_and_adjust()
 
         # ── P2P components (set externally via bootstrap_p2p) ──
         self.distributed_index: object | None = None

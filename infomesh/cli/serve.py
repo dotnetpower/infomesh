@@ -500,7 +500,13 @@ def update(check: bool) -> None:
     type=click.Choice(["full", "crawler", "search"], case_sensitive=False),
     default=None,
 )
-def serve(seeds: str | None, role: str | None) -> None:
+@click.option(
+    "--no-crawl",
+    is_flag=True,
+    default=False,
+    help="Run P2P node without starting the crawl loop (bootstrap mode).",
+)
+def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
     """Internal: run the crawl loop as a background process."""
     import logging
     from logging.handlers import RotatingFileHandler
@@ -613,9 +619,14 @@ def serve(seeds: str | None, role: str | None) -> None:
         except NotImplementedError:
             pass  # Windows doesn't support add_signal_handler
 
-        if config.node.role == NodeRole.SEARCH:
-            # Search-only nodes don't crawl — wait for index submissions
-            _serve_logger.info("search_mode", msg="Waiting for index submissions")
+        if config.node.role == NodeRole.SEARCH or no_crawl:
+            # Search-only or bootstrap-only: don't crawl — just serve P2P
+            mode = "search" if config.node.role == NodeRole.SEARCH else "no-crawl"
+            _serve_logger.info(
+                "waiting_mode",
+                mode=mode,
+                msg="P2P active, crawl loop disabled",
+            )
             await _shutdown_event.wait()
         else:
             crawl_task = asyncio.create_task(

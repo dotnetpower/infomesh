@@ -42,6 +42,7 @@ dependencies = [
     "tomli>=2.0; python_version < '3.11'",
     "click>=8.1",
     "textual>=1.0",
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]

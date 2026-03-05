@@ -1,0 +1,73 @@
+# Auto-close issues when the author confirms resolution.
+#
+# Triggers on issue comments. If the commenter is the original issue
+# author and the comment contains a "resolved" signal keyword, the
+# issue is automatically closed with a friendly thank-you message.
+
+name: "Issue: Auto-close on author confirmation"
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  close-on-confirmation:
+    # Only run on issue comments (not PR comments), and only when the
+    # commenter is the person who opened the issue.
+    if: >-
+      !github.event.issue.pull_request &&
+      github.event.comment.user.login == github.event.issue.user.login &&
+      contains(github.event.issue.labels.*.name, 'waiting-for-response') == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for resolution keywords
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body.toLowerCase();
+            const keywords = [
+              'thank',
+              'thanks',
+              'resolved',
+              'solved',
+              'got it',
+              'understood',
+              'makes sense',
+              'that works',
+              'working now',
+              'fixed',
+              'this helps',
+              'appreciate',
+            ];
+            const matched = keywords.some(kw => body.includes(kw));
+            core.setOutput('should_close', matched.toString());
+
+      - name: Close issue with thank-you
+        if: steps.check.outputs.should_close == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: [
+                `Glad it helped! Closing this issue now. 🎉`,
+                ``,
+                `Feel free to reopen if you have any follow-up questions.`,
+              ].join('\n'),
+            });
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              state: 'closed',
+              state_reason: 'completed',
+            });

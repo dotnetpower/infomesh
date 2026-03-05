@@ -286,10 +286,39 @@ async def seed_and_crawl_loop(
     idle_restart_threshold = 10.0
     fts_optimize_interval = 3600.0  # optimize FTS5 every hour
     priority_check_interval = 2.0  # check priority queue every 2s
+    governor_check_interval = 5.0  # check resource governor every 5s
+    last_governor_check = 0.0
 
     try:
         while True:
             now = time.monotonic()
+
+            # ── Resource governor check (CPU / memory) ─────
+            if now - last_governor_check >= governor_check_interval:
+                last_governor_check = now
+                gov = getattr(ctx, "governor", None)
+                if gov is not None:
+                    gov.check_and_adjust()
+                    if gov.should_pause_crawl:
+                        _logger.warning(
+                            "governor_pause",
+                            level=gov.degrade_level.name,
+                            cpu=f"{gov._last_cpu:.0f}%",
+                            mem=f"{gov._last_mem:.0f}%",
+                            msg="Pausing crawl — resource overload",
+                        )
+                        await asyncio.sleep(10)
+                        continue
+                    if gov.should_throttle_crawl:
+                        throttle_sleep = gov.throttle_factor * 2.0
+                        _logger.info(
+                            "governor_throttle",
+                            level=gov.degrade_level.name,
+                            factor=f"{gov.throttle_factor:.1f}",
+                            sleep=f"{throttle_sleep:.1f}s",
+                        )
+                        await asyncio.sleep(throttle_sleep)
+
             if now - last_disk_check > disk_check_interval:
                 last_disk_check = now
                 if is_disk_critically_low(ctx.config.node.data_dir):

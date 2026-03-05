@@ -1053,7 +1053,7 @@ wheels = [
 
 [[package]]
 name = "infomesh"
-version = "0.1.12"
+version = "0.1.13"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1062,6 +1062,7 @@ dependencies = [
     { name = "httpx" },
     { name = "mcp" },
     { name = "msgpack" },
+    { name = "psutil" },
     { name = "structlog" },
     { name = "textual" },
     { name = "trafilatura" },
@@ -1119,6 +1120,7 @@ requires-dist = [
     { name = "msgpack", specifier = ">=1.0" },
     { name = "ollama", marker = "extra == 'llm'", specifier = ">=0.3" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40" },
+    { name = "psutil", specifier = ">=5.9" },
     { name = "sentence-transformers", marker = "extra == 'vector'", specifier = ">=3.0" },
     { name = "structlog", specifier = ">=24.0" },
     { name = "textual", specifier = ">=1.0" },
