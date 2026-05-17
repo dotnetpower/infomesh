@@ -27,8 +27,8 @@ uv tool install infomesh
 pip install infomesh
 ```
 
-> **참고**: 기본 설치에는 MCP, 크롤링, 로컬 검색에 필요한 모든 것이 포함됩니다
-> — 네이티브 빌드 도구가 필요 없습니다. P2P 네트워킹을 활성화하려면
+> **참고**: 기본 설치에는 MCP, 크롤링, 로컬 검색에 필요한 모든 것이 포함되며
+> 네이티브 빌드 도구는 필요 없습니다. P2P 네트워킹을 활성화하려면
 > `pip install 'infomesh[p2p]'`로 설치하세요 (Linux에서 `build-essential`,
 > `libgmp-dev` 등이 필요합니다).
 > 자세한 내용은 [FAQ](12-faq.md)를 참조하세요.
@@ -49,6 +49,11 @@ infomesh --version
 ```bash
 infomesh start
 ```
+
+같은 데이터 디렉토리의 노드가 이미 실행 중이면 `infomesh start`는 중복
+프로세스를 띄우지 않고 종료합니다. 내부 `_serve` 프로세스도 시작 lock과
+PID 검증을 사용하므로 동시에 시작하거나 stale PID 파일이 남아 있어도 같은
+로컬 인덱스에 대해 여러 크롤러가 뜨지 않습니다.
 
 InfoMesh는 다음 순서로 첫 실행 점검을 수행합니다:
 
@@ -463,6 +468,12 @@ infomesh bench --iterations 100
 노드 실행 중 `http://localhost:8080/dashboard`를 여세요.
 5개 탭: 개요, 검색 분석, 크롤 상태, 네트워크, 크레딧.
 5초마다 자동 갱신. 상세 상태: `GET /health?detail=1`.
+
+장시간 실행되는 노드는 데이터 디렉토리에 `runtime_status.json`도 기록합니다.
+관리 API의 `/status`, `/health?detail=1`, `/metrics`는 최신 heartbeat,
+degrade level, throttle factor, 프로세스 메모리 사용량을 노출합니다.
+`infomesh stop`은 SIGTERM을 보낸 뒤 graceful shutdown을 기다리고, 확인된
+노드 PID 파일만 정리합니다.
 
 ---
 

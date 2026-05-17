@@ -25,6 +25,8 @@ class DomainState:
 
 # Maximum tracked domains before stale eviction triggers
 _MAX_TRACKED_DOMAINS = 50_000
+# Start stale eviction before the hard cap so bursts do not wait for hourly reset
+_DOMAIN_PRUNE_THRESHOLD = int(_MAX_TRACKED_DOMAINS * 0.8)
 # Domains not accessed for this many seconds are evictable
 _DOMAIN_STALE_SECONDS = 3600.0
 
@@ -70,6 +72,9 @@ class Scheduler:
         if self._max_depth > 0 and depth > self._max_depth:
             logger.debug("scheduler_depth_exceeded", url=url, depth=depth)
             return False
+
+        if len(self._domains) > _DOMAIN_PRUNE_THRESHOLD:
+            self._prune_stale_domains(threshold=_DOMAIN_PRUNE_THRESHOLD)
 
         domain = urlparse(url).netloc
         state = self._domains[domain]
@@ -157,13 +162,20 @@ class Scheduler:
     def mark_done(self, url: str) -> None:
         """Mark a URL as done (reduce pending count)."""
         domain = urlparse(url).netloc
-        state = self._domains[domain]
+        state = self._domains.get(domain)
+        if state is None:
+            return
         state.pending_count = max(0, state.pending_count - 1)
+        if len(self._domains) > _DOMAIN_PRUNE_THRESHOLD:
+            self._prune_stale_domains(threshold=_DOMAIN_PRUNE_THRESHOLD)
 
     def mark_error(self, url: str) -> None:
         """Mark a URL as errored."""
         domain = urlparse(url).netloc
-        self._domains[domain].error_count += 1
+        state = self._domains.get(domain)
+        if state is None:
+            return
+        state.error_count += 1
         self.mark_done(url)
 
     def _refresh_hour(self) -> None:
@@ -173,11 +185,11 @@ class Scheduler:
             self._hourly_count = 0
             self._hour_start = now
             # Prune stale domains on hour boundary
-            self._prune_stale_domains()
+            self._prune_stale_domains(threshold=_MAX_TRACKED_DOMAINS)
 
-    def _prune_stale_domains(self) -> None:
+    def _prune_stale_domains(self, *, threshold: int) -> None:
         """Remove domains not accessed within ``_DOMAIN_STALE_SECONDS``."""
-        if len(self._domains) <= _MAX_TRACKED_DOMAINS:
+        if len(self._domains) <= threshold:
             return
         cutoff = time.monotonic() - _DOMAIN_STALE_SECONDS
         stale = [

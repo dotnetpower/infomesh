@@ -29,7 +29,7 @@ pip install infomesh
 ```
 
 > **Note**: The base install includes everything needed for MCP, crawling, and
-> local search — no native build tools required. To enable P2P networking,
+> local search, with no native build tools required. To enable P2P networking,
 > install with: `pip install 'infomesh[p2p]'` (requires `build-essential`,
 > `libgmp-dev` on Linux; Xcode CLI on macOS).
 > See the [FAQ](12-faq.md) for details.
@@ -50,6 +50,11 @@ Run the full node for the first time:
 ```bash
 infomesh start
 ```
+
+If a node is already running for the same data directory, `infomesh start`
+exits without launching a duplicate process. The internal `_serve` process also
+uses a startup lock and PID validation so racing starts and stale PID files do
+not create multiple crawlers for the same local index.
 
 InfoMesh runs a series of first-start checks in order:
 
@@ -467,6 +472,12 @@ CJK tokenization, and intent classification latency.
 Open `http://localhost:8080/dashboard` when the node is running.
 5 tabs: Overview, Search Analytics, Crawl Status, Network, Credits.
 Auto-refreshes every 5 seconds. Detailed health: `GET /health?detail=1`.
+
+Long-running nodes also write `runtime_status.json` in the data directory. The
+admin `/status`, `/health?detail=1`, and `/metrics` endpoints surface the latest
+runtime heartbeat, degradation level, throttle factor, and process memory usage.
+`infomesh stop` sends SIGTERM and waits for graceful shutdown before clearing
+the node PID file.
 
 ---
 

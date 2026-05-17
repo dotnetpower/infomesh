@@ -332,7 +332,12 @@ prefers **mpv** with gapless looping and buffered audio, and attempts to install
   - `CreditLedger` — balance, earnings breakdown, transaction records
   - `psutil` (optional) — CPU/RAM usage (shows N/A if not installed)
   - `shutil.disk_usage()` — disk usage
-  - PID file (`infomesh.pid`) — node running status check
+  - PID file (`infomesh.pid`) — node running status check; combined with
+    `/proc/<pid>/cmdline` validation via `infomesh.runtime` so an unrelated
+    process reusing the PID is not mistaken for a running node
+  - Runtime heartbeat (`runtime_status.json`) — latest degrade level, throttle
+    factor, and process RSS, written every 10 s by `_serve` and exposed via
+    the admin API at `/health?detail=1`, `/status`, and `/metrics`
   - `KeyPair.load()` — Peer ID loading
 - **Error handling**: Shows "N/A" or guidance message when data source is unavailable; all `refresh_data()` wrapped with `contextlib.suppress(Exception)`
 - **Tests**: 53 pytest unit/integration tests (`tests/test_dashboard.py`)

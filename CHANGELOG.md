@@ -5,6 +5,56 @@ All notable changes to InfoMesh will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] — 2026-05-17
+
+### Added — Long-Run Runtime Resilience
+
+- **`infomesh.runtime` module** — single source of truth for node process
+  lifecycle: PID file lifecycle, `StartupLock` (fcntl-based, Unix), runtime
+  heartbeat (`runtime_status.json`), and graceful stop helpers.
+- **Duplicate-start protection** — both `infomesh start` and the internal
+  `_serve` worker wrap their launch in `StartupLock` and validate any
+  existing PID against `/proc/<pid>/cmdline` so an unrelated process reusing
+  the PID is no longer mistaken for a running node.
+- **Graceful stop** — `infomesh stop`, the dashboard `stop_all` action, and
+  the `infomesh update` restart path now send SIGTERM, wait up to 10 s for
+  the worker to exit, and only clear the PID file when the running PID
+  matches the caller. PID files are left in place when the process does not
+  exit in time so the next `start` does not relaunch on top of a partially
+  shutting-down node.
+- **Runtime heartbeat** — long-running `_serve` workers write
+  `runtime_status.json` every 10 s (atomic tmp + replace) with the current
+  degrade level, throttle factor, CPU/memory percent, and process RSS. The
+  admin API surfaces the latest heartbeat under `/status`,
+  `/health?detail=1`, and `/metrics` (`process_memory_mb` gauge), and marks
+  heartbeats older than 30 s as stale.
+- **Process-memory governor** — `ResourceGovernor` now samples per-process
+  RSS via `psutil` and escalates the degrade level when the process memory
+  ratio approaches the profile limit (`≥0.75` → WARNING, `≥0.9` →
+  OVERLOADED, `≥1.0` → SEVERE, `≥1.2` → DEFENSIVE), stepping crawling down
+  before the OS OOM-killer fires. New public fields: `process_memory_mb`,
+  `process_memory_limit_mb`, `process_memory_ratio`.
+
+### Fixed
+
+- MCP HTTP transport now awaits the cancelled app task on shutdown instead
+  of leaving the task object dangling.
+- Dashboard `stop_all` and the `infomesh update` restart path no longer
+  unconditionally unlink PID files belonging to a still-live worker.
+- Korean getting-started note for the runtime heartbeat was rewritten to
+  avoid an awkward line break (`포함됩니다` → `포함되며`).
+
+### Tests
+
+- New `tests/test_runtime.py` covers PID validation, `StartupLock` reentry,
+  runtime status read/write, and graceful stop.
+- `tests/test_local_api.py` now asserts the runtime heartbeat is surfaced
+  under `/status` and `/health?detail=1`.
+- `tests/test_resources.py` adds process-memory limit/overrun coverage for
+  the governor degrade thresholds.
+- `tests/test_p2p_serve.py` adds `TestServePidFile` for serve lifecycle PID
+  handling.
+
 ## [0.2.0] — 2026-03-01
 
 ### Added — Search Intelligence

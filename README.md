@@ -631,7 +631,9 @@ infomesh start --role search --no-dashboard
 
 ### Operational
 
-- **Resource Governor** — CPU, memory, disk I/O, and bandwidth limits with 4 preset profiles (`minimal`, `balanced`, `contributor`, `dedicated`). Dynamic throttling based on real-time system load
+- **Resource Governor** — CPU, memory, disk I/O, and bandwidth limits with 4 preset profiles (`minimal`, `balanced`, `contributor`, `dedicated`). Dynamic throttling based on real-time system load, including per-process RSS limits that degrade the node before the OS OOM-killer fires
+- **Long-Run Resilience** — `StartupLock` + PID cmdline validation prevent duplicate node processes for the same data directory; `infomesh stop` issues SIGTERM and waits for graceful shutdown before clearing the PID file
+- **Runtime Heartbeat** — Long-running `_serve` workers write `runtime_status.json` every 10 s; the admin API exposes the latest heartbeat, degrade level, throttle factor, and process memory via `/health?detail=1`, `/status`, and `/metrics`
 - **Pre-flight Checks** — Disk space and network connectivity verified before startup
 - **Load Guard** — QPM (queries per minute) + concurrency limiting to prevent node overload
 - **WAL Mode SQLite** — Safe concurrent reads during dashboard refresh without locking crawl writes

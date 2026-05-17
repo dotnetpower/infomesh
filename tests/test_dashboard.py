@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -807,6 +808,22 @@ class TestBGMPlayer:
         mock_install.assert_called_once_with()
         assert player._player_cmd == "ffplay"
         assert mock_popen.call_args.args[0][0] == "ffplay"
+
+    def test_reap_sfx_drops_finished_processes(self) -> None:
+        """Finished SFX subprocess handles should not accumulate forever."""
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        finished = MagicMock()
+        finished.poll.return_value = 0
+        running = MagicMock()
+        running.poll.return_value = None
+
+        player = BGMPlayer()
+        player._sfx_procs = [finished, running]
+
+        player.reap_sfx()
+
+        assert player._sfx_procs == [running]
 
     def test_mpv_installer_uses_non_interactive_apt(self) -> None:
         """mpv auto-install should avoid interactive sudo prompts."""

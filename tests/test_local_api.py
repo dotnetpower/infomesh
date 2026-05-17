@@ -15,6 +15,7 @@ from infomesh.api.local_api import (
     create_admin_app,
 )
 from infomesh.config import Config
+from infomesh.runtime import write_runtime_status
 
 # ── Fixtures ────────────────────────────────────────────────
 
@@ -51,6 +52,33 @@ class TestHealth:
         assert "Content-Security-Policy" in resp.headers
         assert "X-Content-Type-Options" in resp.headers
         assert resp.headers["X-Frame-Options"] == "DENY"
+
+    def test_rate_limit_is_bounded_per_second(self, client: TestClient) -> None:
+        statuses = [client.get("/health").status_code for _ in range(11)]
+
+        assert statuses[:10] == [200] * 10
+        assert statuses[10] == 429
+
+    def test_detailed_health_includes_runtime_snapshot(
+        self,
+        config: Config,
+    ) -> None:
+        write_runtime_status(
+            config.node.data_dir,
+            {
+                "status": "running",
+                "updated_at": time.time(),
+                "degrade_level": "WARNING",
+                "process_memory_mb": 512.0,
+            },
+        )
+        client = TestClient(create_admin_app(config=config))
+
+        data = client.get("/health?detail=1").json()
+
+        assert data["runtime"] == "running"
+        assert data["runtime_degrade_level"] == "WARNING"
+        assert data["runtime_process_memory_mb"] == "512.0"
 
 
 class TestReadiness:
@@ -94,6 +122,18 @@ class TestStatus:
         time.sleep(0.05)
         r2 = client.get("/status").json()
         assert r2["uptime_seconds"] >= r1["uptime_seconds"]
+
+    def test_status_includes_runtime_snapshot(self, config: Config) -> None:
+        write_runtime_status(
+            config.node.data_dir,
+            {"status": "running", "updated_at": time.time(), "pid": 123},
+        )
+        client = TestClient(create_admin_app(config=config))
+
+        data = client.get("/status").json()
+
+        assert data["runtime"]["status"] == "running"
+        assert data["runtime"]["pid"] == 123
 
 
 # ── Config endpoint ─────────────────────────────────────────

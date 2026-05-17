@@ -6,11 +6,14 @@ Feature #11: Define and track SLOs for InfoMesh node operations.
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import structlog
 
 logger = structlog.get_logger()
+
+_MAX_MEASUREMENTS_PER_SLO = 10_000
 
 
 @dataclass
@@ -79,17 +82,18 @@ class SLOTracker:
         slos: list[SLODefinition] | None = None,
     ) -> None:
         self._slos = slos or DEFAULT_SLOS
-        self._measurements: dict[str, list[tuple[float, float]]] = {}
+        self._measurements: dict[str, deque[tuple[float, float]]] = {}
         self._successes: dict[str, int] = {}
         self._totals: dict[str, int] = {}
 
     def record(self, slo_name: str, value: float) -> None:
         """Record a measurement for an SLO."""
         now = time.time()
-        self._measurements.setdefault(slo_name, []).append((now, value))
-        # Keep last 10000 measurements
-        if len(self._measurements[slo_name]) > 10000:
-            self._measurements[slo_name] = self._measurements[slo_name][-5000:]
+        measurements: deque[tuple[float, float]] = self._measurements.setdefault(
+            slo_name,
+            deque(maxlen=_MAX_MEASUREMENTS_PER_SLO),
+        )
+        measurements.append((now, value))
 
     def record_success(self, slo_name: str, success: bool) -> None:
         """Record a success/failure for ratio-based SLOs."""
@@ -116,9 +120,13 @@ class SLOTracker:
                 else:
                     budget = 1.0 if met else 0.0
             elif slo.unit == "ms":
-                measurements = self._measurements.get(slo.name, [])
                 window_start = now - slo.window_seconds
-                recent = [v for t, v in measurements if t > window_start]
+                measurements = self._measurements.get(slo.name)
+                recent = (
+                    [v for t, v in measurements if t > window_start]
+                    if measurements is not None
+                    else []
+                )
                 if recent:
                     recent.sort()
                     p99_idx = int(len(recent) * 0.99)

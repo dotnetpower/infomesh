@@ -122,6 +122,14 @@ class TestSLOTracker:
             if s.slo.name == "search_latency_p99":
                 assert s.met  # 190ms << 1000ms target
 
+    def test_measurements_are_bounded(self) -> None:
+        tracker = SLOTracker()
+
+        for i in range(12_000):
+            tracker.record("search_latency_p99", float(i))
+
+        assert len(tracker._measurements["search_latency_p99"]) == 10_000
+
     def test_record_success(self) -> None:
         tracker = SLOTracker()
         for _ in range(95):

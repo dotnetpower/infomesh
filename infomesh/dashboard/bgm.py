@@ -283,6 +283,7 @@ class BGMPlayer:
 
     # Maximum consecutive auto-restarts before giving up.
     _MAX_AUTO_RESTARTS: int = 5
+    _MAX_SFX_PROCS: int = 8
 
     def __init__(self, *, auto_install_mpv: bool = False) -> None:
         self._proc: subprocess.Popen[bytes] | None = None
@@ -315,6 +316,7 @@ class BGMPlayer:
         """
         if self._intentionally_stopped:
             return False
+        self.reap_sfx()
         if self._current_file is None:
             return False
         if self.is_playing:
@@ -462,8 +464,12 @@ class BGMPlayer:
             logger.warning("sfx_file_not_found", path=str(path))
             return False
 
-        # Reap finished SFX processes
-        self._sfx_procs = [p for p in self._sfx_procs if p.poll() is None]
+        self.reap_sfx()
+        while len(self._sfx_procs) >= self._MAX_SFX_PROCS:
+            proc = self._sfx_procs.pop(0)
+            with contextlib.suppress(OSError):
+                if proc.poll() is None:
+                    proc.terminate()
 
         # Build one-shot command (no loop)
         cmd: list[str] = [player_cmd]
@@ -484,6 +490,10 @@ class BGMPlayer:
         except OSError as exc:
             logger.error("sfx_start_failed", error=str(exc))
             return False
+
+    def reap_sfx(self) -> None:
+        """Drop completed SFX subprocess handles."""
+        self._sfx_procs = [proc for proc in self._sfx_procs if proc.poll() is None]
 
     def stop(self) -> None:
         """Stop BGM and all SFX playback."""

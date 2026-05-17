@@ -140,10 +140,14 @@ class CrawlWorker:
         start = time.monotonic()
         lock_acquired = False
 
-        # DHT crawl lock — prevent duplicate crawling across P2P network
-        if self._dht is not None:
-            try:
-                lock_acquired = await self._dht.acquire_crawl_lock(url)
+        try:
+            # DHT crawl lock — prevent duplicate crawling across P2P network
+            if self._dht is not None:
+                try:
+                    lock_acquired = await self._dht.acquire_crawl_lock(url)
+                except Exception:
+                    logger.debug("crawl_lock_attempt_failed", url=url)
+                    # Proceed without lock if DHT is unavailable
                 if not lock_acquired:
                     return CrawlResult(
                         url=url,
@@ -151,11 +155,7 @@ class CrawlWorker:
                         error="locked_by_peer",
                         elapsed_ms=_elapsed(start),
                     )
-            except Exception:
-                logger.debug("crawl_lock_attempt_failed", url=url)
-                # Proceed without lock if DHT is unavailable
 
-        try:
             return await self._crawl_url_inner(
                 url, depth, start, lock_acquired, force=force
             )
@@ -166,6 +166,7 @@ class CrawlWorker:
                     await self._dht.release_crawl_lock(url)
                 except Exception:
                     logger.debug("crawl_lock_release_failed", url=url)
+            self._scheduler.mark_done(url)
 
     async def _crawl_url_inner(
         self,

@@ -667,4 +667,6 @@ async def run_mcp_http_server(
             with contextlib.suppress(asyncio.CancelledError):
                 await republish_task
             task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
             pstore.close()

@@ -465,6 +465,36 @@ The `ResourceGovernor` monitors system load and dynamically adjusts operations:
 - Long-running worker processes apply the profile's CPU nice and Linux I/O
   priority early; dashboard/BGM playback stays in the interactive control
   process so audio is not starved by crawler priority changes.
+- The governor also samples the worker process RSS via `psutil` and escalates
+  the degrade level when the process memory ratio approaches the profile limit
+  (≥0.75 WARNING → ≥0.9 OVERLOADED → ≥1.0 SEVERE → ≥1.2 DEFENSIVE), so the
+  node steps down crawling before the OS OOM-killer fires. State is exposed via
+  `state`, `degrade_level`, `throttle_factor`, `cpu_percent`, `memory_percent`,
+  `process_memory_mb`, `process_memory_limit_mb`, and `process_memory_ratio`.
+
+### Runtime Lifecycle Resilience
+
+Long-running nodes are coordinated by `infomesh.runtime`:
+
+- **Startup lock** — `StartupLock` (fcntl on Unix) prevents two `infomesh start`
+  or `_serve` invocations from racing on the same data directory.
+- **PID validation** — the PID file is paired with a `/proc/<pid>/cmdline`
+  check so an unrelated process that happens to reuse the PID is not mistaken
+  for a running node.
+- **Graceful stop** — `infomesh stop` and the dashboard `stop_all` action send
+  SIGTERM, wait for the worker to exit (up to 10 s), and only then clear the
+  PID file. If the worker is still alive after the timeout, the PID file is
+  intentionally left in place so the next `start` does not relaunch on top of
+  a partially-shutting-down process.
+- **Runtime heartbeat** — every 10 s the worker writes `runtime_status.json`
+  to the data directory (atomic tmp + replace) with the current degrade level,
+  throttle factor, CPU/memory percent, and process RSS. The admin API surfaces
+  the most recent heartbeat under `/status`, `/health?detail=1`, and
+  `/metrics` (`process_memory_mb` gauge). Heartbeats older than 30 s are
+  marked stale so dashboards/monitors can spot a hung worker.
+- **Owner-aware cleanup** — `clear_pid_file()` only removes the PID file when
+  the running PID matches the caller, preventing `infomesh update` and
+  similar restart paths from wiping a healthy replacement node's lock.
 
 ### Graceful Degradation Levels
 

@@ -698,7 +698,9 @@ When a user runs InfoMesh on multiple devices with the same GitHub email, each d
 - Long-running worker entry points (`_serve`, MCP, standalone crawl) should opt in to `AppContext(..., apply_os_priority=True)` or apply `ResourceGovernor.apply_os_priority()` before heavy initialization.
 - Interactive control-plane commands (dashboard/status/settings) must not lower their own process priority, because BGM and TUI responsiveness should not inherit crawler worker throttling.
 - Dashboard BGM prefers `mpv` with gapless looping and buffered audio, attempts a non-interactive best-effort `mpv` install on first playback when `bgm_auto_install_mpv=true`, then falls back to `ffplay`; `bgm_idle_stop` defaults to `false` so auto-started BGM does not stop/restart during intermittent crawling unless explicitly enabled.
-- `ResourceGovernor` exposes public state via `state`, `degrade_level`, `throttle_factor`, `cpu_percent`, and `memory_percent`; crawl loops must use those public fields rather than private attributes.
+- Node startup uses `infomesh.runtime.StartupLock` plus PID validation to prevent duplicate `_serve` processes for the same data directory; `infomesh stop` waits for graceful SIGTERM shutdown and clears only the matching PID file.
+- Long-running `_serve` writes `runtime_status.json` in the data directory; admin `/status`, `/health?detail=1`, and `/metrics` expose the latest runtime heartbeat, degradation level, throttle factor, and process RSS.
+- `ResourceGovernor` exposes public state via `state`, `degrade_level`, `throttle_factor`, `cpu_percent`, `memory_percent`, `process_memory_mb`, `process_memory_limit_mb`, and `process_memory_ratio`; crawl loops must use those public fields rather than private attributes.
 - Linux workers apply both CPU `nice` and best-effort `ionice`; failures are non-fatal.
 
 ### P2P Message Authentication

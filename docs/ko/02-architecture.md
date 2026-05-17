@@ -465,6 +465,36 @@ Common Crawl:
 - 장시간 실행되는 worker 프로세스는 프로파일의 CPU nice 값과 Linux I/O
   우선순위를 초기에 적용합니다. 대시보드/BGM 재생은 상호작용용 control
   프로세스에 남겨 두어 crawler 우선순위 변경으로 오디오가 밀리지 않게 합니다.
+- 거버너는 `psutil`로 worker 프로세스의 RSS도 샘플링하여, 프로파일이 정한
+  메모리 한도에 근접하면 degrade level을 상향 조정합니다(≥0.75 WARNING →
+  ≥0.9 OVERLOADED → ≥1.0 SEVERE → ≥1.2 DEFENSIVE). 덕분에 OS OOM-killer가
+  개입하기 전에 노드 스스로 크롤링 강도를 줄입니다. 거버너 상태는 `state`,
+  `degrade_level`, `throttle_factor`, `cpu_percent`, `memory_percent`,
+  `process_memory_mb`, `process_memory_limit_mb`, `process_memory_ratio`로
+  공개됩니다.
+
+### 런타임 수명 주기 안정성
+
+장시간 실행되는 노드는 `infomesh.runtime` 모듈로 조율됩니다:
+
+- **시작 lock** — `StartupLock`(Unix에서는 fcntl 기반)이 같은 데이터
+  디렉토리에서 `infomesh start`나 `_serve`가 동시에 실행되는 경합을 막습니다.
+- **PID 검증** — PID 파일과 함께 `/proc/<pid>/cmdline`을 확인하여, 우연히
+  같은 PID를 재사용한 다른 프로세스를 실행 중인 노드로 잘못 인식하지 않습니다.
+- **Graceful stop** — `infomesh stop`과 대시보드 `stop_all`은 SIGTERM을 보낸 뒤
+  worker가 종료될 때까지 최대 10초 기다리고, 종료를 확인한 다음에만 PID
+  파일을 정리합니다. timeout 후에도 worker가 살아 있으면 PID 파일을 일부러
+  남겨 두어, 다음 `start`가 종료 중인 프로세스 위에 새 노드를 띄우지 않게
+  합니다.
+- **런타임 heartbeat** — worker는 10초마다 `runtime_status.json`을 데이터
+  디렉토리에 원자적으로(tmp + replace) 기록합니다. 현재 degrade level,
+  throttle factor, CPU/메모리 사용률, 프로세스 RSS가 포함되며, 관리 API는
+  `/status`, `/health?detail=1`, `/metrics`(`process_memory_mb` gauge)에서
+  이 정보를 노출합니다. 30초 이상 갱신되지 않은 heartbeat는 stale로 표시되어
+  멈춘 worker를 대시보드나 모니터링에서 바로 감지할 수 있습니다.
+- **소유자 인식 정리** — `clear_pid_file()`은 PID 파일이 현재 호출자와 같은
+  PID를 가리킬 때만 파일을 제거하므로, `infomesh update` 같은 재시작 경로가
+  새로 띄운 정상 노드의 lock을 실수로 지우지 않습니다.
 
 ### 단계적 서비스 감소 (Graceful Degradation)
 

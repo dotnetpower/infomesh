@@ -63,6 +63,9 @@ class GovernorState:
     degrade_level: DegradeLevel = DegradeLevel.NORMAL
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
+    process_memory_mb: float = 0.0
+    process_memory_limit_mb: int = 0
+    process_memory_ratio: float = 0.0
     throttle_factor: float = 1.0  # 1.0 = full speed, 0.0 = paused
     last_check: float = 0.0
     checks_performed: int = 0
@@ -81,6 +84,7 @@ class ResourceGovernor:
         self._net_bytes_sent_prev: int = 0
         self._net_bytes_recv_prev: int = 0
         self._last_net_check: float = 0.0
+        self._process = psutil.Process(os.getpid()) if _HAS_PSUTIL else None
 
     # ── Public properties ───────────────────────────────────────────────
 
@@ -111,6 +115,11 @@ class ResourceGovernor:
     def memory_percent(self) -> float:
         """Last sampled memory usage percentage."""
         return self._state.memory_percent
+
+    @property
+    def process_memory_mb(self) -> float:
+        """Last sampled resident memory for this process in MiB."""
+        return self._state.process_memory_mb
 
     @property
     def should_throttle_crawl(self) -> bool:
@@ -208,18 +217,24 @@ class ResourceGovernor:
 
         cpu = self._sample_cpu()
         mem = self._sample_memory()
+        process_mem_mb = self._sample_process_memory_mb()
         self._state.cpu_percent = cpu
         self._state.memory_percent = mem
+        self._state.process_memory_mb = process_mem_mb
 
         # Determine degrade level
         level = DegradeLevel.NORMAL
-        if cpu > 95 or mem > 95:
+        process_limit = self._profile.memory_limit_mb
+        process_ratio = process_mem_mb / process_limit if process_limit > 0 else 0.0
+        self._state.process_memory_limit_mb = process_limit
+        self._state.process_memory_ratio = process_ratio
+        if cpu > 95 or mem > 95 or process_ratio >= 1.2:
             level = DegradeLevel.DEFENSIVE
-        elif cpu > 90 or mem > 90:
+        elif cpu > 90 or mem > 90 or process_ratio >= 1.0:
             level = DegradeLevel.SEVERE
-        elif cpu > CPU_HIGH_PCT or mem > MEMORY_HIGH_PCT:
+        elif cpu > CPU_HIGH_PCT or mem > MEMORY_HIGH_PCT or process_ratio >= 0.9:
             level = DegradeLevel.OVERLOADED
-        elif cpu > 60 or mem > 70:
+        elif cpu > 60 or mem > 70 or process_ratio >= 0.75:
             level = DegradeLevel.WARNING
 
         if level != self._state.degrade_level:
@@ -229,6 +244,7 @@ class ResourceGovernor:
                 new=level,
                 cpu=round(cpu, 1),
                 mem=round(mem, 1),
+                process_memory_mb=round(process_mem_mb, 1),
             )
 
         self._state.degrade_level = level
@@ -268,6 +284,15 @@ class ResourceGovernor:
             return 0.0
         try:
             return float(psutil.virtual_memory().percent)
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    def _sample_process_memory_mb(self) -> float:
+        """Return this process RSS in MiB."""
+        if self._process is None:
+            return 0.0
+        try:
+            return float(self._process.memory_info().rss / (1024 * 1024))
         except Exception:  # noqa: BLE001
             return 0.0
 

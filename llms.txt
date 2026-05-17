@@ -68,6 +68,12 @@ AI assistants to external tools.
 - Python SDK, LangChain/LlamaIndex/Haystack integrations
 - Docker Compose, Helm chart, systemd, Terraform deployment options
 - Plugin system with lifecycle hooks
+- Long-run runtime resilience: `StartupLock` + PID cmdline validation
+  prevents duplicate node processes, `infomesh stop` performs SIGTERM-based
+  graceful shutdown, and `_serve` writes a `runtime_status.json` heartbeat
+  exposed via the admin API (`/status`, `/health?detail=1`, `/metrics`).
+  The `ResourceGovernor` also tracks per-process RSS and degrades the node
+  before the OS OOM-killer fires.
 
 ## Links
 

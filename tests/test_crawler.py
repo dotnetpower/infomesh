@@ -22,7 +22,7 @@ from infomesh.crawler.parser import (
     extract_links,
 )
 from infomesh.crawler.robots import _CRAWL_DELAY_RE, _SITEMAP_RE, RobotsChecker
-from infomesh.crawler.scheduler import Scheduler
+from infomesh.crawler.scheduler import DomainState, Scheduler
 from infomesh.crawler.seeds import load_seeds
 from infomesh.resources.governor import DegradeLevel
 
@@ -377,6 +377,85 @@ class TestSchedulerCrawlDelay:
         url, depth = await asyncio.wait_for(sched.get_url(), timeout=2.0)
         assert url == "https://example.com/a"
         assert depth == 0
+
+    def test_mark_done_does_not_create_domain_state(self) -> None:
+        """Cleanup calls for unknown URLs should not grow domain tracking."""
+        sched = Scheduler()
+
+        sched.mark_done("https://example.com/a")
+
+        assert "example.com" not in sched._domains
+
+    @pytest.mark.asyncio
+    async def test_prunes_stale_domains_on_add(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """High-cardinality crawl bursts should prune stale domain state early."""
+        import infomesh.crawler.scheduler as scheduler_mod
+
+        monkeypatch.setattr(scheduler_mod, "_DOMAIN_PRUNE_THRESHOLD", 2)
+        sched = Scheduler(urls_per_hour=0)
+        sched._domains["old-a.test"] = DomainState(last_request_at=0.0)
+        sched._domains["old-b.test"] = DomainState(last_request_at=0.0)
+        sched._domains["old-c.test"] = DomainState(last_request_at=0.0)
+
+        assert await sched.add_url("https://new.test/page") is True
+
+        assert "old-a.test" not in sched._domains
+        assert "old-b.test" not in sched._domains
+        assert "old-c.test" not in sched._domains
+        assert "new.test" in sched._domains
+
+
+class TestCrawlWorkerCleanup:
+    """Tests for scheduler cleanup on all worker exit paths."""
+
+    @pytest.mark.asyncio
+    async def test_locked_by_peer_marks_domain_done(self) -> None:
+        from infomesh.config import CrawlConfig
+        from infomesh.crawler.worker import CrawlWorker
+
+        sched = Scheduler(urls_per_hour=0)
+        await sched.add_url("https://example.com/page")
+        dedup = DeduplicatorDB()
+        dht = AsyncMock()
+        dht.acquire_crawl_lock = AsyncMock(return_value=False)
+        worker = CrawlWorker(
+            CrawlConfig(),
+            sched,
+            dedup,
+            RobotsChecker("TestBot"),
+            dht=dht,
+        )
+
+        result = await worker.crawl_url("https://example.com/page")
+
+        assert result.error == "locked_by_peer"
+        assert sched._domains["example.com"].pending_count == 0
+        dedup.close()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_marks_domain_done(self) -> None:
+        from infomesh.config import CrawlConfig
+        from infomesh.crawler.worker import CrawlWorker
+
+        sched = Scheduler(urls_per_hour=0)
+        await sched.add_url("https://example.com/page")
+        dedup = DeduplicatorDB()
+        worker = CrawlWorker(
+            CrawlConfig(),
+            sched,
+            dedup,
+            RobotsChecker("TestBot"),
+        )
+        worker._crawl_url_inner = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await worker.crawl_url("https://example.com/page")
+
+        assert sched._domains["example.com"].pending_count == 0
+        dedup.close()
 
 
 # ── Retry backoff tests ─────────────────────────────────────────────

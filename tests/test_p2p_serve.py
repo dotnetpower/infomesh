@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -19,6 +20,47 @@ from click.testing import CliRunner
 from infomesh.config import Config, NetworkConfig
 
 _VALID_TEST_PEER_ID = "12D3KooWKLomR1fLxJpDEVdqE2CZsRWPvkZvjbKvEJzcF13s33N9"
+
+
+class TestServePidFile:
+    """Tests for node PID file lifecycle helpers."""
+
+    def test_read_live_pid_cleans_invalid_file(self, tmp_path: Path) -> None:
+        from infomesh.cli.serve import _pid_path, _read_live_pid
+
+        pid_file = _pid_path(tmp_path)
+        pid_file.write_text("not-a-pid")
+
+        assert _read_live_pid(tmp_path) is None
+        assert not pid_file.exists()
+
+    def test_read_live_pid_cleans_stale_file(self, tmp_path: Path) -> None:
+        from infomesh.cli.serve import _pid_path, _read_live_pid
+
+        pid_file = _pid_path(tmp_path)
+        pid_file.write_text("999999999")
+
+        assert _read_live_pid(tmp_path) is None
+        assert not pid_file.exists()
+
+    def test_write_and_clear_pid_file(self, tmp_path: Path) -> None:
+        from infomesh.cli.serve import _clear_pid_file, _pid_path, _write_pid_file
+
+        _write_pid_file(tmp_path, 123)
+        assert _pid_path(tmp_path).read_text() == "123"
+
+        _clear_pid_file(tmp_path, 999)
+        assert _pid_path(tmp_path).exists()
+
+        _clear_pid_file(tmp_path, 123)
+        assert not _pid_path(tmp_path).exists()
+
+    def test_read_live_pid_returns_running_pid(self, tmp_path: Path) -> None:
+        from infomesh.cli.serve import _pid_path, _read_live_pid
+
+        _pid_path(tmp_path).write_text(str(os.getpid()))
+
+        assert _read_live_pid(tmp_path) == os.getpid()
 
 
 class TestGetP2PStatus:

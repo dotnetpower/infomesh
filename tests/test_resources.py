@@ -186,11 +186,13 @@ class TestGovernorProperties:
         governor._state.throttle_factor = 0.5
         governor._state.cpu_percent = 65.0
         governor._state.memory_percent = 70.0
+        governor._state.process_memory_mb = 512.0
 
         assert governor.degrade_level == DegradeLevel.WARNING
         assert governor.throttle_factor == 0.5
         assert governor.cpu_percent == 65.0
         assert governor.memory_percent == 70.0
+        assert governor.process_memory_mb == 512.0
 
 
 class TestGovernorCheckAndAdjust:
@@ -250,6 +252,36 @@ class TestGovernorCheckAndAdjust:
         self, mock_mem: MagicMock, mock_cpu: MagicMock, governor: ResourceGovernor
     ) -> None:
         state = governor.check_and_adjust()
+        assert state.degrade_level == DegradeLevel.DEFENSIVE
+
+    @patch.object(ResourceGovernor, "_sample_cpu", return_value=20.0)
+    @patch.object(ResourceGovernor, "_sample_memory", return_value=40.0)
+    @patch.object(ResourceGovernor, "_sample_process_memory_mb", return_value=2048.0)
+    def test_process_memory_limit_triggers_severe(
+        self,
+        mock_proc_mem: MagicMock,
+        mock_mem: MagicMock,
+        mock_cpu: MagicMock,
+        governor: ResourceGovernor,
+    ) -> None:
+        state = governor.check_and_adjust()
+
+        assert state.degrade_level == DegradeLevel.SEVERE
+        assert state.throttle_factor == 0.0
+        assert governor.process_memory_mb == 2048.0
+
+    @patch.object(ResourceGovernor, "_sample_cpu", return_value=20.0)
+    @patch.object(ResourceGovernor, "_sample_memory", return_value=40.0)
+    @patch.object(ResourceGovernor, "_sample_process_memory_mb", return_value=2458.0)
+    def test_process_memory_overrun_triggers_defensive(
+        self,
+        mock_proc_mem: MagicMock,
+        mock_mem: MagicMock,
+        mock_cpu: MagicMock,
+        governor: ResourceGovernor,
+    ) -> None:
+        state = governor.check_and_adjust()
+
         assert state.degrade_level == DegradeLevel.DEFENSIVE
 
     @patch.object(ResourceGovernor, "_sample_cpu", return_value=50.0)

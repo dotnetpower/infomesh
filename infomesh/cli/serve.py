@@ -7,6 +7,7 @@ import contextlib
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -14,6 +15,18 @@ import structlog
 
 from infomesh import __version__
 from infomesh.config import Config, NodeRole, load_config
+from infomesh.runtime import (
+    StartupLock,
+    build_runtime_status,
+    clear_pid_file,
+    is_process_running,
+    mark_runtime_stopped,
+    pid_path,
+    read_live_pid,
+    request_graceful_stop,
+    write_pid_file,
+    write_runtime_status,
+)
 
 logger = structlog.get_logger()
 
@@ -21,7 +34,27 @@ _PID_FILE_NAME = "infomesh.pid"
 
 
 def _pid_path(data_dir: Path) -> Path:
-    return data_dir / _PID_FILE_NAME
+    return pid_path(data_dir)
+
+
+def _is_process_running(pid: int) -> bool:
+    """Return True if ``pid`` appears to be alive."""
+    return is_process_running(pid)
+
+
+def _read_live_pid(data_dir: Path) -> int | None:
+    """Return the live node PID from the PID file, cleaning stale files."""
+    return read_live_pid(data_dir)
+
+
+def _write_pid_file(data_dir: Path, pid: int) -> None:
+    """Atomically write the node PID file."""
+    write_pid_file(data_dir, pid)
+
+
+def _clear_pid_file(data_dir: Path, pid: int) -> None:
+    """Remove the PID file only if it still belongs to ``pid``."""
+    clear_pid_file(data_dir, pid)
 
 
 def _apply_worker_os_priority(config: Config) -> None:
@@ -157,7 +190,6 @@ def start(
     import subprocess
     from dataclasses import replace as dc_replace
 
-    # --no-dashboard is an alias for --background (backward compat)
     if no_dashboard:
         background = True
 
@@ -165,95 +197,102 @@ def start(
     if role:
         config = dc_replace(config, node=dc_replace(config.node, role=role))
 
-    from infomesh.p2p.keys import ensure_keys
+    startup_lock = StartupLock(config.node.data_dir)
+    if not startup_lock.acquire():
+        click.secho("Another InfoMesh startup is already in progress.", fg="yellow")
+        return
 
-    keys = ensure_keys(config.node.data_dir)
-    click.echo(f"InfoMesh v{__version__} starting...")
-    click.echo(f"  Peer ID: {keys.peer_id}")
-    click.echo(f"  Data dir: {config.node.data_dir}")
-
-    # ── Update check (non-blocking) ───────────────────────────
-    from infomesh.version_check import check_pypi_update, format_update_banner
-
-    _update_info = check_pypi_update(config.node.data_dir)
-    if _update_info is not None:
-        click.secho(format_update_banner(_update_info), fg="yellow", bold=True)
-
-    # ── GitHub identity ───────────────────────────────────────
-    from infomesh.credits.github_identity import (
-        run_first_start_checks,
-    )
-
-    run_first_start_checks(config)
-
-    # ── Preflight checks ──────────────────────────────────────────
-    from infomesh.resources.preflight import IssueSeverity, run_preflight_checks
-
-    click.echo("  ⏳ Running preflight checks...", nl=False)
-    issues = run_preflight_checks(config.node.data_dir)
-    if not any(i.severity == IssueSeverity.ERROR for i in issues):
-        click.echo(" ✔")
-    else:
-        click.echo(" ✖")
-    has_error = False
-    for issue in issues:
-        icon = "✖" if issue.severity == IssueSeverity.ERROR else "⚠"
-        style = "red" if issue.severity == IssueSeverity.ERROR else "yellow"
-        click.secho(f"  {icon} [{issue.check}] {issue.message}", fg=style)
-        if issue.severity == IssueSeverity.ERROR:
-            has_error = True
-    if has_error:
-        click.secho(
-            "\nCannot start: fix the errors above first.",
-            fg="red",
-            bold=True,
-        )
-        raise SystemExit(1)
-
-    # ── Starter index check (cold start) ─────────────────────────
-    from infomesh.index.local_store import LocalStore
-    from infomesh.index.starter import needs_starter
-
-    _store = LocalStore(
-        db_path=config.index.db_path,
-        compression_enabled=config.storage.compression_enabled,
-        compression_level=config.storage.compression_level,
-    )
     try:
-        _doc_count = _store.get_stats().get("document_count", 0)
-        if isinstance(_doc_count, int) and needs_starter(_doc_count):
-            _offer_starter_download(config)
-    finally:
-        _store.close()
+        running_pid = _read_live_pid(config.node.data_dir)
+        if running_pid is not None:
+            click.secho(
+                f"InfoMesh node is already running (PID {running_pid}).",
+                fg="yellow",
+            )
+            click.echo("  Stop node:   infomesh stop")
+            click.echo("  Check status: infomesh status")
+            return
 
-    # ── Port accessibility check ──────────────────────────────────
-    from infomesh.resources.port_check import check_port_and_offer_fix
+        from infomesh.p2p.keys import ensure_keys
 
-    port = config.node.listen_port
-    click.echo(f"  ⏳ Checking port {port}...", nl=False)
-    port_ok = check_port_and_offer_fix(port)
-    click.echo(" ✔" if port_ok else " ⚠")
-    if (
-        not port_ok
-        and sys.stdin.isatty()
-        and not click.confirm(
-            "  Continue without P2P port access? "
-            "(local crawl & search will work, but peering won't)",
-            default=False,
+        keys = ensure_keys(config.node.data_dir)
+        click.echo(f"InfoMesh v{__version__} starting...")
+        click.echo(f"  Peer ID: {keys.peer_id}")
+        click.echo(f"  Data dir: {config.node.data_dir}")
+
+        from infomesh.version_check import check_pypi_update, format_update_banner
+
+        _update_info = check_pypi_update(config.node.data_dir)
+        if _update_info is not None:
+            click.secho(format_update_banner(_update_info), fg="yellow", bold=True)
+
+        from infomesh.credits.github_identity import run_first_start_checks
+
+        run_first_start_checks(config)
+
+        from infomesh.resources.preflight import IssueSeverity, run_preflight_checks
+
+        click.echo("  ⏳ Running preflight checks...", nl=False)
+        issues = run_preflight_checks(config.node.data_dir)
+        if not any(i.severity == IssueSeverity.ERROR for i in issues):
+            click.echo(" ✔")
+        else:
+            click.echo(" ✖")
+        has_error = False
+        for issue in issues:
+            icon = "✖" if issue.severity == IssueSeverity.ERROR else "⚠"
+            style = "red" if issue.severity == IssueSeverity.ERROR else "yellow"
+            click.secho(f"  {icon} [{issue.check}] {issue.message}", fg=style)
+            if issue.severity == IssueSeverity.ERROR:
+                has_error = True
+        if has_error:
+            click.secho(
+                "\nCannot start: fix the errors above first.",
+                fg="red",
+                bold=True,
+            )
+            raise SystemExit(1)
+
+        from infomesh.index.local_store import LocalStore
+        from infomesh.index.starter import needs_starter
+
+        _store = LocalStore(
+            db_path=config.index.db_path,
+            compression_enabled=config.storage.compression_enabled,
+            compression_level=config.storage.compression_level,
         )
-    ):
-        raise SystemExit(1)
+        try:
+            _doc_count = _store.get_stats().get("document_count", 0)
+            if isinstance(_doc_count, int) and needs_starter(_doc_count):
+                _offer_starter_download(config)
+        finally:
+            _store.close()
 
-    # ── Launch node process ───────────────────────────────────────
-    click.echo("  ⏳ Launching node process...", nl=False)
-    serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
-    if seeds:
-        serve_cmd.extend(["--seeds", seeds])
-    if role:
-        serve_cmd.extend(["--role", role])
+        from infomesh.resources.port_check import check_port_and_offer_fix
 
-    log_path = config.node.data_dir / "node.log"
-    try:
+        port = config.node.listen_port
+        click.echo(f"  ⏳ Checking port {port}...", nl=False)
+        port_ok = check_port_and_offer_fix(port)
+        click.echo(" ✔" if port_ok else " ⚠")
+        if (
+            not port_ok
+            and sys.stdin.isatty()
+            and not click.confirm(
+                "  Continue without P2P port access? "
+                "(local crawl & search will work, but peering won't)",
+                default=False,
+            )
+        ):
+            raise SystemExit(1)
+
+        click.echo("  ⏳ Launching node process...", nl=False)
+        serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
+        if seeds:
+            serve_cmd.extend(["--seeds", seeds])
+        if role:
+            serve_cmd.extend(["--role", role])
+
+        log_path = config.node.data_dir / "node.log"
         proc = subprocess.Popen(
             serve_cmd,
             stdout=subprocess.DEVNULL,
@@ -261,39 +300,43 @@ def start(
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
+        _write_pid_file(config.node.data_dir, proc.pid)
         click.echo(f" ✔ (PID {proc.pid})")
         click.echo(f"  Log: {log_path}")
-
-        if background:
-            # ── Background mode ───────────────────────────────
-            click.echo()
-            click.echo("  Node running in background (no live log).")
-            click.echo(f"  View logs:   tail -f {log_path}")
-            click.echo("  Stop node:   infomesh stop")
-            return
-
-        # ── Foreground mode: crawl → dashboard ────────────────
-        click.echo()
-        click.echo("  Running initial crawl pass...")
-        seed_cat = seeds or "tech-docs"
-        _run_foreground_crawl(config, seed_cat)
-
-        click.echo()
-        click.echo("  Launching dashboard...")
-        from infomesh.dashboard.app import run_dashboard
-
-        exit_action = run_dashboard(config=config, node_pid=proc.pid)
     finally:
-        pass  # log rotation is handled by _serve subprocess
+        startup_lock.release()
+
+    if background:
+        click.echo()
+        click.echo("  Node running in background (no live log).")
+        click.echo(f"  View logs:   tail -f {log_path}")
+        click.echo("  Stop node:   infomesh stop")
+        return
+
+    click.echo()
+    click.echo("  Running initial crawl pass...")
+    seed_cat = seeds or "tech-docs"
+    _run_foreground_crawl(config, seed_cat)
+
+    click.echo()
+    click.echo("  Launching dashboard...")
+    from infomesh.dashboard.app import run_dashboard
+
+    exit_action = run_dashboard(config=config, node_pid=proc.pid)
 
     if exit_action == "stop_all":
         try:
-            os.kill(proc.pid, signal.SIGTERM)
-            click.echo(f"\nInfoMesh node stopped (PID {proc.pid}).")
+            exited = request_graceful_stop(proc.pid, timeout_seconds=10.0)
+            if exited:
+                click.echo(f"\nInfoMesh node stopped (PID {proc.pid}).")
+                _clear_pid_file(config.node.data_dir, proc.pid)
+            else:
+                click.secho(
+                    f"\nInfoMesh node did not exit within timeout (PID {proc.pid}).",
+                    fg="yellow",
+                )
         except ProcessLookupError:
-            pass
-        pid_file = _pid_path(config.node.data_dir)
-        pid_file.unlink(missing_ok=True)
+            _clear_pid_file(config.node.data_dir, proc.pid)
     else:
         click.echo(f"\nDashboard closed. Node still running (PID {proc.pid}).")
         click.echo("  Use 'infomesh stop' to stop the node.")
@@ -406,22 +449,25 @@ def _run_foreground_crawl(config: Config, seed_category: str) -> None:
 def stop() -> None:
     """Stop the running InfoMesh node and related processes."""
     config = load_config()
-    pid_file = _pid_path(config.node.data_dir)
 
     stopped_any = False
 
     # ── Stop node process via PID file ────────────────────────
-    if pid_file.exists():
+    pid = _read_live_pid(config.node.data_dir)
+    if pid is not None:
         try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
-            click.echo(f"Sent SIGTERM to InfoMesh node (PID {pid}).")
+            exited = request_graceful_stop(pid, timeout_seconds=10.0)
+            if exited:
+                click.echo(f"InfoMesh node stopped (PID {pid}).")
+                _clear_pid_file(config.node.data_dir, pid)
+            else:
+                click.secho(
+                    f"InfoMesh node did not exit within timeout (PID {pid}).",
+                    fg="yellow",
+                )
             stopped_any = True
         except ProcessLookupError:
             click.echo("Node process not found (stale PID file). Cleaning up.")
-        except ValueError:
-            click.echo("Invalid PID file. Cleaning up.")
-        pid_file.unlink(missing_ok=True)
 
     # ── Kill orphaned BGM player processes ────────────────────
     _kill_bgm_processes()
@@ -492,27 +538,30 @@ def update(check: bool) -> None:
     click.secho(f"  ✔ Upgraded to v{info.latest}", fg="green")
 
     # Restart running node if any
-    pid_file = _pid_path(config.node.data_dir)
-    if pid_file.exists():
+    pid = _read_live_pid(config.node.data_dir)
+    if pid is not None:
         try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
             click.echo(f"  ↻ Restarting node (sent SIGTERM to PID {pid})...")
-            # Give old process time to exit
-            import time
-
-            time.sleep(2)
-            # Re-launch
+            exited = request_graceful_stop(pid, timeout_seconds=10.0)
+            if not exited:
+                click.secho(
+                    f"  ✖ Node did not exit within timeout (PID {pid}).",
+                    fg="red",
+                )
+                raise SystemExit(1)
+            _clear_pid_file(config.node.data_dir, pid)
             serve_cmd = [sys.executable, "-m", "infomesh", "_serve"]
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 serve_cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
             )
+            _write_pid_file(config.node.data_dir, proc.pid)
             click.secho("  ✔ Node restarted with new version.", fg="green")
-        except (ProcessLookupError, ValueError):
+        except ProcessLookupError:
+            _clear_pid_file(config.node.data_dir, pid)
             click.echo("  Node was not running.")
     else:
         click.echo("  Node is not running (start with: infomesh start)")
@@ -541,6 +590,17 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
     from logging.handlers import RotatingFileHandler
 
     config = load_config()
+
+    startup_lock = StartupLock(config.node.data_dir)
+    if not startup_lock.acquire():
+        click.echo("Another InfoMesh startup is already in progress.")
+        raise SystemExit(1)
+
+    running_pid = _read_live_pid(config.node.data_dir)
+    if running_pid is not None and running_pid != os.getpid():
+        startup_lock.release()
+        click.echo(f"InfoMesh node already running (PID {running_pid}).")
+        raise SystemExit(1)
 
     # ── Set up log rotation (10 MB × 5 files) ────────────────
     log_path = config.node.data_dir / "node.log"
@@ -576,8 +636,8 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
 
     _apply_worker_os_priority(config)
 
-    pid_file = _pid_path(config.node.data_dir)
-    pid_file.write_text(str(os.getpid()))
+    _write_pid_file(config.node.data_dir, os.getpid())
+    startup_lock.release()
     _serve_logger.info("serve_started", pid=os.getpid(), role=config.node.role)
 
     # ── Initialize credit sync (before P2P so the handler is wired) ──
@@ -635,6 +695,8 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
             seed_and_crawl_loop,
         )
 
+        started_at = time.time()
+
         async with AppContext(config) as ctx:
             # Attach P2P components so MCP and search can use them
             ctx.distributed_index = _distributed_index
@@ -649,6 +711,23 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
                         distributed_index=_distributed_index,
                     )
                 )
+
+            async def _runtime_status_loop() -> None:
+                while True:
+                    state = ctx.governor.check_and_adjust()
+                    write_runtime_status(
+                        config.node.data_dir,
+                        build_runtime_status(
+                            pid=os.getpid(),
+                            role=str(config.node.role),
+                            started_at=started_at,
+                            no_crawl=no_crawl,
+                            governor_state=state,
+                        ),
+                    )
+                    await asyncio.sleep(10)
+
+            runtime_status_task = asyncio.create_task(_runtime_status_loop())
 
             # ── SIGTERM graceful shutdown ─────────────────────────
             loop = asyncio.get_running_loop()
@@ -702,6 +781,10 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
                     with contextlib.suppress(asyncio.CancelledError):
                         await republish_task
 
+                runtime_status_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await runtime_status_task
+
                 if handlers_registered:
                     loop.remove_signal_handler(signal.SIGTERM)
                     loop.remove_signal_handler(signal.SIGINT)
@@ -714,7 +797,8 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
         if p2p_node is not None and hasattr(p2p_node, "stop"):
             p2p_node.stop()
             _serve_logger.info("p2p_stopped")
-        pid_file.unlink(missing_ok=True)
+        _clear_pid_file(config.node.data_dir, os.getpid())
+        mark_runtime_stopped(config.node.data_dir, os.getpid())
         _serve_logger.info("serve_stopped")
 
 

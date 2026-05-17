@@ -330,7 +330,12 @@ bgm_idle_stop = false     # true = 크롤링 유휴 시 BGM 자동 정지
   - `CreditLedger` — 잔액, 수입 내역, 거래 기록
   - `psutil` (선택) — CPU/RAM 사용량 (미설치 시 N/A)
   - `shutil.disk_usage()` — 디스크 사용량
-  - PID 파일 (`infomesh.pid`) — 노드 실행 상태 확인
+  - PID 파일 (`infomesh.pid`) — 노드 실행 상태 확인. `infomesh.runtime`이
+    `/proc/<pid>/cmdline`까지 검사하므로, 같은 PID를 재사용한 무관한
+    프로세스를 실행 중인 노드로 오인하지 않습니다
+  - 런타임 heartbeat (`runtime_status.json`) — `_serve`가 10초마다 기록하는
+    최신 degrade level, throttle factor, 프로세스 RSS. 관리 API의
+    `/health?detail=1`, `/status`, `/metrics`에서 노출됩니다
   - `KeyPair.load()` — Peer ID 로드
 - **에러 처리**: 데이터 소스 미연결 시 "N/A" 또는 안내 메시지 표시, 모든 `refresh_data()`에 `contextlib.suppress(Exception)` 적용
 - **테스트**: pytest 단위/통합 테스트 53개 (`tests/test_dashboard.py`)

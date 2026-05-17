@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,8 +29,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from infomesh.config import Config, load_config
+from infomesh.runtime import read_runtime_status
 
 logger = structlog.get_logger()
+
+_LOCAL_ADMIN_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
 
 # Fields to redact in config output
 _SENSITIVE_KEYS = frozenset(
@@ -102,8 +106,7 @@ def create_admin_app(
     async def localhost_only(request: Request, call_next):  # type: ignore[no-untyped-def]
         client_host = request.client.host if request.client else None
         # "testclient" is Starlette's TestClient default — allowed for testing.
-        allowed = {"127.0.0.1", "::1", "localhost", "testclient"}
-        if client_host not in allowed:
+        if client_host not in _LOCAL_ADMIN_HOSTS:
             logger.warning("admin_api_blocked", client=client_host)
             return JSONResponse(
                 status_code=403,
@@ -136,30 +139,44 @@ def create_admin_app(
         return response
 
     # #36: Rate limiting (10 requests/second per client)
-    _rate_buckets: dict[str, list[float]] = {}
+    _rate_buckets: dict[str, deque[float]] = {}
     _rate_last_cleanup = [time.time()]
     _RATE_MAX_CLIENTS = 10000
+    _RATE_LIMIT_PER_SECOND = 10
+
+    def _cleanup_rate_buckets(now: float, *, force: bool = False) -> None:
+        if not force and now - _rate_last_cleanup[0] <= 10.0:
+            return
+        cutoff = now - 10.0
+        stale = [k for k, v in _rate_buckets.items() if not v or v[-1] < cutoff]
+        for key in stale:
+            del _rate_buckets[key]
+        while len(_rate_buckets) > _RATE_MAX_CLIENTS:
+            _rate_buckets.pop(next(iter(_rate_buckets)))
+        _rate_last_cleanup[0] = now
 
     @app.middleware("http")
     async def rate_limit(request: Request, call_next):  # type: ignore[no-untyped-def]
         client = request.client.host if request.client else "unknown"
+        if client not in _LOCAL_ADMIN_HOSTS:
+            return await call_next(request)
+
         now = time.time()
-        bucket = _rate_buckets.setdefault(client, [])
-        # Prune old entries (1s window)
-        _rate_buckets[client] = [t for t in bucket if now - t < 1.0]
-        if len(_rate_buckets[client]) >= 10:
+        if client not in _rate_buckets and len(_rate_buckets) >= _RATE_MAX_CLIENTS:
+            _cleanup_rate_buckets(now, force=True)
+        bucket = _rate_buckets.setdefault(
+            client,
+            deque(maxlen=_RATE_LIMIT_PER_SECOND),
+        )
+        while bucket and now - bucket[0] >= 1.0:
+            bucket.popleft()
+        if len(bucket) >= _RATE_LIMIT_PER_SECOND:
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded"},
             )
-        _rate_buckets[client].append(now)
-        # Periodic cleanup: prevent unbounded memory growth
-        if now - _rate_last_cleanup[0] > 10.0 or len(_rate_buckets) > _RATE_MAX_CLIENTS:
-            cutoff = now - 10.0
-            stale = [k for k, v in _rate_buckets.items() if not v or v[-1] < cutoff]
-            for k in stale:
-                del _rate_buckets[k]
-            _rate_last_cleanup[0] = now
+        bucket.append(now)
+        _cleanup_rate_buckets(now, force=len(_rate_buckets) > _RATE_MAX_CLIENTS)
         return await call_next(request)
 
     # ── Health (#10: Detailed health check) ──────────────────
@@ -206,6 +223,15 @@ def create_admin_app(
             checks["memory"] = "unknown"
         # Uptime
         checks["uptime_s"] = str(round(time.time() - st.start_time, 0))
+        runtime = read_runtime_status(st.config.node.data_dir)
+        if runtime:
+            checks["runtime"] = str(runtime.get("status", "unknown"))
+            checks["runtime_degrade_level"] = str(
+                runtime.get("degrade_level", "unknown")
+            )
+            checks["runtime_process_memory_mb"] = str(
+                runtime.get("process_memory_mb", "unknown")
+            )
         return checks
 
     # ── #7: Search Console API ─────────────────────────────
@@ -277,6 +303,7 @@ def create_admin_app(
             "uptime_seconds": round(uptime, 1),
             "uptime_human": _format_duration(uptime),
             "index": index_stats,
+            "runtime": read_runtime_status(st.config.node.data_dir),
             "version": "0.1.0",
         }
 
@@ -424,6 +451,10 @@ def create_admin_app(
             "uptime_seconds",
             round(time.time() - st.start_time, 1),
         )
+        runtime = read_runtime_status(st.config.node.data_dir)
+        process_memory = runtime.get("process_memory_mb")
+        if isinstance(process_memory, int | float):
+            mc.set_gauge("process_memory_mb", float(process_memory))
         text = mc.format_prometheus()
         return JSONResponse(
             content={"metrics": text},
