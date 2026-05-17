@@ -255,8 +255,22 @@ def rotate_keys(data_dir: Path) -> tuple[KeyPair, KeyPair, KeyRevocationRecord]:
     old_keys = KeyPair.load(keys_dir)
 
     # Backup old keys
-    backup_dir = keys_dir / f"backup-{int(_time.time())}"
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp_ns = _time.time_ns()
+    backup_dir: Path | None = None
+    for suffix in range(1000):
+        candidate_name = f"backup-{timestamp_ns}"
+        if suffix:
+            candidate_name = f"{candidate_name}-{suffix}"
+        candidate = keys_dir / candidate_name
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+            backup_dir = candidate
+            break
+        except FileExistsError:
+            continue
+    if backup_dir is None:
+        msg = "Could not create a unique key backup directory"
+        raise FileExistsError(msg)
 
     import shutil
 

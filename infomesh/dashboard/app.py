@@ -204,7 +204,9 @@ class DashboardApp(App[None]):
         self._initial_tab = initial_tab
         self._node_pid = node_pid
         self.exit_action: str = "dashboard_only"
-        self._bgm = BGMPlayer()
+        self._bgm = BGMPlayer(
+            auto_install_mpv=self.config.dashboard.bgm_auto_install_mpv
+        )
         self._data_cache = DashboardDataCache(self.config, ttl=0.5)
         # Track whether BGM was auto-stopped due to crawl idleness
         self._bgm_idle_stopped: bool = False

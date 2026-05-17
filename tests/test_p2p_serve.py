@@ -18,6 +18,8 @@ from click.testing import CliRunner
 
 from infomesh.config import Config, NetworkConfig
 
+_VALID_TEST_PEER_ID = "12D3KooWKLomR1fLxJpDEVdqE2CZsRWPvkZvjbKvEJzcF13s33N9"
+
 
 class TestGetP2PStatus:
     """Tests for read_p2p_status helper (dashboard.utils)."""
@@ -54,7 +56,7 @@ class TestGetP2PStatus:
         assert len(result["listen_addrs"]) == 1
 
     def test_stale_status_file(self, tmp_path: Path) -> None:
-        """Returns empty dict when status file is stale (>30s old)."""
+        """Returns minimal dict with peer_id when status file is stale."""
         from infomesh.config import NodeConfig
         from infomesh.dashboard.utils import read_p2p_status
 
@@ -71,7 +73,10 @@ class TestGetP2PStatus:
 
         config = Config(node=NodeConfig(data_dir=tmp_path))
         result = read_p2p_status(config)
-        assert result == {}
+        # Stale data: returns peer_id + stopped state, not full data
+        assert result.get("peer_id") == "abc123"
+        assert result.get("state") == "stopped"
+        assert result.get("peers") == 0
 
     def test_corrupt_status_file(self, tmp_path: Path) -> None:
         """Returns empty dict when status file is corrupt."""
@@ -152,6 +157,73 @@ class TestBootstrapP2P:
         # Node should have been started (even without bootstrap)
         if node is not None:
             mock_node.start.assert_called_once()
+
+    def test_node_bootstrap_skips_self_multiaddr(self) -> None:
+        """Bootstrap should not dial a multiaddr for the local peer ID."""
+        import trio
+
+        from infomesh.config import NodeConfig
+        from infomesh.p2p.node import InfoMeshNode
+
+        addr = f"/ip4/127.0.0.1/tcp/4001/p2p/{_VALID_TEST_PEER_ID}"
+        config = Config(
+            node=NodeConfig(data_dir=Path("/tmp")),
+            network=NetworkConfig(
+                bootstrap_nodes=[addr],
+                bootstrap_dns=False,
+                bootstrap_github=False,
+            ),
+        )
+        node = InfoMeshNode(config)
+        node._peer_id = _VALID_TEST_PEER_ID
+
+        mock_host = MagicMock()
+        node._host = mock_host
+
+        trio.run(node._bootstrap)
+
+        mock_host.connect.assert_not_called()
+        assert node._bootstrap_results == {
+            "configured": 1,
+            "connected": 0,
+            "failed": 0,
+            "failed_addrs": [],
+        }
+
+
+class TestPeerCommand:
+    """Tests for peer CLI helpers."""
+
+    def test_peer_test_resolves_default_bootstrap(self) -> None:
+        """peer test expands default bootstrap aliases before socket probing."""
+        from infomesh.cli.peer import peer_group
+
+        config = Config(network=NetworkConfig(bootstrap_nodes=["default"]))
+
+        class FakeSocket:
+            def settimeout(self, timeout: float) -> None:
+                self.timeout = timeout
+
+            def connect_ex(self, target: tuple[str, int]) -> int:
+                self.target = target
+                return 0
+
+            def close(self) -> None:
+                pass
+
+        with (
+            patch("infomesh.cli.peer.load_config", return_value=config),
+            patch(
+                "infomesh.config._load_default_bootstrap_nodes",
+                return_value=["/ip4/127.0.0.1/tcp/4001/p2p/test-peer"],
+            ),
+            patch("socket.socket", return_value=FakeSocket()),
+        ):
+            result = CliRunner().invoke(peer_group, ["test"])
+
+        assert result.exit_code == 0
+        assert "OK" in result.output
+        assert "SKIP" not in result.output
 
 
 class TestNodeStatusFile:

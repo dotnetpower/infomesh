@@ -32,7 +32,8 @@ MCP mode, or `infomesh start` for the full node with P2P, crawling, and the dash
 
 - **Python 3.12+** (required)
 - **uv** package manager (recommended) — install via `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **ffplay** or **mpv** — optional, only needed for dashboard background music
+- **mpv** or **ffplay** — optional, only needed for dashboard background music;
+  InfoMesh attempts a non-interactive best-effort `mpv` install on first BGM playback
 - **psutil** — optional, for system resource monitoring in the dashboard
 - Internet connection for first install and crawling (local search works offline)
 
@@ -256,12 +257,16 @@ infomesh dashboard --tab credits
 
 ### BGM audio stutters or is choppy
 
-This is usually caused by CPU contention — the audio player subprocess
-competes with crawling and indexing for CPU time. Solutions:
+This is usually caused by CPU contention. InfoMesh now keeps the long-running
+crawl worker at the configured low CPU/I/O priority while the dashboard and BGM
+stay in the interactive control process. If audio still stutters on a small
+machine, use these extra mitigations:
 
 1. **BGM is off by default** since v0.1.2. Enable it manually with the `m`
    key or set `bgm_auto_start = true` in `~/.infomesh/config.toml`
-2. Use `mpv` instead of `ffplay` — it tends to be lighter
+2. Keep `bgm_auto_install_mpv = true`, or install `mpv` manually if automatic
+  installation is unavailable — InfoMesh prefers `mpv` for gapless looping and
+  buffered playback
 3. Reduce the dashboard refresh interval:
    ```toml
    [dashboard]
@@ -269,23 +274,25 @@ competes with crawling and indexing for CPU time. Solutions:
    ```
 4. Use the `minimal` resource profile to reduce background task load:
    ```toml
-   [resource]
+  [resources]
    profile = "minimal"
    ```
 
 ### BGM stops when crawling is idle
 
-By design, BGM auto-stops after 10 seconds of no crawl activity and
-resumes when crawling restarts. To keep BGM playing regardless:
+BGM idle-stop is off by default to avoid stop/start interruptions during
+intermittent crawling. To use BGM as an audible crawl-activity signal, enable it:
 
 ```toml
 [dashboard]
-bgm_idle_stop = false
+bgm_idle_stop = true
 ```
 
 ### BGM does not play
 
-Make sure **ffplay** (part of ffmpeg) or **mpv** is installed:
+InfoMesh attempts to install **mpv** automatically when dashboard BGM starts.
+The install is non-interactive; if root/passwordless sudo/Homebrew is not
+available, install **mpv** or **ffplay** manually:
 ```bash
 # Debian/Ubuntu:
 sudo apt install ffmpeg
@@ -298,7 +305,8 @@ brew install ffmpeg
 brew install mpv
 ```
 
-If neither player is found, BGM is silently disabled (no error).
+If installation fails and neither player is found, BGM is silently disabled
+(no error). Set `bgm_auto_install_mpv = false` to disable the automatic attempt.
 
 ---
 
@@ -470,17 +478,16 @@ Then restart your shell or run `source ~/.bashrc`.
 Make sure you are in the project root directory and have `hatchling`
 as the build backend:
 ```bash
-uv sync --dev
+uv sync --dev --locked
 uv build
 ```
 
 ### Tests fail after pulling new changes
 
 ```bash
-uv sync --dev
+uv sync --dev --locked
 uv run pytest tests/ \
   --ignore=tests/test_vector.py \
-  --ignore=tests/test_libp2p_spike.py \
   -x -q --tb=short
 ```
 
@@ -516,3 +523,64 @@ Nodes can be configured to exclude pages with personal data.
 
 No. Search queries are processed locally or routed ephemerally through
 the P2P network. There is no central server that records queries.
+
+---
+
+## New Features
+
+### Does InfoMesh support Chinese/Japanese/Korean search?
+
+Yes. InfoMesh auto-detects CJK characters in queries and applies character
+bigram expansion for FTS5 compatibility. For better Chinese segmentation,
+install the optional CJK package:
+
+```bash
+pip install 'infomesh[cjk]'  # Installs jieba for Chinese
+```
+
+For CJK-heavy indexes, set the trigram tokenizer:
+```toml
+[index]
+fts_tokenizer = "trigram"
+```
+
+### What is the implicit feedback system?
+
+InfoMesh tracks LLM-native quality signals from MCP tool usage:
+- **Fetch signal**: When an LLM fetches a search result via `fetch_page`, that URL gets a quality boost
+- **Skip signal**: Results returned but not fetched get a small demotion
+- **Citation signal**: URLs used in `fact_check` get a strong boost
+
+All signals are stored locally as SHA-256 hashes (no plaintext queries).
+Disable with `[search] feedback_tracking = false` in config.toml.
+
+### How do I access the web dashboard?
+
+When the node is running, open `http://localhost:8080/dashboard` in your
+browser. It shows 5 tabs: Overview, Search Analytics, Crawl Status,
+Network, and Credits. Auto-refreshes every 5 seconds.
+
+### Can I import RSS feeds for monitoring?
+
+Yes. InfoMesh includes an RSS/Atom feed monitor with priority-based polling:
+
+```bash
+infomesh feeds import subscriptions.opml   # Import from OPML
+infomesh feeds list                        # Show monitored feeds
+```
+
+Feeds are polled at configurable intervals (1min for critical, up to 60min
+for low-priority). New URLs trigger priority crawls.
+
+### How do I bootstrap a production cluster?
+
+Use the included Terraform configuration:
+
+```bash
+cd deploy/terraform
+terraform init
+terraform apply -var-file=bootstrap.tfvars
+```
+
+This deploys 3 geographically distributed bootstrap nodes on Azure
+(US East, EU West, Asia East) with auto-provisioning and systemd.

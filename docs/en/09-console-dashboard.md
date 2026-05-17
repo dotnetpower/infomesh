@@ -13,17 +13,17 @@ mobile terminal apps (Termux, Blink, etc.), and low-spec server environments.
 | Framework | **Textual** (≥1.0) | Rich-based, responsive CSS layout, mouse/keyboard support |
 | Alternatives | curses/blessed/urwid | Textual dominates in CSS layout, widget system, and testability |
 
-## Tab Layout (5 tabs)
+## Tab Layout (6 tabs)
 
 ### Tab 1: Overview
 ```
-┌─ InfoMesh Dashboard ─────────────────────────── v0.1.0 ─┐
+┌─ InfoMesh Dashboard ─────────────────────────── v0.1.13 ┐
 │                                                          │
 │  ┌─ Node ──────────────┐  ┌─ Resources ──────────────┐  │
 │  │ Peer ID: Qm...3kF   │  │ CPU:  ████░░░░░░  38%    │  │
 │  │ State:  🟢 Running   │  │ RAM:  ██████░░░░  62%    │  │
 │  │ Uptime: 3d 14h 22m  │  │ Disk: ████████░░  81%    │  │
-│  │ Version: 0.1.0      │  │ Net↑: 2.1/5.0 Mbps       │  │
+│  │ Version: 0.1.13     │  │ Net↑: 2.1/5.0 Mbps       │  │
 │  │ GitHub:  user@e...   │  │ Net↓: 4.3/10.0 Mbps      │  │
 │  │ Data dir: ~/.info... │  │                           │  │
 │  └──────────────────────┘  └──────────────────────────┘  │
@@ -167,7 +167,7 @@ Using Textual's responsive CSS, the layout automatically switches to a single-co
 layout on narrow screens (under 40 columns).
 
 ```
-┌─ InfoMesh ──── v0.1.0 ─┐
+┌─ InfoMesh ─── v0.1.13 ─┐
 │                          │
 │ Peer: Qm...3kF           │
 │ State: 🟢 Running        │
@@ -187,24 +187,25 @@ layout on narrow screens (under 40 columns).
 ## Module Structure
 
 ```
-infomesh/dashboard/            # 16 modules, 2,340 lines
+infomesh/dashboard/            # Textual dashboard package
 ├── __init__.py
-├── app.py              # DashboardApp (main Textual Application, 276 lines)
-├── bgm.py              # BGMPlayer (background music via mpv/ffplay/aplay, 228 lines)
-├── text_report.py      # Rich-based text report (non-interactive fallback, 333 lines)
+├── app.py              # DashboardApp (main Textual Application)
+├── bgm.py              # BGMPlayer (background music via mpv/ffplay)
+├── text_report.py      # Rich-based text report (non-interactive fallback)
 ├── screens/
 │   ├── __init__.py
-│   ├── overview.py     # OverviewPane — NodeInfoPanel, ResourcePanel, ActivityPanel, LiveLog (284 lines)
-│   ├── crawl.py        # CrawlPane — CrawlStatsPanel, TopDomainsPanel, LiveLog (182 lines)
-│   ├── search.py       # SearchPane — Input, SearchResultsPanel (151 lines)
-│   ├── network.py      # NetworkPane — P2PStatusPanel, DHTPanel, PeerTable, BandwidthPanel (246 lines)
-│   └── credits.py      # CreditsPane — BalancePanel, EarningsBreakdownPanel, TransactionTable (289 lines)
+│   ├── overview.py     # OverviewPane — node, resources, activity, live log
+│   ├── crawl.py        # CrawlPane — crawl stats, domains, live log
+│   ├── search.py       # SearchPane — input and search results
+│   ├── network.py      # NetworkPane — P2P, DHT, peers, bandwidth
+│   ├── credits.py      # CreditsPane — balance, earnings, transactions
+│   └── settings.py     # SettingsPane — editable config sections
 ├── widgets/
 │   ├── __init__.py
-│   ├── sparkline.py    # SparklineChart (Unicode block character mini chart, 75 lines)
-│   ├── bar_chart.py    # BarChart + BarItem (horizontal bar graph, 90 lines)
-│   ├── resource_bar.py # ResourceBar (CPU/RAM/Disk/Net resource bar, 80 lines)
-│   └── live_log.py     # LiveLog (real-time event log, RichLog-based, 96 lines)
+│   ├── sparkline.py    # SparklineChart (Unicode block mini chart)
+│   ├── bar_chart.py    # BarChart + BarItem (horizontal bar graph)
+│   ├── resource_bar.py # ResourceBar (CPU/RAM/Disk/Net resource bar)
+│   └── live_log.py     # LiveLog (real-time event log, RichLog-based)
 └── dashboard.tcss      # Textual CSS stylesheet (responsive layout)
 ```
 
@@ -257,7 +258,7 @@ DashboardApp (App[None])
 
 | Key | Action | Scope |
 |-----|--------|-------|
-| `1`-`5` | Switch tabs (Overview → Credits) | Global |
+| `1`-`6` | Switch tabs (Overview → Settings) | Global |
 | `Tab` | Focus next widget | Global (Textual default) |
 | `Shift+Tab` | Focus previous widget | Global (Textual default) |
 | `/` | Focus search input | Search tab only |
@@ -273,7 +274,10 @@ The dashboard can play background music during operation via an external player 
 ### Supported Players
 
 Players are auto-detected in this order: **mpv**, **ffplay** (part of ffmpeg).
-If neither is found, BGM is silently disabled.
+When dashboard BGM starts playing and `mpv` is missing, InfoMesh attempts a
+non-interactive best-effort `mpv` install first. If installation is unavailable
+or fails, it falls back to `ffplay`; if neither player is found, BGM is silently
+disabled.
 
 ```bash
 # Install on Debian/Ubuntu:
@@ -290,8 +294,9 @@ BGM is **off by default**. Enable it with the `m` keyboard shortcut or via confi
 ```toml
 [dashboard]
 bgm_auto_start = true    # false by default — enable to auto-play on start
+bgm_auto_install_mpv = true  # true = best-effort mpv install when missing
 bgm_volume = 50           # 0–100
-bgm_idle_stop = true      # auto-stop BGM when crawling is idle (set false to keep playing)
+bgm_idle_stop = false     # true = auto-stop BGM when crawling is idle
 ```
 
 ### Auto-Restart
@@ -303,11 +308,13 @@ appears when auto-restart occurs.
 ### Performance Note
 
 On resource-constrained systems (especially WSL2), the audio player subprocess
-may compete with crawling and indexing for CPU time, causing stuttering. If this
-occurs:
+may compete with crawling and indexing for CPU time, causing stuttering. InfoMesh
+prefers **mpv** with gapless looping and buffered audio, and attempts to install
+`mpv` automatically when possible. If stuttering still occurs:
 
-1. Press `m` to disable BGM
-2. Use `mpv` instead of `ffplay` (lighter CPU usage)
+1. Ensure `bgm_auto_install_mpv = true`, or install `mpv` manually if automatic
+  installation is unavailable
+2. Press `m` to disable BGM
 3. Increase `refresh_interval` to reduce dashboard overhead
 4. Use the `minimal` resource profile
 
@@ -347,6 +354,44 @@ occurs:
 - `BarItem` dataclass: label, value, color, suffix
 - `█`/`░` characters for horizontal bar rendering (default width 20 chars)
 - Displays both ratio to max value and percentage of total simultaneously
+
+---
+
+## Web Dashboard (HTTP)
+
+In addition to the TUI, InfoMesh also provides a **web-based dashboard**
+accessible from any browser at `http://localhost:8080/dashboard` when the
+admin API is running.
+
+### Features
+
+- **5 tab pages**: Overview, Search Analytics, Crawl Status, Network, Credits
+- **Auto-refresh**: Polls API endpoints every 5 seconds
+- **Zero dependencies**: Pure vanilla HTML/JS — no build step, no npm
+- **Dark theme**: GitHub-inspired dark mode
+- **Localhost-only**: Same security middleware as the admin API
+
+### Accessing the Dashboard
+
+The web dashboard is served by the same FastAPI admin API on port 8080:
+
+```bash
+# Start the node (admin API starts automatically)
+infomesh start
+
+# Open in browser
+open http://localhost:8080/dashboard
+```
+
+### Tab Pages
+
+| Tab | Metrics Shown |
+|-----|---------------|
+| **Overview** | Node status, index size, peers, credits, searches, crawls |
+| **Search** | Total searches, avg latency (with color bar), fetch rate |
+| **Crawl** | Total crawled, indexed documents, avg doc size |
+| **Network** | Connected peers, DHT mode, peer ID |
+| **Credits** | Balance, tier, total earned/spent |
 
 ---
 

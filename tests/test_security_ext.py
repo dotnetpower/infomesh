@@ -14,6 +14,12 @@ from infomesh.security_ext import (
     sign_webhook_payload,
     verify_webhook_signature,
 )
+from infomesh.security_ops import (
+    APIKeyManager as RotatingAPIKeyManager,
+)
+from infomesh.security_ops import (
+    AuditLogger as FileAuditLogger,
+)
 
 
 class TestIPFilter:
@@ -98,3 +104,21 @@ class TestTLSConfig:
         )
         errors = cfg.validate()
         assert len(errors) > 0  # Should report missing files
+
+
+class TestSecurityOps:
+    def test_rotating_api_key_revoke(self) -> None:
+        manager = RotatingAPIKeyManager()
+        manager.add_key("test-key-123", label="dev")
+        assert manager.validate("test-key-123")
+        assert manager.revoke("dev")
+        assert not manager.validate("test-key-123")
+
+    def test_file_audit_logger_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "audit.log"
+            logger = FileAuditLogger(path)
+            logger.log("search", source="mcp", details="query=test")
+            entries = logger.recent()
+            assert len(entries) == 1
+            assert entries[0].action == "search"

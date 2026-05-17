@@ -66,7 +66,7 @@ def crawl(url: str, depth: int | None, force: bool) -> None:
         else:
             config_adj = config
 
-        ctx = AppContext(config_adj)
+        ctx = AppContext(config_adj, apply_os_priority=True)
 
         try:
             if depth == 0:

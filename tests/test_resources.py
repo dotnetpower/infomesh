@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -180,6 +181,17 @@ class TestGovernorProperties:
     def test_effective_max_concurrent_full(self, governor: ResourceGovernor) -> None:
         assert governor.effective_max_concurrent == 3  # balanced default
 
+    def test_public_state_accessors(self, governor: ResourceGovernor) -> None:
+        governor._state.degrade_level = DegradeLevel.WARNING
+        governor._state.throttle_factor = 0.5
+        governor._state.cpu_percent = 65.0
+        governor._state.memory_percent = 70.0
+
+        assert governor.degrade_level == DegradeLevel.WARNING
+        assert governor.throttle_factor == 0.5
+        assert governor.cpu_percent == 65.0
+        assert governor.memory_percent == 70.0
+
 
 class TestGovernorCheckAndAdjust:
     @patch.object(ResourceGovernor, "_sample_cpu", return_value=20.0)
@@ -261,8 +273,24 @@ class TestGovernorCheckAndAdjust:
 class TestGovernorOsPriority:
     def test_apply_on_linux(self, governor: ResourceGovernor) -> None:
         # Should not raise on any platform
-        with patch("os.nice", return_value=0):
+        with patch("os.nice", return_value=0), patch("shutil.which", return_value=None):
             governor.apply_os_priority()
+
+    def test_apply_low_io_priority_on_linux(self, governor: ResourceGovernor) -> None:
+        with (
+            patch("sys.platform", "linux"),
+            patch("os.nice", return_value=19),
+            patch("shutil.which", return_value="/usr/bin/ionice"),
+            patch("subprocess.run") as mock_run,
+        ):
+            governor.apply_os_priority()
+
+        mock_run.assert_called_once_with(
+            ["ionice", "-c", "3", "-p", str(os.getpid())],
+            check=False,
+            stdout=-3,
+            stderr=-3,
+        )
 
 
 class TestGovernorNetworkSampling:

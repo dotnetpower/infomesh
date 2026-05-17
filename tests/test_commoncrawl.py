@@ -215,3 +215,89 @@ class TestCommonCrawlImporter:
         stats = await importer.import_wet_file(str(wet_gz_path))
 
         assert stats.imported == 2
+
+    def test_read_local_wet_rejects_oversized_plain_file(
+        self,
+        store: LocalStore,
+        dedup: DeduplicatorDB,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        wet_path = tmp_path / "large.wet"
+        wet_path.write_text("x" * 64, encoding="utf-8")
+        monkeypatch.setattr("infomesh.index.commoncrawl._MAX_WET_FILE_BYTES", 32)
+
+        importer = CommonCrawlImporter(store, dedup)
+        with pytest.raises(ValueError, match="WET input exceeds"):
+            importer._read_local_wet(str(wet_path))
+
+    def test_read_local_wet_rejects_gzip_expansion_over_limit(
+        self,
+        store: LocalStore,
+        dedup: DeduplicatorDB,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import gzip
+
+        wet_path = tmp_path / "large.wet.gz"
+        with gzip.open(wet_path, "wb") as f:
+            f.write(b"x" * 10_000)
+        monkeypatch.setattr("infomesh.index.commoncrawl._MAX_WET_FILE_BYTES", 80)
+        assert wet_path.stat().st_size < 80
+
+        importer = CommonCrawlImporter(store, dedup)
+        with pytest.raises(ValueError, match="WET input exceeds"):
+            importer._read_local_wet(str(wet_path))
+
+    @pytest.mark.asyncio()
+    async def test_download_wet_rejects_oversized_response(
+        self,
+        store: LocalStore,
+        dedup: DeduplicatorDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeResponse:
+            headers = {"content-length": "64"}
+
+            async def __aenter__(self) -> FakeResponse:
+                return self
+
+            async def __aexit__(
+                self,
+                exc_type: object,
+                exc: object,
+                tb: object,
+            ) -> None:
+                return None
+
+            def raise_for_status(self) -> None:
+                return None
+
+            async def aiter_bytes(self, chunk_size: int) -> object:
+                yield b"x" * 64
+
+        class FakeClient:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                return None
+
+            async def __aenter__(self) -> FakeClient:
+                return self
+
+            async def __aexit__(
+                self,
+                exc_type: object,
+                exc: object,
+                tb: object,
+            ) -> None:
+                return None
+
+            def stream(self, method: str, url: str) -> FakeResponse:
+                return FakeResponse()
+
+        monkeypatch.setattr("infomesh.index.commoncrawl._MAX_WET_FILE_BYTES", 32)
+        monkeypatch.setattr("httpx.AsyncClient", FakeClient)
+
+        importer = CommonCrawlImporter(store, dedup)
+        with pytest.raises(ValueError, match="WET input exceeds"):
+            await importer._download_wet("https://example.com/large.wet")

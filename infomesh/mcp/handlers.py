@@ -18,6 +18,7 @@ import structlog
 from mcp.types import TextContent
 
 from infomesh.config import Config
+from infomesh.credits.types import ContributionTier
 from infomesh.data_quality import cross_reference_results
 from infomesh.mcp.session import (
     AnalyticsTracker,
@@ -75,12 +76,34 @@ _TIER_HIGH_THRESHOLD = 1000
 _TIER_MID_THRESHOLD = 100
 
 
-def _compute_credit_tier(balance: float) -> int:
-    """Determine credit tier from balance."""
-    if balance >= _TIER_HIGH_THRESHOLD:
+def _compute_credit_tier(score: float) -> int:
+    """Determine numeric credit tier from contribution score."""
+    if score >= _TIER_HIGH_THRESHOLD:
         return 3
-    if balance >= _TIER_MID_THRESHOLD:
+    if score >= _TIER_MID_THRESHOLD:
         return 2
+    return 1
+
+
+def _ledger_credit_tier(ledger: Any) -> int:
+    """Return the numeric tier using contribution score, not current balance."""
+    tier_fn = getattr(ledger, "tier", None)
+    if callable(tier_fn):
+        tier = tier_fn()
+        match tier:
+            case ContributionTier.TIER_3:
+                return 3
+            case ContributionTier.TIER_2:
+                return 2
+            case ContributionTier.TIER_1:
+                return 1
+
+    score_fn = getattr(ledger, "contribution_score", None)
+    if callable(score_fn):
+        score = score_fn()
+        if isinstance(score, (int, float)):
+            return _compute_credit_tier(float(score))
+
     return 1
 
 
@@ -485,6 +508,17 @@ async def handle_search(
     elapsed = (time.monotonic() - t0) * 1000
     await analytics.record_search(elapsed)
 
+    # #5: Apply search quality enhancements
+    try:
+        from infomesh.search.quality import (
+            QueryIntentClassifier,
+        )
+
+        intent, _ = QueryIntentClassifier().classify_with_confidence(query)
+        logger.debug("query_intent", query=query[:60], intent=intent)
+    except Exception:  # noqa: BLE001
+        pass
+
     # Post-processing (quota injection, suggestions, attribution)
     text = _postprocess_search_text(
         text,
@@ -517,6 +551,8 @@ async def handle_fetch(
     vector_store: Any,
     link_graph: Any,
     analytics: AnalyticsTracker,
+    feedback_store: Any | None = None,
+    last_search_query: str = "",
 ) -> list[TextContent]:
     """Handle fetch_page tool call."""
     url = arguments.get("url", "")
@@ -555,6 +591,13 @@ async def handle_fetch(
         cache_ttl_seconds=cache_ttl,
     )
     await analytics.record_fetch()
+
+    # #6: Record implicit feedback signal (search → fetch = positive)
+    if feedback_store is not None and last_search_query:
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            feedback_store.record_fetch(last_search_query, url, 0)
 
     if not fp.success:
         if fp.is_paywall:
@@ -621,6 +664,8 @@ async def handle_crawl(
     store: Any,
     worker: Any,
     vector_store: Any,
+    distributed_index: Any | None = None,
+    p2p_node: Any | None = None,
     link_graph: Any,
     analytics: AnalyticsTracker,
     webhooks: WebhookRegistry,
@@ -662,13 +707,19 @@ async def handle_crawl(
 
     # Restrict link following to same domain + path prefix
     if depth > 0 and hasattr(worker, "set_scope"):
-        worker.set_scope(url)
+        import asyncio as _asyncio
+
+        scope_result = worker.set_scope(url)
+        if _asyncio.iscoroutine(scope_result):
+            await scope_result
 
     ci = await crawl_and_index(
         url,
         worker=worker,
         store=store,
         vector_store=vector_store,
+        p2p_node=p2p_node,
+        distributed_index=distributed_index,
         link_graph=link_graph,
         depth=depth,
         force=force,
@@ -756,7 +807,7 @@ def _build_status_data(
             "balance": round(ledger.balance(), 2),
             "state": al.state.value,
             "search_cost": round(al.search_cost, 3),
-            "tier": _compute_credit_tier(ledger.balance()),
+            "tier": _ledger_credit_tier(ledger),
         }
         if al.state.value == "grace":
             cr["grace_remaining_hours"] = round(
@@ -1248,7 +1299,7 @@ def handle_credit_balance(
             "balance": round(ledger.balance(), 2),
             "state": al.state.value,
             "search_cost": round(al.search_cost, 3),
-            "tier": _compute_credit_tier(ledger.balance()),
+            "tier": _ledger_credit_tier(ledger),
         }
         if al.state.value == "grace":
             data["grace_remaining_hours"] = round(

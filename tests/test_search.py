@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from infomesh.index.local_store import LocalStore
+from infomesh.search.extended import SummaryCache, translate_query_keywords
 from infomesh.search.query import QueryResult, _sanitize_fts_query, search_local
 
 
@@ -50,3 +51,19 @@ class TestSearchLocal:
         assert result.total == 0
         assert result.results == []
         store.close()
+
+
+class TestSearchExtensions:
+    def test_summary_cache_eviction(self) -> None:
+        cache = SummaryCache(max_entries=2)
+        cache.put("q1", "s1", [])
+        cache.put("q2", "s2", [])
+        cache.put("q3", "s3", [])
+        assert cache.size == 2
+        assert cache.get("q1") is None
+
+    def test_translate_korean_keywords(self) -> None:
+        terms = translate_query_keywords("파이썬 설치 오류", "ko")
+        assert "install" in terms
+        assert "error" in terms
+        assert translate_query_keywords("hello", "xx") == []

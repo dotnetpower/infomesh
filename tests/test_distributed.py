@@ -20,11 +20,11 @@ class MockInfoMeshDHT:
 
     def __init__(self) -> None:
         self._index: dict[str, list[dict]] = {}
+        self.publish_calls: dict[str, int] = {}
 
     async def publish_keyword(self, keyword: str, pointers: list[dict]) -> bool:
-        if keyword not in self._index:
-            self._index[keyword] = []
-        self._index[keyword].extend(pointers)
+        self.publish_calls[keyword] = self.publish_calls.get(keyword, 0) + 1
+        self._index[keyword] = list(pointers)
         return True
 
     async def query_keyword(self, keyword: str) -> list[dict]:
@@ -153,6 +153,30 @@ class TestDistributedIndex:
         total = await dist_index.publish_batch(docs)
         assert total > 0
         assert dist_index.stats.documents_published == 2
+
+    @pytest.mark.asyncio
+    async def test_publish_batch_groups_shared_keywords(
+        self, dist_index: DistributedIndex, mock_dht: MockInfoMeshDHT
+    ) -> None:
+        docs = [
+            {
+                "doc_id": 1,
+                "url": "https://a.com/python",
+                "title": "A",
+                "text": "Python async programming",
+            },
+            {
+                "doc_id": 2,
+                "url": "https://b.com/python",
+                "title": "B",
+                "text": "Python distributed programming",
+            },
+        ]
+
+        await dist_index.publish_batch(docs)
+
+        assert mock_dht.publish_calls["python"] == 1
+        assert len(mock_dht._index["python"]) == 2
 
     @pytest.mark.asyncio
     async def test_deduplicate_query_results(

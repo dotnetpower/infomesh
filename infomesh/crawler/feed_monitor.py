@@ -233,7 +233,7 @@ class FeedMonitor:
             FeedPriority.LOW: 3,
         }
 
-        for feed in self._feeds.values():
+        for feed in list(self._feeds.values()):
             if feed.last_poll_at == 0.0:
                 # Never polled — always due
                 due.append((priority_order[feed.priority], 0.0, feed))
@@ -330,7 +330,7 @@ class FeedMonitor:
     def stats(self) -> FeedMonitorStats:
         """Return current monitor statistics."""
         by_priority: dict[str, int] = {}
-        for feed in self._feeds.values():
+        for feed in list(self._feeds.values()):
             key = feed.priority.value
             by_priority[key] = by_priority.get(key, 0) + 1
         self._stats.feeds_by_priority = by_priority

@@ -38,6 +38,11 @@ SNAPSHOT_EXTENSION = ".infomesh-snapshot"
 # Current format version
 _FORMAT_VERSION = 1
 
+# Admin import guard: snapshots are read into memory after this check.
+_MAX_SNAPSHOT_FILE_BYTES = 1024 * 1024 * 1024
+_MAX_HEADER_LEN = 10 * 1024 * 1024
+_MAX_SNAPSHOT_DOCUMENTS = 100_000
+
 
 @dataclass(frozen=True)
 class SnapshotStats:
@@ -121,7 +126,14 @@ def read_snapshot_metadata(snapshot_path: Path | str) -> dict[str, Any]:
     """
     compressor = Compressor(level=LEVEL_SNAPSHOT)
     with open(snapshot_path, "rb") as f:
-        header_len = struct.unpack(">I", f.read(4))[0]
+        header_prefix = f.read(4)
+        if len(header_prefix) != 4:
+            raise ValueError("Snapshot file is too small to contain a header")
+        header_len = struct.unpack(">I", header_prefix)[0]
+        if header_len > _MAX_HEADER_LEN:
+            raise ValueError(
+                f"Snapshot header too large: {header_len} bytes (max {_MAX_HEADER_LEN})"
+            )
         header_compressed = f.read(header_len)
 
     header_json = compressor.decompress(header_compressed)
@@ -151,10 +163,18 @@ def import_snapshot(
     snapshot_path = Path(snapshot_path)
     compressor = Compressor(level=LEVEL_SNAPSHOT)
 
-    _MAX_HEADER_LEN = 10 * 1024 * 1024  # 10 MB safety limit
+    file_size = snapshot_path.stat().st_size
+    if file_size > _MAX_SNAPSHOT_FILE_BYTES:
+        raise ValueError(
+            f"Snapshot file too large: {file_size} bytes "
+            f"(max {_MAX_SNAPSHOT_FILE_BYTES})"
+        )
 
     with open(snapshot_path, "rb") as f:
-        header_len = struct.unpack(">I", f.read(4))[0]
+        header_prefix = f.read(4)
+        if len(header_prefix) != 4:
+            raise ValueError("Snapshot file is too small to contain a header")
+        header_len = struct.unpack(">I", header_prefix)[0]
         if header_len > _MAX_HEADER_LEN:
             raise ValueError(
                 f"Snapshot header too large: {header_len} bytes (max {_MAX_HEADER_LEN})"
@@ -173,11 +193,25 @@ def import_snapshot(
             f" than supported ({_FORMAT_VERSION})"
         )
 
+    document_count = metadata.get("document_count", 0)
+    if isinstance(document_count, int) and document_count > _MAX_SNAPSHOT_DOCUMENTS:
+        raise ValueError(
+            f"Snapshot document count too large: {document_count} "
+            f"(max {_MAX_SNAPSHOT_DOCUMENTS})"
+        )
+
     # Decompress and unpack documents
     doc_bytes = compressor.decompress(doc_compressed)
     from infomesh.p2p.protocol import _SAFE_UNPACK
 
     documents = msgpack.unpackb(doc_bytes, raw=False, **_SAFE_UNPACK)
+    if not isinstance(documents, list):
+        raise ValueError("Snapshot document payload must be a list")
+    if len(documents) > _MAX_SNAPSHOT_DOCUMENTS:
+        raise ValueError(
+            f"Snapshot document count too large: {len(documents)} "
+            f"(max {_MAX_SNAPSHOT_DOCUMENTS})"
+        )
 
     imported = 0
     skipped = 0
@@ -212,8 +246,6 @@ def import_snapshot(
                 )
 
     elapsed = (time.monotonic() - start) * 1000
-    file_size = snapshot_path.stat().st_size
-
     logger.info(
         "snapshot_imported",
         imported=imported,

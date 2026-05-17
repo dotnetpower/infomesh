@@ -21,6 +21,10 @@ so your AI assistant can search the web through your own decentralized index.
 |------|-------------|---------------|
 | `web_search` | Unified web search (P2P + local, RAG, explain, answer extraction) | `query` (required), `top_k`, `recency_days`, `domain_allowlist`, `domain_blocklist`, `language`, `fetch_full_content`, `chunk_size`, `rerank`, `answer_mode`, `local_only`, `explain` |
 
+When P2P is available, MCP startup republishes the existing local index to the
+distributed DHT and `crawl_url` publishes newly indexed pages immediately. Set
+`local_only=true` to skip P2P discovery and search only the local FTS index.
+
 ### Content Access
 
 | Tool | Description | Key Parameters |
@@ -473,6 +477,51 @@ The MCP server code follows the **Single Responsibility Principle (SRP)** — sp
 
 This split enforces that **no business logic lives in `server.py`** — it only dispatches to handlers,
 which in turn delegate to `infomesh.services` functions.
+
+---
+
+## Search Quality Features
+
+### Implicit Feedback Tracking
+
+InfoMesh tracks implicit quality signals from MCP tool usage patterns
+to improve search ranking over time. All data is local-only and
+privacy-preserving (query text stored as SHA-256 hash).
+
+| Signal | Trigger | Effect |
+|--------|---------|--------|
+| `fetched` | `web_search` → `fetch_page` for a result | URL boost +1.0 |
+| `skipped` | Results returned but not fetched | URL demote -0.3 |
+| `reformulated` | Same query hash within 60 seconds | Marks poor results |
+| `cited` | URL used in `fact_check` evidence | URL boost +2.0 |
+
+Configure via `config.toml`:
+```toml
+[search]
+feedback_tracking = true   # default: true
+```
+
+CLI inspection:
+```bash
+infomesh feedback stats          # Signal count + top URLs
+infomesh feedback top-urls -n 20 # Highest-quality URLs
+```
+
+### CJK Language Support
+
+Queries in Chinese, Japanese, and Korean are automatically detected
+and preprocessed with character bigram expansion for FTS5 compatibility.
+
+- Auto-detection via Unicode character ratio analysis
+- Bigram/trigram generation for CJK characters
+- Latin words preserved alongside CJK tokens
+- Optional: `pip install 'infomesh[cjk]'` for jieba (Chinese segmentation)
+
+### Query Expansion
+
+When initial search results are sparse (fewer than requested), InfoMesh
+automatically expands the query with synonyms from a built-in technical
+term dictionary (20+ mappings like error↔exception, api↔endpoint).
 
 ---
 

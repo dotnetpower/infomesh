@@ -41,6 +41,8 @@ search providers.
 | Logging | **structlog** | Structured logging for all library code |
 | Package Manager | **uv** | Fast Python package/project manager (replaces pip/venv) |
 | Build Backend | **hatchling** | PEP 517 build backend for PyPI distribution |
+| JS Rendering | **Playwright** | Optional headless Chromium (`pip install 'infomesh[browser]'`) |
+| CJK Tokenization | **jieba** | Optional Chinese segmentation (`pip install 'infomesh[cjk]'`) |
 
 ## Project Structure
 
@@ -105,14 +107,17 @@ infomesh/
 │   │   ├── cache.py         #   Query result LRU cache (TTL + auto-expiry)
 │   │   ├── reranker.py      #   LLM re-ranking (prompt-based post-ranking)
 │   │   ├── cross_validate.py #  Query result cross-validation
-│   │   └── formatter.py     #   Search result text formatting (CLI/MCP/dashboard)
+│   │   ├── formatter.py     #   Search result text formatting (CLI/MCP/dashboard)
+│   │   ├── feedback.py      #   Implicit search quality signals (SQLite-backed)
+│   │   ├── cjk.py           #   CJK tokenization (bigram/trigram for Chinese/Japanese/Korean)
+│   │   └── passage.py       #   Passage extraction, best-snippet selection, highlighting
 │   ├── mcp/                 # MCP server (Model Context Protocol) — SRP: 4 modules
 │   │   ├── server.py        #   Thin wiring: Server creation, tool dispatch, stdio/HTTP runners
 │   │   ├── tools.py         #   Tool schema definitions, filter extraction, API key check
 │   │   ├── handlers.py      #   All handle_* functions (search, fetch, crawl, batch, etc.)
 │   │   └── session.py       #   SearchSession, AnalyticsTracker, WebhookRegistry
 │   ├── api/                 # Local admin API
-│   │   ├── local_api.py     #   FastAPI (health, status, config, index stats, credits, metrics)
+│   │   ├── local_api.py     #   FastAPI (health, status, config, index stats, credits, metrics, /dashboard)
 │   │   └── extensions.py    #   API extensions (OpenAPI spec, Prometheus metrics)
 │   ├── credits/             # Incentive system
 │   │   ├── types.py         #   ActionType, CreditState, dataclasses, constants
@@ -138,7 +143,7 @@ infomesh/
 │   │   └── verify.py        #   Summary verification (key-fact anchoring, NLI)
 │   ├── dashboard/           # Console app UI (Textual TUI)
 │   │   ├── app.py           #   DashboardApp (main Textual Application)
-│   │   ├── bgm.py           #   BGM player (background music via mpv/ffplay/aplay)
+│   │   ├── bgm.py           #   BGM player (background music via mpv/ffplay)
 │   │   ├── text_report.py   #   Rich-based text report (non-interactive fallback)
 │   │   ├── data_cache.py    #   Dashboard data caching layer
 │   │   ├── utils.py         #   Dashboard utility functions (format_uptime, format_bytes)
@@ -178,7 +183,13 @@ infomesh/
 │   ├── scalability.py       #   Batch ingest & horizontal scaling
 │   ├── data_quality.py      #   Quality scoring & validation
 │   ├── security_ext.py      #   API keys, RBAC, audit logging
-│   └── dx.py                #   Developer experience (plugin system)
+│   ├── security_ops.py      #   API key rotation, audit logging (production)
+│   ├── dx.py                #   Developer experience (plugin system)
+│   ├── plugins.py           #   Hook-based plugin registry (10 hook points)
+│   ├── slo.py               #   Service Level Objectives tracking (5 default SLOs)
+│   ├── diagnostics.py       #   System diagnostics (`infomesh doctor`)
+│   ├── benchmarks.py        #   Performance benchmarking (`infomesh bench`)
+│   └── shutdown.py          #   Graceful shutdown (SIGTERM/SIGINT handlers)
 ├── examples/                # Python usage examples
 │   ├── README.md            #   Examples index
 │   ├── basic_search.py      #   Simple search demo
@@ -284,6 +295,7 @@ The `auto-release.yml` workflow bumps version, tags, builds, and publishes. The 
 | **GitHub Release already exists on retry** | A partial run created the release but failed at PyPI publish. Next retry fails at `gh release create`. | Check `gh release view <tag>` before creating. Skip if exists. |
 | **PyPI version already exists on retry** | A partial run published to PyPI but failed on a later step. Retry fails with "file already exists". | Set `skip-existing: true` on `pypa/gh-action-pypi-publish`. |
 | **`gh release create` tag-not-pushed error** | `gh release create` requires the tag to exist on the remote. If push was partial, it fails. | Add `--target ${{ github.sha }}` to `gh release create` so it creates the tag at the correct commit. |
+| **`uv.lock` stale after version bump** | Auto-release edits `pyproject.toml` but does not refresh the package entry in `uv.lock`. Later locked installs can fail or use stale metadata. | Run `uv lock` after version edits and commit `uv.lock` with `pyproject.toml` and `infomesh/__init__.py`. |
 
 ### No Private API Access in Consumers
 
@@ -313,7 +325,6 @@ uv build
 # Test check — must pass on both Python 3.12 and 3.13
 uv run pytest tests/ \
   --ignore=tests/test_vector.py \
-  --ignore=tests/test_libp2p_spike.py \
   -x -q --tb=short
 ```
 
@@ -503,6 +514,7 @@ Every code change that affects **user-facing behavior, API surface, or configura
 - Two DHT use cases:
   1. **Inverted index**: `hash(keyword)` → list of `(peer_id, doc_id, score)` pointers, stored on nodes closest to the hash.
   2. **Crawl coordination**: `hash(URL)` → the node closest to the hash "owns" and crawls that URL.
+- Keyword publications merge pointer lists instead of overwriting existing entries. Nodes republish existing local index documents at startup and publish newly crawled documents after local indexing so bootstrap-hosted content remains discoverable.
 - Replication factor: N=3 minimum for all stored data.
 
 ### Crawling
@@ -528,16 +540,23 @@ Every code change that affects **user-facing behavior, API surface, or configura
 
 - Local keyword search: SQLite FTS5 with BM25 ranking.
 - Local vector search: ChromaDB for semantic/embedding-based queries. Default model: `all-MiniLM-L6-v2`. Vector search is **optional** — FTS5 works standalone.
-- Distributed index: publish keyword hashes to DHT after crawling.
+- Distributed index: publish keyword hashes to DHT after crawling; startup republish advertises existing local documents after restarts.
 
 ### Search Flow
 
-1. Parse query → extract keywords.
-2. Search local index first (target: <10ms).
-3. Route keyword hashes via DHT to responsible nodes (target: ~500ms).
-4. Merge local + remote results, rank by BM25 + freshness + trust.
-5. Fetch full text for top-N results if needed (target: ~200ms).
-6. Return via MCP → total latency target: ~1 second.
+1. Parse query → extract keywords. CJK queries auto-expand to bigrams.
+2. If results sparse, auto-expand with synonyms from built-in dictionary.
+3. Search local index first (target: <10ms).
+4. Route keyword hashes via DHT to responsible nodes (target: ~500ms).
+5. Merge local + remote results, rank by BM25 + freshness + trust.
+6. Select best passage as snippet (not just first N chars).
+7. Fetch full text for top-N results if needed (target: ~200ms).
+8. Record implicit feedback signals (fetch/skip/cite).
+9. Return via MCP → total latency target: ~1 second.
+
+`infomesh search` follows the same local + peer search path by default when P2P
+is available. Use `infomesh search --local` or `--local-only` for offline
+local-index search.
 
 ### MCP Tools
 
@@ -573,7 +592,7 @@ The MCP server exposes 5 consolidated tools (v0.3.0 — legacy names still suppo
 - Supported runtimes: **ollama** (simplest), **llama.cpp** (lightweight CPU), **vLLM** (GPU throughput).
 - Minimum spec: 3B Q4 quantized model on CPU with 8GB RAM.
 - The summarizer module should abstract the LLM backend so different runtimes are interchangeable.
-- **Energy-aware scheduling**: Nodes can configure their local timezone and off-peak electricity hours (e.g., 23:00–07:00). LLM-heavy tasks (batch summarization, processing peer requests) are preferentially scheduled during off-peak windows. Nodes operating LLM during off-peak hours receive a **1.5x credit multiplier** on all LLM-related earnings.
+- **Energy-aware scheduling**: Nodes can configure their local timezone and off-peak electricity hours (e.g., 23:00–07:00). LLM-heavy tasks (batch summarization, processing peer requests) are preferentially scheduled during off-peak windows. Scheduler decisions carry `is_off_peak`; the ledger applies the **1.5x credit multiplier** when LLM actions are recorded with that flag.
 - **Summary verification**: 3-stage pipeline — (1) Self-verification via key-fact anchoring + NLI contradiction detection, (2) Cross-validation by replica nodes independently summarizing, (3) Reputation-based trust from verification history.
 - Store `content_hash` alongside every summary so anyone can verify against the source text.
 
@@ -615,7 +634,7 @@ All weights reflect approximate relative resource cost (CPU, bandwidth, storage)
 - **LLM** actions during normal hours: `M = 1.0`.
 - **LLM** actions during configured off-peak hours: `M = 1.5`.
 - Off-peak window is set per node (default: 23:00–07:00 local time).
-- The network preferentially routes batch summarization to nodes currently in off-peak.
+- The LLM scheduler marks off-peak decisions with `is_off_peak`; credit recording applies the 1.5x multiplier when LLM actions are recorded with that flag.
 
 #### Search Cost
 
@@ -673,6 +692,14 @@ When a user runs InfoMesh on multiple devices with the same GitHub email, each d
 - **Unified trust score**: `Trust = 0.15×uptime + 0.25×contribution + 0.40×audit_pass_rate + 0.20×summary_quality`. Tiers: Trusted (≥0.8), Normal (0.5–0.8), Suspect (0.3–0.5), Untrusted (<0.3).
 - **Tamper detection**: 3x audit failures → network isolation. Source URL is always re-crawlable as ground truth.
 - **Transport isolation**: `TrustStore.is_isolated(peer_id)` checks the DB isolation flag. Isolated peers are rejected at message verification level before any processing.
+
+### Resource Governance
+
+- Long-running worker entry points (`_serve`, MCP, standalone crawl) should opt in to `AppContext(..., apply_os_priority=True)` or apply `ResourceGovernor.apply_os_priority()` before heavy initialization.
+- Interactive control-plane commands (dashboard/status/settings) must not lower their own process priority, because BGM and TUI responsiveness should not inherit crawler worker throttling.
+- Dashboard BGM prefers `mpv` with gapless looping and buffered audio, attempts a non-interactive best-effort `mpv` install on first playback when `bgm_auto_install_mpv=true`, then falls back to `ffplay`; `bgm_idle_stop` defaults to `false` so auto-started BGM does not stop/restart during intermittent crawling unless explicitly enabled.
+- `ResourceGovernor` exposes public state via `state`, `degrade_level`, `throttle_factor`, `cpu_percent`, and `memory_percent`; crawl loops must use those public fields rather than private attributes.
+- Linux workers apply both CPU `nice` and best-effort `ionice`; failures are non-fatal.
 
 ### P2P Message Authentication
 

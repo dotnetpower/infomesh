@@ -53,7 +53,7 @@ infomesh start
 InfoMesh는 다음 순서로 첫 실행 점검을 수행합니다:
 
 ```
-InfoMesh v0.1.6 starting...
+InfoMesh v0.1.13 starting...
   Peer ID: 12D3KooWAbCdEfGh...
   Data dir: /home/user/.infomesh
 ```
@@ -297,6 +297,9 @@ infomesh start
 infomesh search "python asyncio tutorial"
 ```
 
+오프라인 로컬 인덱스만 검색하려면 `infomesh search --local "python asyncio tutorial"`
+또는 `--local-only`를 사용합니다.
+
 1. 쿼리 키워드가 해시됩니다.
 2. DHT가 각 키워드 해시에 가장 가까운 노드로 쿼리를 라우팅합니다.
 3. 참여하는 모든 노드의 결과가 병합되고 랭킹됩니다.
@@ -347,9 +350,9 @@ InfoMesh는 IDE에서 MCP 도구로 사용하도록 설계되었습니다:
 }
 ```
 
-설정 후 AI 어시스턴트가 `search`, `fetch_page`, `crawl_url` 등의 도구를
-호출할 수 있습니다. 전체 도구 레퍼런스는 [MCP 연동](10-mcp-integration.md)을
-참조하세요.
+설정 후 AI 어시스턴트가 `web_search`, `fetch_page`, `crawl_url`, `fact_check`,
+`status` 도구를 호출할 수 있습니다. 전체 도구 레퍼런스는
+[MCP 연동](10-mcp-integration.md)을 참조하세요.
 
 ---
 
@@ -371,6 +374,8 @@ politeness_delay = 1.0
 listen_port = 4001
 bootstrap_nodes = ["default"]   # 내장된 bootstrap/nodes.json 사용
 ```
+
+`network.listen_port`는 1-65535 범위의 TCP 포트여야 합니다.
 
 기본값 대신 (또는 추가로) 사용자 지정 부트스트랩 노드를 사용하려면:
 
@@ -431,3 +436,83 @@ infomesh start
 > **팁**: 첫 실행 시 GitHub 이메일을 연결하면 모든 노드에서 크레딧을 획득하고
 > 축적할 수 있습니다. 크레딧은 만료되지 않으며 높은 기여 점수는 더 저렴한
 > 검색 비용을 제공합니다.
+
+---
+
+## 진단 및 모니터링
+
+### 시스템 상태 점검
+
+```bash
+infomesh doctor
+```
+
+점검: 데이터 디렉토리, 키 쌍, 인덱스 DB, 설정, P2P 포트, 관리 API,
+디스크 공간, Python 버전, 크레딧 원장, 부트스트랩 연결.
+
+### 성능 벤치마크
+
+```bash
+infomesh bench --iterations 100
+```
+
+측정: 쿼리 확장, NLP 파싱, 구절 분할, CJK 감지, CJK 토큰화, 의도 분류 지연시간.
+
+### 웹 대시보드
+
+노드 실행 중 `http://localhost:8080/dashboard`를 여세요.
+5개 탭: 개요, 검색 분석, 크롤 상태, 네트워크, 크레딧.
+5초마다 자동 갱신. 상세 상태: `GET /health?detail=1`.
+
+---
+
+## 선택적 기능
+
+### CJK 검색 (중국어/일본어/한국어)
+
+```bash
+pip install 'infomesh[cjk]'
+```
+
+CJK 문자가 쿼리에서 자동 감지되어 바이그램으로 확장됩니다.
+CJK 중심 인덱스의 경우 설정에서 `[index] fts_tokenizer = "trigram"`을 설정하세요.
+
+### JavaScript 렌더링
+
+```bash
+pip install 'infomesh[browser]'
+```
+
+설정에서 활성화:
+```toml
+[crawl]
+js_rendering = true
+```
+
+### RSS 피드 모니터링
+
+설정에서 활성화:
+```toml
+[crawl]
+rss_enabled = true
+```
+
+OPML에서 피드 가져오기:
+```bash
+infomesh feeds import subscriptions.opml
+```
+
+### 검색 품질 추적
+
+암묵적 피드백 신호 (fetch/skip/cite)가 자동으로 추적됩니다.
+비활성화:
+```toml
+[search]
+feedback_tracking = false
+```
+
+신호 검사:
+```bash
+infomesh feedback stats
+infomesh feedback top-urls -n 20
+```

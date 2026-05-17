@@ -23,6 +23,23 @@ from infomesh.resources.port_check import (
     is_port_listening,
 )
 
+
+@pytest.mark.parametrize("port", [0, -1, 65536, True, "4001"])
+def test_invalid_ports_rejected(port: object) -> None:
+    with pytest.raises(ValueError, match="Invalid TCP port"):
+        is_port_listening(port)  # type: ignore[arg-type]
+
+
+def test_invalid_port_check_does_not_probe_environment() -> None:
+    with (
+        patch("infomesh.resources.port_check.detect_cloud_provider") as detect,
+        pytest.raises(ValueError, match="Invalid TCP port"),
+    ):
+        check_port_accessibility(0)
+
+    detect.assert_not_called()
+
+
 # ── detect_cloud_provider ────────────────────────────────────────────
 
 

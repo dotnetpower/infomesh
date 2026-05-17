@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 
 from infomesh.credits.farming import (
@@ -16,8 +18,10 @@ from infomesh.credits.farming import (
 
 
 @pytest.fixture()
-def detector() -> FarmingDetector:
-    return FarmingDetector()
+def detector() -> Generator[FarmingDetector, None, None]:
+    d = FarmingDetector()
+    yield d
+    d.close()
 
 
 # --- Probation tests -------------------------------------------------------

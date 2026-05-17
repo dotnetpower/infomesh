@@ -54,7 +54,7 @@ infomesh start
 InfoMesh runs a series of first-start checks in order:
 
 ```
-InfoMesh v0.1.6 starting...
+InfoMesh v0.1.13 starting...
   Peer ID: 12D3KooWAbCdEfGh...
   Data dir: /home/user/.infomesh
 ```
@@ -300,6 +300,9 @@ Once peered, searches span both nodes:
 infomesh search "python asyncio tutorial"
 ```
 
+Use `infomesh search --local "python asyncio tutorial"` or
+`--local-only` to force offline local-index search.
+
 1. Query keywords are hashed.
 2. DHT routes the query to the node(s) closest to each keyword hash.
 3. Results from all participating nodes are merged and ranked.
@@ -350,9 +353,9 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 }
 ```
 
-Once configured, your AI assistant can call tools like `search`, `fetch_page`,
-`crawl_url`, and more. See [MCP Integration](10-mcp-integration.md) for the
-full tool reference.
+Once configured, your AI assistant can call tools like `web_search`,
+`fetch_page`, `crawl_url`, `fact_check`, and `status`. See
+[MCP Integration](10-mcp-integration.md) for the full tool reference.
 
 ---
 
@@ -374,6 +377,8 @@ politeness_delay = 1.0
 listen_port = 4001
 bootstrap_nodes = ["default"]   # uses bundled bootstrap/nodes.json
 ```
+
+`network.listen_port` must be a TCP port in the range 1-65535.
 
 To use custom bootstrap nodes instead of (or in addition to) the defaults:
 
@@ -434,3 +439,84 @@ infomesh start
 > **Tip**: Link your GitHub email during first start to earn and accumulate
 > credits across all your nodes. Credits never expire and higher contribution
 > scores unlock cheaper search costs.
+
+---
+
+## Diagnostics & Monitoring
+
+### System Health Check
+
+```bash
+infomesh doctor
+```
+
+Checks: data directory, key pair, index DB, config, P2P port, admin API,
+disk space, Python version, credit ledger, and bootstrap connectivity.
+
+### Performance Benchmarks
+
+```bash
+infomesh bench --iterations 100
+```
+
+Measures: query expansion, NLP parsing, passage splitting, CJK detection,
+CJK tokenization, and intent classification latency.
+
+### Web Dashboard
+
+Open `http://localhost:8080/dashboard` when the node is running.
+5 tabs: Overview, Search Analytics, Crawl Status, Network, Credits.
+Auto-refreshes every 5 seconds. Detailed health: `GET /health?detail=1`.
+
+---
+
+## Optional Features
+
+### CJK Search (Chinese/Japanese/Korean)
+
+```bash
+pip install 'infomesh[cjk]'
+```
+
+CJK characters are auto-detected in queries and expanded to bigrams.
+For CJK-heavy indexes, set `[index] fts_tokenizer = "trigram"` in config.
+
+### JavaScript Rendering
+
+```bash
+pip install 'infomesh[browser]'
+```
+
+Enable in config:
+```toml
+[crawl]
+js_rendering = true
+```
+
+### RSS Feed Monitoring
+
+Enable in config:
+```toml
+[crawl]
+rss_enabled = true
+```
+
+Import feeds from OPML:
+```bash
+infomesh feeds import subscriptions.opml
+```
+
+### Search Quality Tracking
+
+Implicit feedback signals (fetch/skip/cite) are tracked automatically.
+Disable with:
+```toml
+[search]
+feedback_tracking = false
+```
+
+Inspect signals:
+```bash
+infomesh feedback stats
+infomesh feedback top-urls -n 20
+```

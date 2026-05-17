@@ -24,6 +24,15 @@ def _pid_path(data_dir: Path) -> Path:
     return data_dir / _PID_FILE_NAME
 
 
+def _apply_worker_os_priority(config: Config) -> None:
+    """Apply low-priority scheduling to long-running worker processes."""
+    from infomesh.resources.governor import ResourceGovernor
+    from infomesh.resources.profiles import get_profile
+
+    governor = ResourceGovernor(get_profile(config.resources.profile))
+    governor.apply_os_priority()
+
+
 def _offer_starter_download(config: Config) -> None:
     """Prompt the user to download the starter index if available."""
     import asyncio
@@ -335,38 +344,58 @@ def _run_foreground_crawl(config: Config, seed_category: str) -> None:
         )
         return
 
-    # Crawl a small batch of unseen URLs
-    batch_size = min(5, len(unseen_urls))
+    # Crawl a small batch quickly — dashboard waits for this to finish
+    max_success = 3
+    max_attempts = min(8, len(unseen_urls))
+    max_time = 30.0  # Hard timeout: 30 seconds max
     click.echo(
         f"    Seeds: {active_category}"
         f" ({len(unseen_urls)} new URLs,"
-        f" crawling {batch_size})\n"
+        f" attempting up to {max_attempts}, max {max_time:.0f}s)\n"
     )
 
     crawled = 0
+    attempted = 0
     start_time = time.monotonic()
 
     async def _crawl_batch() -> int:
-        nonlocal crawled
-        for i, url in enumerate(unseen_urls[:batch_size], 1):
+        nonlocal crawled, attempted
+        for url in unseen_urls[:max_attempts]:
+            if crawled >= max_success:
+                break
+            # Hard time limit — don't block dashboard launch
+            if time.monotonic() - start_time > max_time:
+                click.echo("    ⏱ Time limit reached, continuing in background")
+                break
+            attempted += 1
             try:
-                result = await ctx.worker.crawl_url(url, depth=0)  # type: ignore[union-attr]
+                result = await asyncio.wait_for(
+                    ctx.worker.crawl_url(url, depth=0),  # type: ignore[union-attr]
+                    timeout=15.0,  # Per-URL timeout
+                )
                 if result.success and result.page:
                     index_document(result.page, ctx.store, ctx.vector_store)
                     crawled += 1
                     title = (
                         result.page.title[:55] if result.page.title else "(no title)"
                     )
-                    click.echo(f"    [{i}/{batch_size}] ✓ {title}\n              {url}")
+                    click.echo(
+                        f"    [{crawled}/{max_success}] ✓ {title}\n              {url}"
+                    )
                 else:
-                    click.echo(f"    [{i}/{batch_size}] ✗ {url} — {result.error}")
+                    click.echo(f"    [skip] ✗ {url} — {result.error}")
+            except TimeoutError:
+                click.echo(f"    [skip] ✗ {url} — timeout")
             except Exception as exc:  # noqa: BLE001
-                click.echo(f"    [{i}/{batch_size}] ✗ {url} — {exc}")
+                click.echo(f"    [skip] ✗ {url} — {exc}")
         return crawled
 
     asyncio.run(_crawl_batch())
     elapsed = time.monotonic() - start_time
-    click.echo(f"\n    Initial crawl: {crawled} pages indexed in {elapsed:.1f}s")
+    click.echo(
+        f"\n    Initial crawl: {crawled} pages indexed"
+        f" ({attempted} attempted, {elapsed:.1f}s)"
+    )
     ctx.close()
 
 
@@ -545,6 +574,8 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
 
         config = dc_replace(config, node=dc_replace(config.node, role=role))
 
+    _apply_worker_os_priority(config)
+
     pid_file = _pid_path(config.node.data_dir)
     pid_file.write_text(str(os.getpid()))
     _serve_logger.info("serve_started", pid=os.getpid(), role=config.node.role)
@@ -598,49 +629,82 @@ def serve(seeds: str | None, role: str | None, no_crawl: bool) -> None:
     )
 
     async def _run() -> None:
-        from infomesh.services import AppContext, seed_and_crawl_loop
+        from infomesh.services import (
+            AppContext,
+            republish_local_index,
+            seed_and_crawl_loop,
+        )
 
-        ctx = AppContext(config)
-        # Attach P2P components so MCP and search can use them
-        ctx.distributed_index = _distributed_index
-        ctx.p2p_node = p2p_node
+        async with AppContext(config) as ctx:
+            # Attach P2P components so MCP and search can use them
+            ctx.distributed_index = _distributed_index
+            ctx.p2p_node = p2p_node
 
-        # ── SIGTERM graceful shutdown ─────────────────────────
-        loop = asyncio.get_running_loop()
-        _shutdown_event = asyncio.Event()
+            republish_task: asyncio.Task[int] | None = None
+            if p2p_node is not None or _distributed_index is not None:
+                republish_task = asyncio.create_task(
+                    republish_local_index(
+                        ctx.store,
+                        p2p_node=p2p_node,
+                        distributed_index=_distributed_index,
+                    )
+                )
 
-        def _sigterm_handler() -> None:
-            _serve_logger.info("sigterm_received", msg="Graceful shutdown starting")
-            _shutdown_event.set()
+            # ── SIGTERM graceful shutdown ─────────────────────────
+            loop = asyncio.get_running_loop()
+            _shutdown_event = asyncio.Event()
 
-        try:
-            loop.add_signal_handler(signal.SIGTERM, _sigterm_handler)
-            loop.add_signal_handler(signal.SIGINT, _sigterm_handler)
-        except NotImplementedError:
-            pass  # Windows doesn't support add_signal_handler
+            def _sigterm_handler() -> None:
+                _serve_logger.info(
+                    "sigterm_received",
+                    msg="Graceful shutdown starting",
+                )
+                _shutdown_event.set()
 
-        if config.node.role == NodeRole.SEARCH or no_crawl:
-            # Search-only or bootstrap-only: don't crawl — just serve P2P
-            mode = "search" if config.node.role == NodeRole.SEARCH else "no-crawl"
-            _serve_logger.info(
-                "waiting_mode",
-                mode=mode,
-                msg="P2P active, crawl loop disabled",
-            )
-            await _shutdown_event.wait()
-        else:
-            crawl_task = asyncio.create_task(
-                seed_and_crawl_loop(ctx, seed_category=seeds or "tech-docs"),
-            )
-            shutdown_task = asyncio.create_task(_shutdown_event.wait())
-            done, pending = await asyncio.wait(
-                [crawl_task, shutdown_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for t in pending:
-                t.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await t
+            handlers_registered = False
+            try:
+                loop.add_signal_handler(signal.SIGTERM, _sigterm_handler)
+                loop.add_signal_handler(signal.SIGINT, _sigterm_handler)
+                handlers_registered = True
+            except NotImplementedError:
+                pass  # Windows doesn't support add_signal_handler
+
+            try:
+                if config.node.role == NodeRole.SEARCH or no_crawl:
+                    # Search-only or bootstrap-only: don't crawl — just serve P2P
+                    mode = (
+                        "search" if config.node.role == NodeRole.SEARCH else "no-crawl"
+                    )
+                    _serve_logger.info(
+                        "waiting_mode",
+                        mode=mode,
+                        msg="P2P active, crawl loop disabled",
+                    )
+                    await _shutdown_event.wait()
+                else:
+                    crawl_task = asyncio.create_task(
+                        seed_and_crawl_loop(ctx, seed_category=seeds or "tech-docs"),
+                    )
+                    shutdown_task = asyncio.create_task(_shutdown_event.wait())
+                    completed, pending = await asyncio.wait(
+                        [crawl_task, shutdown_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in pending:
+                        task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await task
+                    for task in completed:
+                        await task
+            finally:
+                if republish_task is not None and not republish_task.done():
+                    republish_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await republish_task
+
+                if handlers_registered:
+                    loop.remove_signal_handler(signal.SIGTERM)
+                    loop.remove_signal_handler(signal.SIGINT)
 
     try:
         asyncio.run(_run())

@@ -69,6 +69,10 @@ Example:
 ```
 
 The DHT is Kademlia-based. Node IDs are 160-bit. Distance = XOR metric.
+Keyword entries merge pointer lists instead of replacing previous pointers, so
+multiple peers and documents can advertise the same keyword. Nodes republish
+their existing local index at startup and publish newly crawled documents after
+local indexing so bootstrap-hosted content remains discoverable after restarts.
 
 Two use cases:
 1. **Inverted index**: `hash(keyword)` → list of `(peer_id, doc_id, score)` pointers
@@ -349,8 +353,10 @@ infomesh stop                       # Graceful shutdown
 infomesh status                     # Node health and statistics
 
 # Search
-infomesh search "query"             # Search from terminal
-infomesh search --local "query"     # Local-only search
+infomesh search "query"             # Search local index + peers
+infomesh search --limit 5 "query"   # Return 1-100 results
+infomesh search --local "query"     # Local-only/offline search
+infomesh search --local-only "query" # Alias for --local
 
 # Management
 infomesh config show                # Display current configuration
@@ -439,6 +445,10 @@ Usage:
 
 Nodes can select from 4 predefined resource profiles to match their hardware:
 
+These profile limits are the worker-governor targets used for throttling and
+priority decisions. The lower-level `[network]` config remains available for
+explicit P2P bandwidth caps.
+
 | Profile | CPU Limit | Network | Concurrent Crawl | LLM | Use Case |
 |---------|----------|---------|------------------|-----|----------|
 | **minimal** | 1 core, nice 19 | ↓1/↑0.5 Mbps | 1 | disabled | Laptop, battery |
@@ -452,6 +462,9 @@ The `ResourceGovernor` monitors system load and dynamically adjusts operations:
 - CPU > 80% → throttle crawling by 50%
 - CPU < 30% → restore crawling within profile limits
 - Network > 90% of limit → reduce P2P traffic by 30%
+- Long-running worker processes apply the profile's CPU nice and Linux I/O
+  priority early; dashboard/BGM playback stays in the interactive control
+  process so audio is not starved by crawler priority changes.
 
 ### Graceful Degradation Levels
 
@@ -464,6 +477,57 @@ Under extreme load, the node degrades services in stages:
 | 2 (Overload) | Resources heavily strained | Disable remote search, respond local-only |
 | 3 (Critical) | Near resource exhaustion | Read-only mode, stop indexing |
 | 4 (Defense) | System at risk | Enforced rate limiting, local search only |
+
+---
+
+## Advanced Subsystems
+
+### Bootstrap Discovery
+
+New nodes discover peers through multiple parallel sources:
+
+1. **Static list** — bundled `bootstrap/nodes.json`
+2. **DNS SRV** — `_infomesh._tcp.infomesh.io` SRV records
+3. **DNS TXT** — `_infomesh-bootstrap.infomesh.io` TXT records (multiaddr)
+4. **GitHub** — fetches latest `nodes.json` from the repository
+5. **Local cache** — persisted bootstrap results (1hr TTL)
+
+All sources are tried in parallel; results are deduplicated. Health-checked with TCP latency measurement.
+
+### RSS Feed Monitor
+
+Continuous RSS/Atom feed monitoring with priority-based scheduling:
+- **CRITICAL** (1 min) — security advisories
+- **HIGH** (5 min) — breaking news, releases
+- **NORMAL** (15 min) — blogs, documentation
+- **LOW** (60 min) — infrequent updates
+
+New URLs from feeds trigger priority crawls. Supports OPML import.
+
+### JavaScript Rendering
+
+Optional Playwright integration for SPA/React/Next.js pages:
+- 6-signal JS detection (SPA roots, framework blobs, noscript, text ratio)
+- Headless Chromium with concurrency limiter (3 tabs), memory guard (512 MB)
+- Lazy browser launch — only starts when a JS-heavy page is detected
+- Config: `[crawl] js_rendering = true`
+
+### Search Quality Pipeline
+
+Query processing includes:
+- **CJK tokenization** — auto-detect Chinese/Japanese/Korean, bigram expansion
+- **Query expansion** — synonym-based broadening when results are sparse
+- **Intent classification** — how-to, definition, comparison, error-debug, API reference
+- **Temporal hints** — "last week", "today", "2025" → automatic recency filter
+- **Passage selection** — TF-based scoring selects best snippet per result
+- **Implicit feedback** — fetch/skip/cite signals improve ranking over time
+
+### Plugin System
+
+Extensible hook-based architecture (`infomesh/plugins.py`):
+- 10 hook points: PRE_CRAWL, POST_CRAWL, PRE_INDEX, POST_INDEX, PRE_SEARCH, POST_SEARCH, PRE_RANK, POST_RANK, CUSTOM_TOKENIZER, CUSTOM_SCORER
+- Decorator-based registration: `@registry.hook(HookPoint.PRE_SEARCH)`
+- Global registry with named plugin support
 
 ---
 

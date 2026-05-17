@@ -21,6 +21,7 @@ from typing import Any
 
 import structlog
 
+from infomesh.p2p.dht import MAX_POINTERS_PER_KEYWORD
 from infomesh.p2p.protocol import PeerPointer
 
 logger = structlog.get_logger()
@@ -212,38 +213,21 @@ class DistributedIndex:
         Returns:
             Number of keywords successfully published.
         """
-        keywords = extract_keywords(text)
-        if not keywords:
-            return 0
-
-        published = 0
-        pointer = PeerPointer(
-            peer_id=self._peer_id,
-            doc_id=doc_id,
-            url=url,
-            score=score,
-            title=title,
+        published = await self.publish_batch(
+            [
+                {
+                    "doc_id": doc_id,
+                    "url": url,
+                    "title": title,
+                    "text": text,
+                    "score": score,
+                }
+            ]
         )
-        pointer_dict = {
-            "peer_id": pointer.peer_id,
-            "doc_id": pointer.doc_id,
-            "url": pointer.url,
-            "score": pointer.score,
-            "title": pointer.title,
-        }
-
-        for kw in keywords:
-            ok = await self._dht.publish_keyword(kw, [pointer_dict])  # type: ignore[attr-defined]
-            if ok:
-                published += 1
-
-        self._stats.documents_published += 1
-        self._stats.keywords_published += published
 
         logger.debug(
             "distributed_index_published",
             url=url,
-            keywords_total=len(keywords),
             keywords_published=published,
         )
         return published
@@ -305,14 +289,70 @@ class DistributedIndex:
         Returns:
             Total keywords published across all documents.
         """
-        total = 0
+        keyword_pointers: dict[str, list[dict[str, object]]] = {}
+        documents_with_keywords = 0
+
         for doc in documents:
-            count = await self.publish_document(
-                doc_id=doc["doc_id"],
-                url=doc["url"],
-                title=doc.get("title", ""),
-                text=doc.get("text", ""),
-                score=doc.get("score", 1.0),
+            doc_id = _doc_int(doc.get("doc_id"), default=0)
+            if doc_id <= 0:
+                continue
+            url = _doc_str(doc.get("url"))
+            text = _doc_str(doc.get("text"))
+            if not url or not text:
+                continue
+            title = _doc_str(doc.get("title"))
+            score = _doc_float(doc.get("score"), default=1.0)
+
+            keywords = extract_keywords(text)
+            if not keywords:
+                continue
+            documents_with_keywords += 1
+
+            pointer = PeerPointer(
+                peer_id=self._peer_id,
+                doc_id=doc_id,
+                url=url,
+                score=score,
+                title=title,
             )
-            total += count
-        return total
+            pointer_dict = {
+                "peer_id": pointer.peer_id,
+                "doc_id": pointer.doc_id,
+                "url": pointer.url,
+                "score": pointer.score,
+                "title": pointer.title,
+            }
+
+            for keyword in keywords:
+                pointers = keyword_pointers.setdefault(keyword, [])
+                if len(pointers) < MAX_POINTERS_PER_KEYWORD:
+                    pointers.append(pointer_dict)
+
+        published = 0
+        for keyword, pointers in keyword_pointers.items():
+            ok = await self._dht.publish_keyword(keyword, pointers)  # type: ignore[attr-defined]
+            if ok:
+                published += 1
+
+        self._stats.documents_published += documents_with_keywords
+        self._stats.keywords_published += published
+
+        logger.debug(
+            "distributed_index_batch_published",
+            documents=len(documents),
+            documents_with_keywords=documents_with_keywords,
+            keywords_published=published,
+        )
+        return published
+
+
+def _doc_str(value: object, *, default: str = "") -> str:
+    return value if isinstance(value, str) else default
+
+
+def _doc_int(value: object, *, default: int = 0) -> int:
+    return int(value) if isinstance(value, (int, str)) else default
+
+
+def _doc_float(value: object, *, default: float = 0.0) -> float:
+    return float(value) if isinstance(value, (int, float, str)) else default

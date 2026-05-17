@@ -15,6 +15,7 @@ Business logic lives in ``mcp.handlers``; tool definitions in
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from typing import Any
@@ -57,7 +58,7 @@ from infomesh.mcp.tools import (
 )
 from infomesh.persistence.store import PersistentStore
 from infomesh.search.cache import QueryCache
-from infomesh.services import AppContext
+from infomesh.services import AppContext, republish_local_index
 
 logger = structlog.get_logger()
 
@@ -103,7 +104,7 @@ def _create_app(
     app = Server("infomesh")
     api_key_required = api_key is not None
 
-    ctx = AppContext(config)
+    ctx = AppContext(config, apply_os_priority=True)
     try:
         store = ctx.store
         vector_store = ctx.vector_store
@@ -265,6 +266,8 @@ def _create_app(
                     store=store,
                     worker=worker,
                     vector_store=vector_store,
+                    distributed_index=distributed_index,
+                    p2p_node=p2p_node,
                     link_graph=link_graph,
                     analytics=analytics,
                     webhooks=webhooks,
@@ -489,9 +492,19 @@ async def run_mcp_server(
     logger.info("mcp_server_starting", transport="stdio")
 
     async with ctx, stdio_server() as (rs, ws):
+        republish_task = asyncio.create_task(
+            republish_local_index(
+                ctx.store,
+                p2p_node=p2p_node,
+                distributed_index=distributed_index,
+            )
+        )
         try:
             await app.run(rs, ws, app.create_initialization_options())
         finally:
+            republish_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await republish_task
             pstore.close()
 
 
@@ -633,6 +646,13 @@ async def run_mcp_http_server(
     uvi_server = uvicorn.Server(uvi_config)
 
     async with ctx, transport.connect() as (rs, ws):
+        republish_task = asyncio.create_task(
+            republish_local_index(
+                ctx.store,
+                p2p_node=p2p_node,
+                distributed_index=distributed_index,
+            )
+        )
         task = asyncio.create_task(
             app.run(
                 rs,
@@ -643,5 +663,8 @@ async def run_mcp_http_server(
         try:
             await uvi_server.serve()
         finally:
+            republish_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await republish_task
             task.cancel()
             pstore.close()

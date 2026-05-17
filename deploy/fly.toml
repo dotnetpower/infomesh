@@ -1,0 +1,69 @@
+# InfoMesh — Fly.io deployment config
+# Feature #44: One-click deployment to Fly.io
+#
+# Usage:
+#   fly launch --config deploy/fly.toml
+#   fly deploy
+
+app = "infomesh"
+primary_region = "iad"  # US East
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  INFOMESH_NODE_DATA_DIR = "/data"
+  INFOMESH_RESOURCES_PROFILE = "balanced"
+
+[mounts]
+  source = "infomesh_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+  [[services.http_checks]]
+    interval = 10000
+    grace_period = "30s"
+    method = "get"
+    path = "/health"
+    protocol = "http"
+    timeout = 2000
+
+[[services]]
+  internal_port = 4001
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 4001
+
+[[services]]
+  internal_port = 8081
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 8081
+
+[checks]
+  [checks.health]
+    port = 8080
+    type = "http"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"

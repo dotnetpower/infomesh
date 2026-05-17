@@ -115,6 +115,10 @@ _NETWORK_FIELDS: dict[str, tuple[str, str]] = {
 
 _DASHBOARD_FIELDS: dict[str, tuple[str, str]] = {
     "bgm_auto_start": ("BGM Auto Start", "Play music when dashboard opens"),
+    "bgm_auto_install_mpv": (
+        "Auto Install mpv",
+        "Install mpv automatically when available",
+    ),
     "bgm_volume": ("BGM Volume", "Volume (0–100 %)"),
     "bgm_idle_stop": (
         "BGM Idle Stop",

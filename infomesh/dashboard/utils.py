@@ -45,16 +45,32 @@ def get_peer_id(config: Config) -> str:
 
 
 def is_node_running(config: Config) -> bool:
-    """Check if the InfoMesh node process is running."""
+    """Check if the InfoMesh node process is running.
+
+    Checks both the PID file and recent DB activity as indicators,
+    since the crawler subprocess may be active without P2P.
+    """
     pid_file = config.node.data_dir / "infomesh.pid"
-    if not pid_file.exists():
-        return False
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)
-        return True
-    except (ValueError, ProcessLookupError, PermissionError):
-        return False
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)
+            return True
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+
+    # Fallback: check if index DB was modified in the last 60 seconds
+    # (indicates an active crawler even if PID file is stale)
+    db_path = config.index.db_path
+    if db_path.exists():
+        try:
+            age = time.time() - db_path.stat().st_mtime
+            if age < 60:
+                return True
+        except OSError:
+            pass
+
+    return False
 
 
 def is_node_running_with_uptime(
@@ -74,7 +90,12 @@ def is_node_running_with_uptime(
 
 
 def read_p2p_status(config: Config) -> dict[str, object]:
-    """Read p2p_status.json, returning empty dict on stale/missing data."""
+    """Read p2p_status.json.
+
+    Returns fresh data if within TTL, otherwise returns a minimal
+    dict with just peer_id and state='stopped' (stale marker) so
+    the dashboard can still display the node identity.
+    """
     status_path = config.node.data_dir / "p2p_status.json"
     try:
         if status_path.exists():
@@ -83,6 +104,10 @@ def read_p2p_status(config: Config) -> dict[str, object]:
             age = time.time() - float(ts if isinstance(ts, (int, float, str)) else 0)
             if age < _P2P_STATUS_TTL_SECONDS:
                 return data
+            # Stale — return peer_id + stopped state for display
+            peer_id = data.get("peer_id", "")
+            if peer_id:
+                return {"peer_id": peer_id, "state": "stopped", "peers": 0}
     except (OSError, json.JSONDecodeError, ValueError):
         pass
     return {}

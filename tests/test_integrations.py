@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest_asyncio  # noqa: F401
 
@@ -371,6 +372,47 @@ class TestSearchDistributed:
         assert result.remote_count == 0
         store.close()
 
+    def test_network_search_fn_skips_malformed_remote_values(self) -> None:
+        """Malformed remote values should not crash distributed search."""
+        from infomesh.search.query import search_distributed
+
+        store = LocalStore()
+
+        async def malformed_network_search(
+            query: str, keywords: list[str], limit: int
+        ) -> list[object]:
+            return [
+                "not-a-dict",
+                {
+                    "url": "https://peer.com/bad-score",
+                    "title": "Bad Score",
+                    "snippet": "remote result with bad score",
+                    "score": "nan",
+                    "peer_id": "peer_bad",
+                    "doc_id": "not-an-int",
+                },
+            ]
+
+        mock_di = _MockDistributedIndex(pointers=[])
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(
+            search_distributed(
+                store,
+                mock_di,
+                "python",
+                limit=5,
+                network_search_fn=malformed_network_search,
+            )  # type: ignore[arg-type]
+        )
+        loop.close()
+
+        assert result.source == "distributed"
+        assert result.remote_count == 1
+        assert result.results[0].url == "https://peer.com/bad-score"
+        assert result.results[0].combined_score == 0.0
+        assert result.results[0].doc_id == 0
+        store.close()
+
 
 # ── Distributed formatter test ───────────────────────────────────
 
@@ -410,6 +452,7 @@ class TestFormatDistributedResults:
                 authority_score=0.1,
                 combined_score=1.5,
                 crawled_at=0.0,
+                peer_id="remote-peer-1",
             ),
         ]
         result = DistributedResult(
@@ -426,6 +469,24 @@ class TestFormatDistributedResults:
         assert "Local: 1" in text
         assert "Remote: 3" in text
         assert "Test" in text
+        assert "Peer: remote-peer-1" in text
+
+    def test_fts_json_result_fields(self) -> None:
+        from infomesh.search.formatter import format_fts_results_json
+        from infomesh.search.query import search_local
+
+        store = LocalStore()
+        store.add_document(
+            url="https://example.com/python",
+            title="Python Guide",
+            text="Python is a programming language",
+            raw_html_hash="json-rh",
+            text_hash="json-th",
+        )
+        data = json.loads(format_fts_results_json(search_local(store, "python")))
+        result = data["results"][0]
+        assert {"url", "title", "domain", "snippet", "score", "scores"} <= set(result)
+        store.close()
 
 
 # ── Crawl lock integration test ──────────────────────────────────

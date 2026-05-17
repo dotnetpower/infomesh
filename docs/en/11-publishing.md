@@ -18,15 +18,16 @@ InfoMesh uses **hatchling** as its build backend. Key packaging files:
 ```
 infomesh/
 ├── pyproject.toml          # Package metadata, dependencies, build config
-├── infomesh/__init__.py    # __version__ = "0.1.6"
+├── infomesh/__init__.py    # __version__ = "0.1.13"
 ├── infomesh/__main__.py    # CLI entry point
 ├── LICENSE                 # MIT License
 ├── README.md               # PyPI long description
 ├── seeds/                  # Bundled seed URL lists
 ├── bootstrap/              # Bootstrap node list
 └── .github/workflows/
-    ├── ci.yml              # CI: lint, test, build on push/PR
-    └── publish.yml         # Publish to PyPI on release
+   ├── ci.yml              # CI: lint, format, mypy, test, build on push/PR
+   ├── auto-release.yml    # Auto bump/tag/publish on main changes
+   └── publish.yml         # Manual trusted PyPI publish on GitHub Release
 ```
 
 ## pyproject.toml Highlights
@@ -34,7 +35,7 @@ infomesh/
 ```toml
 [project]
 name = "infomesh"
-version = "0.1.6"
+version = "0.1.13"
 requires-python = ">=3.12"
 license = "MIT"
 
@@ -45,7 +46,9 @@ infomesh = "infomesh.__main__:main"      # CLI entry point
 p2p = ["trio>=0.22", "libp2p>=0.2"]   # P2P networking
 vector = ["chromadb>=0.5", ...]          # Semantic search
 llm = ["ollama>=0.3"]                    # Local LLM
-all = ["infomesh[p2p,vector,llm]"]       # Everything
+browser = ["playwright>=1.40"]           # JS rendering
+cjk = ["jieba>=0.42"]                    # CJK tokenization
+all = ["infomesh[p2p,vector,llm,browser,cjk]"]  # Everything
 
 [build-system]
 requires = ["hatchling"]
@@ -93,15 +96,15 @@ python -m tarfile -l dist/infomesh-*.tar.gz | head -20
 Expected output in `dist/`:
 ```
 dist/
-├── infomesh-0.1.0.tar.gz
-└── infomesh-0.1.0-py3-none-any.whl
+├── infomesh-0.1.13.tar.gz
+└── infomesh-0.1.13-py3-none-any.whl
 ```
 
 ## Test Installation
 
 ```bash
 # Install from the built wheel
-pip install dist/infomesh-0.1.0-py3-none-any.whl
+pip install dist/infomesh-0.1.13-py3-none-any.whl
 
 # Verify CLI works
 infomesh --version
@@ -164,21 +167,30 @@ The recommended approach uses **trusted publishing** — no API tokens needed.
    - Create `pypi` environment (add protection rules like required reviewers)
    - Create `testpypi` environment
 
-### Release Process
+### Automatic Release Process
+
+`auto-release.yml` runs on pushes to `main` that touch source, tests,
+packaging, seeds, bootstrap data, or release workflow files. It runs lint,
+format, mypy, and tests, bumps the patch version, updates `uv.lock`, creates a
+release tag, uploads release assets, and publishes to PyPI with Trusted
+Publishing. Partial retries are safe: existing releases are skipped and PyPI
+publishing uses `skip-existing`.
+
+### Manual Release Process
 
 ```bash
 # 1. Update version
-# Edit infomesh/__init__.py and pyproject.toml
+# Edit infomesh/__init__.py and pyproject.toml, then run uv lock
 
 # 2. Commit and tag
 git add -A
-git commit -m "release: v0.1.0"
-git tag v0.1.0
+git commit -m "release: vX.Y.Z"
+git tag vX.Y.Z
 git push origin main --tags
 
 # 3. Create GitHub Release
 # Go to GitHub → Releases → "Create a new release"
-# Select tag v0.1.0, write release notes, click "Publish release"
+# Select tag vX.Y.Z, write release notes, click "Publish release"
 # → GitHub Actions automatically builds and publishes to PyPI
 ```
 
@@ -200,9 +212,11 @@ Versioning follows [SemVer](https://semver.org/):
 
 ## Pre-Release Checklist
 
-- [ ] All tests pass: `uv run pytest`
-- [ ] No lint errors: `uv run ruff check .`
-- [ ] Version bumped in both `pyproject.toml` and `__init__.py`
+- [ ] No lint errors: `uv run ruff check infomesh/ tests/`
+- [ ] Format check passes: `uv run ruff format --check .`
+- [ ] Type check passes: `uv run mypy infomesh/ --ignore-missing-imports`
+- [ ] Supported tests pass: `uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short`
+- [ ] Version bumped in `pyproject.toml` and `__init__.py`, with `uv.lock` updated
 - [ ] README.md is up to date
 - [ ] CHANGELOG updated (if maintained)
 - [ ] Build succeeds: `uv build`

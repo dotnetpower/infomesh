@@ -203,10 +203,12 @@ def _format_ranked(idx: int, r: RankedResult, *, max_snippet: int = 200) -> str:
     """Format a single FTS-ranked result."""
     domain = urlparse(r.url).netloc
     fresh = _freshness_label(r.crawled_at)
+    peer_line = f"    Peer: {r.peer_id}\n" if r.peer_id else ""
     return (
         f"[{idx}] {r.title}\n"
         f"    Source: {r.url}\n"
         f"    Domain: {domain}\n"
+        f"{peer_line}"
         f"    Score: {r.combined_score:.4f} "
         f"(BM25={r.bm25_score:.3f}, "
         f"fresh={r.freshness_score:.3f}, "

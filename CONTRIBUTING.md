@@ -14,10 +14,10 @@ cd infomesh
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install dependencies (creates .venv automatically)
-uv sync --dev
+uv sync --dev --locked
 
-# Run tests
-uv run pytest
+# Run the supported test suite
+uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short
 
 # Start the node
 uv run infomesh start
@@ -53,7 +53,7 @@ uv run ruff format .
 uv run ruff check --fix .
 
 # Type check
-uv run mypy infomesh/
+uv run mypy infomesh/ --ignore-missing-imports
 ```
 
 - **Formatter**: ruff (line length 88, Black-compatible)
@@ -80,14 +80,14 @@ uv run mypy infomesh/
 ## Testing
 
 ```bash
-# Run all tests
-uv run pytest
+# Run the supported test suite
+uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short
 
 # Run specific test file
 uv run pytest tests/test_crawler.py
 
 # Run with coverage
-uv run pytest --cov=infomesh
+uv run pytest tests/ --ignore=tests/test_vector.py --cov=infomesh
 
 # Run a single test
 uv run pytest tests/test_index.py::TestLocalStore::test_search
@@ -142,7 +142,7 @@ infomesh/
 │   ├── integrations/  #   LangChain, LlamaIndex, Haystack
 │   ├── persistence/   #   Persistent key-value store
 │   └── observability/ #   Prometheus metrics
-├── tests/             # Test suite (1,307 tests)
+├── tests/             # Supported test suite (1,844 tests)
 ├── docs/              # Documentation (en + ko)
 ├── seeds/             # Seed URL lists
 ├── examples/          # Usage examples
@@ -177,8 +177,8 @@ Looking for a place to start? Here are beginner-friendly tasks:
 
 1. **Fork** the repository and create a feature branch
 2. **Write tests** for your changes
-3. **Run the full test suite**: `uv run pytest`
-4. **Lint your code**: `uv run ruff check .`
+3. **Run the supported test suite**: `uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short`
+4. **Lint and format your code**: `uv run ruff check infomesh/ tests/` and `uv run ruff format --check .`
 5. **Open a PR** with a clear description
 
 ### Commit Messages
@@ -239,6 +239,39 @@ Requirements for seed URLs:
 - **Discussions**: Architecture questions, proposals
 
 All communication should be in **English**.
+
+---
+
+## Key Systems for Contributors
+
+### Plugin System (`infomesh/plugins.py`)
+
+Register custom extensions via hook points:
+
+```python
+from infomesh.plugins import get_registry, HookPoint
+
+registry = get_registry()
+
+@registry.hook(HookPoint.PRE_SEARCH)
+def boost_local_results(data):
+    # Custom scoring logic
+    return data
+```
+
+Available hooks: `PRE_CRAWL`, `POST_CRAWL`, `PRE_INDEX`, `POST_INDEX`,
+`PRE_SEARCH`, `POST_SEARCH`, `PRE_RANK`, `POST_RANK`,
+`CUSTOM_TOKENIZER`, `CUSTOM_SCORER`.
+
+### New Module Checklist
+
+When adding a new module:
+
+1. Create the module under the appropriate package
+2. Add tests in `tests/test_<module>.py`
+3. Register in `.github/copilot-instructions.md` project structure
+4. Update docs (both `docs/en/` and `docs/ko/`)
+5. Run: `uv run ruff check infomesh/ tests/ && uv run ruff format --check . && uv run mypy infomesh/ --ignore-missing-imports && uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short`
 
 ---
 

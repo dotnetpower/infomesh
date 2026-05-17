@@ -23,11 +23,11 @@ from infomesh.crawler.parser import extract_links
 from infomesh.crawler.seeds import CATEGORIES, load_seeds
 from infomesh.credits.ledger import ActionType
 from infomesh.resources.preflight import is_disk_critically_low
-from infomesh.services import AppContext, index_document
 
 if TYPE_CHECKING:
     from infomesh.crawler.feed_monitor import FeedMonitor
     from infomesh.crawler.freshness import PriorityRecrawlQueue
+    from infomesh.services import AppContext
 
 logger = structlog.get_logger()
 
@@ -137,11 +137,22 @@ async def _process_priority_queue(
         try:
             result = await ctx.worker.crawl_url(item.url, depth=0)
             if result.success and result.page:
-                index_document(
+                from infomesh.services import (
+                    index_document,
+                    publish_document_to_network,
+                )
+
+                doc_id = index_document(
                     result.page,
                     ctx.store,
                     ctx.vector_store,
                     js_required=result.js_required,
+                )
+                await publish_document_to_network(
+                    result.page,
+                    doc_id,
+                    p2p_node=ctx.p2p_node,
+                    distributed_index=ctx.distributed_index,
                 )
                 processed += 1
                 if ctx.ledger is not None:
@@ -167,6 +178,47 @@ async def _process_priority_queue(
             _logger.exception("priority_crawl_error", url=item.url)
 
     return processed
+
+
+async def _apply_governor_backpressure(
+    ctx: AppContext,
+    _logger: structlog.stdlib.BoundLogger,
+) -> bool:
+    """Apply resource-governor pause/throttle decisions.
+
+    Returns ``True`` when the current crawl-loop iteration should be skipped.
+    """
+    gov = getattr(ctx, "governor", None)
+    if gov is None:
+        return False
+
+    state = gov.check_and_adjust()
+    level = state.degrade_level.name
+    cpu = f"{state.cpu_percent:.0f}%"
+    mem = f"{state.memory_percent:.0f}%"
+
+    if gov.should_pause_crawl:
+        _logger.warning(
+            "governor_pause",
+            level=level,
+            cpu=cpu,
+            mem=mem,
+            msg="Pausing crawl — resource overload",
+        )
+        await asyncio.sleep(10)
+        return True
+
+    if gov.should_throttle_crawl:
+        throttle_sleep = max(0.1, (1.0 - state.throttle_factor) * 2.0)
+        _logger.info(
+            "governor_throttle",
+            level=level,
+            factor=f"{state.throttle_factor:.1f}",
+            sleep=f"{throttle_sleep:.1f}s",
+        )
+        await asyncio.sleep(throttle_sleep)
+
+    return False
 
 
 async def _reseed_queue(
@@ -296,28 +348,8 @@ async def seed_and_crawl_loop(
             # ── Resource governor check (CPU / memory) ─────
             if now - last_governor_check >= governor_check_interval:
                 last_governor_check = now
-                gov = getattr(ctx, "governor", None)
-                if gov is not None:
-                    gov.check_and_adjust()
-                    if gov.should_pause_crawl:
-                        _logger.warning(
-                            "governor_pause",
-                            level=gov.degrade_level.name,
-                            cpu=f"{gov._last_cpu:.0f}%",
-                            mem=f"{gov._last_mem:.0f}%",
-                            msg="Pausing crawl — resource overload",
-                        )
-                        await asyncio.sleep(10)
-                        continue
-                    if gov.should_throttle_crawl:
-                        throttle_sleep = gov.throttle_factor * 2.0
-                        _logger.info(
-                            "governor_throttle",
-                            level=gov.degrade_level.name,
-                            factor=f"{gov.throttle_factor:.1f}",
-                            sleep=f"{throttle_sleep:.1f}s",
-                        )
-                        await asyncio.sleep(throttle_sleep)
+                if await _apply_governor_backpressure(ctx, _logger):
+                    continue
 
             if now - last_disk_check > disk_check_interval:
                 last_disk_check = now
@@ -398,11 +430,22 @@ async def seed_and_crawl_loop(
                             acked=ack_count,
                         )
                     else:
-                        index_document(
+                        from infomesh.services import (
+                            index_document,
+                            publish_document_to_network,
+                        )
+
+                        doc_id = index_document(
                             result.page,
                             ctx.store,
                             ctx.vector_store,
                             js_required=result.js_required,
+                        )
+                        await publish_document_to_network(
+                            result.page,
+                            doc_id,
+                            p2p_node=ctx.p2p_node,
+                            distributed_index=ctx.distributed_index,
                         )
                         # Auto-register discovered RSS feeds
                         if (

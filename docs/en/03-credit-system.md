@@ -68,7 +68,9 @@ All weights reflect approximate relative resource cost (CPU, bandwidth, storage)
 
 - Off-peak window is set per node (default: 23:00–07:00 local time)
 - Base actions are never affected by time multiplier — LLM bonus never disadvantages non-LLM nodes
-- The network routes batch summarization requests preferentially to nodes currently in their off-peak window
+- The LLM scheduler marks off-peak decisions with `is_off_peak=true`; credit
+  recording applies the 1.5x multiplier only when an LLM action is recorded with
+  that off-peak flag.
 
 ### Off-Peak Abuse Prevention
 

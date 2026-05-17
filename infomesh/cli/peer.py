@@ -9,6 +9,17 @@ import click
 from infomesh.config import load_config
 
 
+def _resolve_bootstrap_nodes(nodes: list[str]) -> list[str]:
+    """Expand bootstrap aliases used by the runtime node."""
+    if "default" not in nodes:
+        return nodes
+
+    from infomesh.config import _load_default_bootstrap_nodes
+
+    defaults = _load_default_bootstrap_nodes()
+    return [node for node in nodes if node != "default"] + defaults
+
+
 @click.group(name="peer")
 def peer_group() -> None:
     """Manage P2P peers (add, list, remove bootstrap nodes)."""
@@ -20,7 +31,7 @@ def list_peers() -> None:
     config = load_config()
 
     # Bootstrap nodes from config
-    bs_nodes = config.network.bootstrap_nodes
+    bs_nodes = _resolve_bootstrap_nodes(config.network.bootstrap_nodes)
     click.echo("Bootstrap nodes:")
     if bs_nodes:
         for addr in bs_nodes:
@@ -163,7 +174,7 @@ def test() -> None:
     import socket
 
     config = load_config()
-    bs_nodes = config.network.bootstrap_nodes
+    bs_nodes = _resolve_bootstrap_nodes(config.network.bootstrap_nodes)
 
     if not bs_nodes:
         click.echo("No bootstrap nodes configured.")

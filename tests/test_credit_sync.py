@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -369,6 +370,44 @@ class TestCreditSyncManager:
         assert agg.total_spent == 3.0  # 0 local + 3 peer
         assert agg.balance == 27.0
         assert len(agg.peer_summaries) == 1
+
+    def test_aggregated_stats_excludes_expired_peer_boundary(
+        self, manager, ledger, email_hash
+    ):
+        ledger.record_action(ActionType.CRAWL, quantity=10)
+        now = 10_000_000.0
+
+        fresh_summary = CreditSummary(
+            peer_id="fresh-peer",
+            owner_email_hash=email_hash,
+            total_earned=20.0,
+            total_spent=2.0,
+            contribution_score=18.0,
+            entry_count=5,
+            tier="Tier 1",
+            timestamp=now - (SUMMARY_TTL_HOURS * 3600) + 1,
+            signature="",
+        )
+        expired_summary = CreditSummary(
+            peer_id="expired-peer",
+            owner_email_hash=email_hash,
+            total_earned=100.0,
+            total_spent=0.0,
+            contribution_score=100.0,
+            entry_count=5,
+            tier="Tier 2",
+            timestamp=now - (SUMMARY_TTL_HOURS * 3600),
+            signature="",
+        )
+
+        with patch("time.time", return_value=now):
+            manager.receive_summary(fresh_summary, verify_signature=False)
+            manager.receive_summary(expired_summary, verify_signature=False)
+            agg = manager.aggregated_stats()
+
+        assert agg.node_count == 2
+        assert agg.total_earned == 30.0
+        assert [s.peer_id for s in agg.peer_summaries] == ["fresh-peer"]
 
     def test_needs_sync(self, manager):
         assert manager.needs_sync("unknown-peer")

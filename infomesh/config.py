@@ -141,8 +141,9 @@ class DashboardConfig:
     """Dashboard UI settings."""
 
     bgm_auto_start: bool = False
+    bgm_auto_install_mpv: bool = True
     bgm_volume: int = 50
-    bgm_idle_stop: bool = True
+    bgm_idle_stop: bool = False
     refresh_interval: float = 0.5
     theme: str = "catppuccin-mocha"
 
@@ -159,6 +160,14 @@ class McpConfig:
 
 
 @dataclass(frozen=True)
+class SearchConfig:
+    """Search quality and feature settings."""
+
+    feedback_tracking: bool = True
+    cjk_auto_detect: bool = True
+
+
+@dataclass(frozen=True)
 class Config:
     """Root configuration container."""
 
@@ -171,6 +180,7 @@ class Config:
     resources: ResourceConfig = field(default_factory=ResourceConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     mcp: McpConfig = field(default_factory=McpConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
 
 
 def _env_override(section: str, key: str) -> str | None:
@@ -402,6 +412,7 @@ def load_config(config_path: Path | None = None) -> Config:
     resources = _build_section(ResourceConfig, raw.get("resources", {}), "resources")  # type: ignore[arg-type]
     dashboard = _build_section(DashboardConfig, raw.get("dashboard", {}), "dashboard")  # type: ignore[arg-type]
     mcp_cfg = _build_section(McpConfig, raw.get("mcp", {}), "mcp")  # type: ignore[arg-type]
+    search_cfg = _build_section(SearchConfig, raw.get("search", {}), "search")  # type: ignore[arg-type]
 
     config = Config(
         node=node,
@@ -413,6 +424,7 @@ def load_config(config_path: Path | None = None) -> Config:
         resources=resources,
         dashboard=dashboard,
         mcp=mcp_cfg,
+        search=search_cfg,
     )
 
     # If no bootstrap nodes configured, load bundled defaults from nodes.json
@@ -471,6 +483,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         ("resources", config.resources, defaults.resources),
         ("dashboard", config.dashboard, defaults.dashboard),
         ("mcp", config.mcp, defaults.mcp),
+        ("search", config.search, defaults.search),
     ]
 
     for section_name, current_section, default_section in section_map:

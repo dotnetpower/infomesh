@@ -28,6 +28,8 @@
 | **BeautifulSoup4** | HTML parsing fallback when trafilatura fails |
 | **vLLM** | High-throughput GPU inference (alternative to ollama/llama.cpp) |
 | **sentence-transformers** | Embedding generation for ChromaDB vector index |
+| **Playwright** | Headless Chromium for JS-rendered pages (`pip install 'infomesh[browser]'`) |
+| **jieba** | Chinese word segmentation for CJK search (`pip install 'infomesh[cjk]'`) |
 
 ---
 
@@ -162,12 +164,12 @@ infomesh/
 ### Key Commands
 
 ```bash
-uv sync              # Install all dependencies (creates .venv automatically)
-uv sync --dev        # Install with dev dependencies
+uv sync --locked     # Install all dependencies from uv.lock
+uv sync --dev --locked  # Install dev dependencies from uv.lock
 uv add <package>     # Add a new dependency
 uv add --dev <pkg>   # Add a dev dependency
 uv run <command>     # Run a command within the project environment
-uv run pytest        # Run tests
+uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short
 uv run infomesh start  # Run the application
 ```
 

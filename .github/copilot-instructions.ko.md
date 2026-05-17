@@ -126,7 +126,7 @@ infomesh/
 │   │   └── verify.py        #   요약 검증 (키팩트 앵커링, NLI)
 │   ├── dashboard/           # 콘솔 앱 UI (Textual TUI)
 │   │   ├── app.py           #   DashboardApp (메인 Textual 애플리케이션)
-│   │   ├── bgm.py           #   BGM 플레이어 (mpv/ffplay/aplay)
+│   │   ├── bgm.py           #   BGM 플레이어 (mpv/ffplay)
 │   │   ├── text_report.py   #   Rich 기반 텍스트 리포트 (비대화형 폴백)
 │   │   ├── data_cache.py    #   대시보드 데이터 캐싱 레이어
 │   │   ├── dashboard.tcss   #   Textual CSS 스타일시트
@@ -222,7 +222,7 @@ infomesh/
   - `uv add <package>` — 새 의존성 추가.
   - `uv add --dev <package>` — 개발 의존성 추가.
   - `uv run <command>` — 프로젝트 환경에서 명령 실행.
-  - `uv run pytest` — 테스트 실행.
+  - `uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short` — 지원 테스트 실행.
   - `uv run infomesh start` — 애플리케이션 실행.
 
 ## 아키텍처 가이드라인
@@ -233,6 +233,7 @@ infomesh/
 - DHT의 두 가지 용도:
   1. **역인덱스**: `hash(keyword)` → `(peer_id, doc_id, score)` 포인터 목록, 해시에 가장 가까운 노드들에 저장.
   2. **크롤링 조율**: `hash(URL)` → 해시에 가장 가까운 노드가 해당 URL을 "소유"하고 크롤링 담당.
+- 키워드 발행은 기존 항목을 덮어쓰지 않고 포인터 목록을 병합합니다. 노드는 시작 시 기존 로컬 인덱스 문서를 다시 발행하고, 새로 크롤링한 문서는 로컬 인덱싱 후 발행하여 부트스트랩 노드 콘텐츠가 발견되도록 유지합니다.
 - 복제 팩터: 모든 저장 데이터에 대해 최소 N=3.
 
 ### 크롤링
@@ -252,7 +253,7 @@ infomesh/
 
 - 로컬 키워드 검색: SQLite FTS5 + BM25 랭킹.
 - 로컬 벡터 검색: ChromaDB로 시맨틱/임베딩 기반 쿼리. 기본 모델: `all-MiniLM-L6-v2`. 벡터 검색은 **선택 사항** — FTS5 단독으로 동작 가능.
-- 분산 인덱스: 크롤링 후 키워드 해시를 DHT에 발행.
+- 분산 인덱스: 크롤링 후 키워드 해시를 DHT에 발행. 시작 시 기존 로컬 문서도 다시 발행하여 재시작 후 검색 가능하게 유지.
 
 ### 검색 플로우
 
@@ -262,6 +263,9 @@ infomesh/
 4. 로컬 + 원격 결과 병합, BM25 + 신선도 + 신뢰도로 랭킹.
 5. 필요 시 상위 N개 결과의 전문 텍스트 가져오기 (목표: ~200ms).
 6. MCP를 통해 반환 → 총 지연시간 목표: ~1초.
+
+`infomesh search`도 P2P가 가능하면 기본적으로 로컬 + 피어 검색 경로를 사용합니다.
+오프라인 로컬 인덱스만 검색하려면 `infomesh search --local` 또는 `--local-only`를 사용합니다.
 
 ### MCP 도구
 
@@ -288,7 +292,7 @@ MCP 서버가 제공하는 도구:
 - 지원 런타임: **ollama** (가장 간단), **llama.cpp** (경량 CPU), **vLLM** (GPU 처리량).
 - 최소 사양: 8GB RAM CPU에서 3B Q4 양자화 모델.
 - summarizer 모듈은 LLM 백엔드를 추상화하여 런타임을 교체 가능하게 설계.
-- **에너지 인식 스케줄링**: 노드는 로컬 시간대와 심야전기 시간대(예: 23:00–07:00)를 설정 가능. LLM 집중 작업(일괄 요약, 피어 요청 처리)은 심야 시간대에 우선 스케줄링. 심야 시간대 LLM 운영 시 모든 LLM 관련 크레딧에 **1.5배 배율** 적용.
+- **에너지 인식 스케줄링**: 노드는 로컬 시간대와 심야전기 시간대(예: 23:00–07:00)를 설정 가능. LLM 집중 작업(일괄 요약, 피어 요청 처리)은 심야 시간대에 우선 스케줄링. 스케줄러 결정은 `is_off_peak`를 포함하며, ledger는 LLM 행동이 이 플래그와 함께 기록될 때 **1.5배 크레딧 배율**을 적용합니다.
 - **요약 검증**: 3단계 파이프라인 — (1) 키팩트 앵커링 + NLI 모순 감지로 자가 검증, (2) 복제 노드들의 독립 요약으로 교차 검증, (3) 검증 이력 기반 평판 신뢰.
 - 모든 요약에 `content_hash`를 함께 저장하여 누구든 원문 대조 가능.
 
@@ -330,7 +334,7 @@ C_earned = Σ (W_i × Q_i × M_i)
 - **LLM** 행동 일반 시간대: `M = 1.0`.
 - **LLM** 행동 심야 시간대: `M = 1.5`.
 - 심야 시간대는 노드별 설정 (기본값: 현지 시간 23:00–07:00).
-- 네트워크는 일괄 요약 요청을 현재 심야 시간대인 노드에 우선 라우팅.
+- LLM 스케줄러는 심야 시간대 결정을 `is_off_peak`로 표시하며, 크레딧 기록은 LLM 행동이 이 플래그와 함께 기록될 때 1.5배 배율을 적용.
 
 #### 검색 비용
 
@@ -372,6 +376,14 @@ C_search = 0.1 / tier(contribution_score)
 - **랜덤 감사**: 노드당 ~1회/시간. 3개 감사 노드가 랜덤 URL을 독립 재크롤링하여 원본 노드와 `content_hash` 비교. 불일치 = 신뢰 감점.
 - **통합 신뢰 점수**: `Trust = 0.15×가동시간 + 0.25×기여량 + 0.40×감사통과율 + 0.20×요약품질`. 등급: 신뢰(≥0.8), 보통(0.5–0.8), 의심(0.3–0.5), 불신(<0.3).
 - **조작 탐지**: 감사 실패 3회 → 네트워크 격리. 소스 URL은 항상 재크롤링 가능한 근거.
+
+### 리소스 거버넌스
+
+- 장시간 실행되는 worker 진입점(`_serve`, MCP, standalone crawl)은 무거운 초기화 전에 `AppContext(..., apply_os_priority=True)`로 opt-in하거나 `ResourceGovernor.apply_os_priority()`를 적용합니다.
+- 대시보드/status/settings 같은 상호작용용 control-plane 명령은 자기 프로세스 priority를 낮추면 안 됩니다. BGM과 TUI 반응성이 crawler worker throttling을 물려받지 않아야 합니다.
+- Dashboard BGM은 gapless 루프와 버퍼 재생을 위해 `mpv`를 우선 사용하고, `bgm_auto_install_mpv=true`일 때 첫 재생 시 비대화형 best-effort 방식으로 `mpv` 자동 설치를 시도한 뒤 `ffplay`로 fallback합니다. `bgm_idle_stop` 기본값은 `false`이며, 명시적으로 켠 경우에만 간헐적 크롤링 중 BGM을 stop/restart합니다.
+- `ResourceGovernor` 상태는 `state`, `degrade_level`, `throttle_factor`, `cpu_percent`, `memory_percent` 공개 필드로 읽습니다. crawl loop는 private 속성에 접근하지 않습니다.
+- Linux worker는 CPU `nice`와 best-effort `ionice`를 모두 적용하며, 실패는 치명적 오류로 처리하지 않습니다.
 
 ### 네트워크 보안
 

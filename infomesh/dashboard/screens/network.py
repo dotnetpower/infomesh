@@ -44,23 +44,65 @@ class P2PStatusPanel(Static):
         port = self._config.node.listen_port
         bootstrap = len(self._config.network.bootstrap_nodes)
 
-        raw_state = str(data.get("state", "stopped"))
+        raw_state = str(data.get("state", ""))
         raw_peers = data.get("peers", 0)
         peers = int(raw_peers) if isinstance(raw_peers, (int, float, str)) else 0
         peer_id = str(data.get("peer_id", ""))
 
-        match raw_state:
-            case "running":
-                state = "🟢 Online"
-            case "starting":
-                state = "🟡 Starting"
-            case "stopping":
-                state = "🟡 Stopping"
-            case "error":
-                err = data.get("error", "")
-                state = f"🔴 Error: {err}" if err else "🔴 Error"
-            case _:
-                state = "🔴 Offline"
+        # Fallback: read peer_id from key file if not in P2P status
+        if not peer_id:
+            from infomesh.dashboard.utils import get_peer_id
+
+            peer_id = get_peer_id(self._config)
+
+        # Fallback: try reading stale p2p_status.json for peer_id
+        if not peer_id or peer_id == "(not generated)":
+            import contextlib
+            import json
+
+            status_path = self._config.node.data_dir / "p2p_status.json"
+            with contextlib.suppress(Exception):
+                if status_path.exists():
+                    stale = json.loads(status_path.read_text())
+                    if isinstance(stale, dict):
+                        peer_id = str(stale.get("peer_id", peer_id))
+
+        if not raw_state:
+            # No fresh P2P data — check if node is running in local mode
+            from infomesh.dashboard.utils import is_node_running
+
+            if is_node_running(self._config):
+                state = "🟡 Local mode (crawling active)"
+            else:
+                # Check if P2P was ever connected (stale status file)
+                import contextlib
+                import json
+
+                status_path = self._config.node.data_dir / "p2p_status.json"
+                had_peers = False
+                with contextlib.suppress(Exception):
+                    if status_path.exists():
+                        stale = json.loads(status_path.read_text())
+                        if isinstance(stale, dict) and stale.get("state") == "stopped":
+                            state = "⚪ Stopped (was connected)"
+                            had_peers = True
+                if not had_peers:
+                    state = "🔴 Offline"
+        else:
+            match raw_state:
+                case "running":
+                    state = "🟢 Online"
+                case "starting":
+                    state = "🟡 Starting"
+                case "stopping":
+                    state = "🟡 Stopping"
+                case "stopped":
+                    state = "⚪ Stopped"
+                case "error":
+                    err = data.get("error", "")
+                    state = f"🔴 Error: {err}" if err else "🔴 Error"
+                case _:
+                    state = "🔴 Offline"
 
         short_id = f"{peer_id[:16]}..." if len(peer_id) > 16 else (peer_id or "—")
         refresh_str = (

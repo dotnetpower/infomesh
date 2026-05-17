@@ -150,7 +150,7 @@ https://www.semanticscholar.org/
 https://scholar.google.com/
 
 # ── News & Tech Media (recent events) ───────────────────────
-https://www.reuters.com/technology/
+https://www.bbc.com/news/technology
 https://www.bbc.com/news/technology
 https://techcrunch.com/
 https://www.theverge.com/

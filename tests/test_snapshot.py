@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import struct
 from pathlib import Path
 
 import pytest
 
+from infomesh.compression.zstd import LEVEL_SNAPSHOT, Compressor
 from infomesh.index.local_store import LocalStore
 from infomesh.index.snapshot import (
+    _MAX_SNAPSHOT_DOCUMENTS,
+    _MAX_SNAPSHOT_FILE_BYTES,
     export_snapshot,
     import_snapshot,
     read_snapshot_metadata,
@@ -89,6 +94,13 @@ class TestReadMetadata:
         assert meta["document_count"] == 3
         assert "created_at" in meta
 
+    def test_rejects_too_small_file(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "short.infomesh-snapshot"
+        snapshot.write_bytes(b"\x00\x01")
+
+        with pytest.raises(ValueError, match="too small"):
+            read_snapshot_metadata(snapshot)
+
 
 class TestImportSnapshot:
     """Snapshot import tests."""
@@ -164,3 +176,34 @@ class TestImportSnapshot:
         assert len(results) >= 1
         assert any("Python" in r.title or "Python" in r.snippet for r in results)
         new_store.close()
+
+    def test_import_rejects_oversized_snapshot(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "huge.infomesh-snapshot"
+        with snapshot.open("wb") as handle:
+            handle.truncate(_MAX_SNAPSHOT_FILE_BYTES + 1)
+
+        new_store = LocalStore(db_path=tmp_path / "oversized.db")
+        try:
+            with pytest.raises(ValueError, match="Snapshot file too large"):
+                import_snapshot(new_store, snapshot)
+        finally:
+            new_store.close()
+
+    def test_import_rejects_oversized_document_count(self, tmp_path: Path) -> None:
+        snapshot = tmp_path / "too-many.infomesh-snapshot"
+        compressor = Compressor(level=LEVEL_SNAPSHOT)
+        metadata = {
+            "format_version": 1,
+            "created_at": 0,
+            "document_count": _MAX_SNAPSHOT_DOCUMENTS + 1,
+        }
+        header = compressor.compress(json.dumps(metadata).encode("utf-8"))
+        docs = compressor.compress(b"[]")
+        snapshot.write_bytes(struct.pack(">I", len(header)) + header + docs)
+
+        new_store = LocalStore(db_path=tmp_path / "too-many.db")
+        try:
+            with pytest.raises(ValueError, match="document count too large"):
+                import_snapshot(new_store, snapshot)
+        finally:
+            new_store.close()

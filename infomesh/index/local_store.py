@@ -497,6 +497,30 @@ class LocalStore:
             for row in rows
         ]
 
+    def get_documents_for_publish(
+        self,
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict[str, object]]:
+        """Return local documents with IDs for distributed index publishing."""
+        limit = max(1, min(limit, 10_000))
+        offset = max(0, offset)
+        rows = self._conn.execute(
+            "SELECT doc_id, url, title, text FROM documents "
+            "ORDER BY doc_id LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return [
+            {
+                "doc_id": row["doc_id"],
+                "url": row["url"],
+                "title": row["title"],
+                "text": row["text"],
+            }
+            for row in rows
+        ]
+
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()

@@ -33,6 +33,7 @@ from infomesh.types import KeyPairLike, VectorStoreLike
 
 logger = structlog.get_logger()
 
+
 # ─── Content utility functions ─────────────────────────────
 
 # Paywall signal strings (case-insensitive match)
@@ -107,6 +108,110 @@ def index_document(
         )
 
     return doc_id
+
+
+async def publish_document_to_network(
+    page: ParsedPage,
+    doc_id: int | None,
+    *,
+    p2p_node: object | None = None,
+    distributed_index: object | None = None,
+) -> int:
+    """Publish a newly indexed local document to the distributed index."""
+    if doc_id is None:
+        return 0
+
+    try:
+        network_publish = getattr(p2p_node, "publish_document_to_network", None)
+        if callable(network_publish):
+            result = await network_publish(
+                doc_id,
+                page.url,
+                page.title,
+                page.text,
+            )
+            return result if isinstance(result, int) else 0
+        distributed_publish = getattr(distributed_index, "publish_document", None)
+        if callable(distributed_publish):
+            result = await distributed_publish(
+                doc_id=doc_id,
+                url=page.url,
+                title=page.title,
+                text=page.text,
+            )
+            return result if isinstance(result, int) else 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "distributed_publish_failed",
+            url=page.url,
+            error=str(exc),
+        )
+    return 0
+
+
+async def republish_local_index(
+    store: LocalStore,
+    *,
+    p2p_node: object | None = None,
+    distributed_index: object | None = None,
+    batch_size: int = 250,
+    limit: int | None = None,
+) -> int:
+    """Republish existing local index documents to the distributed index."""
+    if p2p_node is None and distributed_index is None:
+        return 0
+
+    offset = 0
+    total_keywords = 0
+    batch_size = max(1, min(batch_size, 1_000))
+
+    while True:
+        if limit is not None and offset >= limit:
+            break
+        current_limit = batch_size
+        if limit is not None:
+            current_limit = min(current_limit, limit - offset)
+
+        documents = store.get_documents_for_publish(
+            limit=current_limit,
+            offset=offset,
+        )
+        if not documents:
+            break
+        offset += len(documents)
+
+        try:
+            network_publish_batch = getattr(
+                p2p_node,
+                "publish_documents_to_network",
+                None,
+            )
+            distributed_publish_batch = getattr(
+                distributed_index,
+                "publish_batch",
+                None,
+            )
+            if callable(network_publish_batch):
+                result = await network_publish_batch(documents)
+            elif callable(distributed_publish_batch):
+                result = await distributed_publish_batch(documents)
+            else:
+                result = 0
+            if isinstance(result, int):
+                total_keywords += result
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "distributed_republish_batch_failed",
+                offset=offset,
+                error=str(exc),
+            )
+
+    logger.info(
+        "distributed_index_republished",
+        documents_scanned=offset,
+        keywords_published=total_keywords,
+    )
+    return total_keywords
 
 
 # ─── FetchResult: unified return type for fetch_page ──────
@@ -252,6 +357,8 @@ async def crawl_and_index(
     worker: CrawlWorker,
     store: LocalStore,
     vector_store: VectorStoreLike | None = None,
+    p2p_node: object | None = None,
+    distributed_index: object | None = None,
     link_graph: LinkGraph | None = None,
     depth: int = 0,
     force: bool = False,
@@ -269,22 +376,30 @@ async def crawl_and_index(
         if link_graph and result.discovered_links:
             try:
                 link_graph.add_links(url, result.discovered_links)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "link_graph_update_failed",
                     url=url,
+                    error=str(exc),
                 )
         try:
-            index_document(
+            doc_id = index_document(
                 result.page,
                 store,
                 vector_store,
                 js_required=result.js_required,
             )
-        except Exception:  # noqa: BLE001
+            await publish_document_to_network(
+                result.page,
+                doc_id,
+                p2p_node=p2p_node,
+                distributed_index=distributed_index,
+            )
+        except Exception as exc:  # noqa: BLE001
             logger.error(
                 "index_document_failed",
                 url=url,
+                error=str(exc),
                 msg="Page crawled but indexing failed",
             )
             return CrawlAndIndexResult(
@@ -326,10 +441,22 @@ class AppContext:
         ctx.close()
     """
 
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(
+        self,
+        config: Config | None = None,
+        *,
+        apply_os_priority: bool = False,
+    ) -> None:
         self.config = config or load_config()
         c = self.config
         role = c.node.role
+
+        # ── Resource governor (throttle crawl on high load) ──
+        # Apply OS priority before heavy initialization for worker processes.
+        profile = get_profile(c.resources.profile)
+        self.governor = ResourceGovernor(profile)
+        if apply_os_priority:
+            self.governor.apply_os_priority()
 
         # ── Resolve GitHub identity for cross-node credits ─
         self.github_email: str = resolve_github_email(c) or ""
@@ -460,11 +587,19 @@ class AppContext:
             except Exception:  # noqa: BLE001
                 logger.warning("credit_sync_unavailable")
 
-        # ── Resource governor (throttle crawl on high load) ──
-        profile = get_profile(c.resources.profile)
-        self.governor = ResourceGovernor(profile)
-        self.governor.apply_os_priority()
         self.governor.check_and_adjust()
+
+        # ── Feedback store (implicit search quality signals) ──
+        self.feedback_store: object | None = None
+        if role in (NodeRole.FULL, NodeRole.SEARCH):
+            try:
+                from infomesh.search.feedback import FeedbackStore
+
+                self.feedback_store = FeedbackStore(
+                    str(c.node.data_dir / "feedback.db"),
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("feedback_store_unavailable")
 
         # ── P2P components (set externally via bootstrap_p2p) ──
         self.distributed_index: object | None = None
@@ -490,6 +625,9 @@ class AppContext:
         if self.credit_sync_manager is not None:
             with contextlib.suppress(Exception):
                 self.credit_sync_manager.close()  # type: ignore[attr-defined]
+        if self.feedback_store is not None:
+            with contextlib.suppress(Exception):
+                self.feedback_store.close()  # type: ignore[attr-defined]
         if self.vector_store is not None:
             self.vector_store.close()
         if self.ledger is not None:
@@ -643,7 +781,9 @@ def bootstrap_p2p(
         if dht is not None and pid:
             from infomesh.index.distributed import DistributedIndex
 
-            distributed_index = DistributedIndex(dht, pid)
+            distributed_index = getattr(node, "distributed_index", None)
+            if distributed_index is None:
+                distributed_index = DistributedIndex(dht, pid)
             logger.info("distributed_index_ready")
     except Exception:  # noqa: BLE001
         logger.debug("distributed_index_unavailable")

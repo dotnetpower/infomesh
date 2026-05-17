@@ -25,7 +25,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from infomesh.config import Config, load_config
 
@@ -124,12 +124,133 @@ def create_admin_app(
 
         return await call_next(request)
 
-    # ── Health ──────────────────────────────────────────────
+    # #37: Content Security Policy header
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
+        )
+        return response
+
+    # #36: Rate limiting (10 requests/second per client)
+    _rate_buckets: dict[str, list[float]] = {}
+    _rate_last_cleanup = [time.time()]
+    _RATE_MAX_CLIENTS = 10000
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next):  # type: ignore[no-untyped-def]
+        client = request.client.host if request.client else "unknown"
+        now = time.time()
+        bucket = _rate_buckets.setdefault(client, [])
+        # Prune old entries (1s window)
+        _rate_buckets[client] = [t for t in bucket if now - t < 1.0]
+        if len(_rate_buckets[client]) >= 10:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded"},
+            )
+        _rate_buckets[client].append(now)
+        # Periodic cleanup: prevent unbounded memory growth
+        if now - _rate_last_cleanup[0] > 10.0 or len(_rate_buckets) > _RATE_MAX_CLIENTS:
+            cutoff = now - 10.0
+            stale = [k for k, v in _rate_buckets.items() if not v or v[-1] < cutoff]
+            for k in stale:
+                del _rate_buckets[k]
+            _rate_last_cleanup[0] = now
+        return await call_next(request)
+
+    # ── Health (#10: Detailed health check) ──────────────────
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        """Liveness probe — always returns ok."""
-        return {"status": "ok"}
+    async def health(request: Request) -> dict[str, Any]:
+        """Liveness probe with optional detailed checks."""
+        st: AdminState = request.app.state.admin
+        detail = request.query_params.get("detail", "")
+        if not detail:
+            return {"status": "ok"}
+
+        import shutil
+
+        checks: dict[str, str] = {"status": "ok"}
+        # DB check
+        db_path = st.config.index.db_path
+        checks["db"] = "ok" if db_path.exists() else "missing"
+        # Disk check
+        try:
+            _, _, free = shutil.disk_usage(
+                st.config.node.data_dir if st.config.node.data_dir.exists() else "/"
+            )
+            checks["disk_free_gb"] = str(round(free / (1024**3), 1))
+            if free < 1024**3:
+                checks["status"] = "degraded"
+                checks["disk"] = "low"
+            else:
+                checks["disk"] = "ok"
+        except OSError:
+            checks["disk"] = "unknown"
+        # Memory check
+        try:
+            import psutil
+
+            mem = psutil.virtual_memory()
+            checks["memory_pct"] = str(round(mem.percent, 1))
+            if mem.percent > 95:
+                checks["status"] = "degraded"
+                checks["memory"] = "critical"
+            else:
+                checks["memory"] = "ok"
+        except ImportError:
+            checks["memory"] = "unknown"
+        # Uptime
+        checks["uptime_s"] = str(round(time.time() - st.start_time, 0))
+        return checks
+
+    # ── #7: Search Console API ─────────────────────────────
+
+    @app.get("/search")
+    async def search_api(
+        request: Request,
+        q: str = "",
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Search endpoint for the web dashboard console."""
+        st: AdminState = request.app.state.admin
+        if not q:
+            return {"results": [], "error": "query required"}
+
+        try:
+            from infomesh.index.local_store import LocalStore
+            from infomesh.search.query import search_local
+
+            _store = LocalStore(
+                db_path=st.config.index.db_path,
+                compression_enabled=st.config.storage.compression_enabled,
+                compression_level=st.config.storage.compression_level,
+            )
+            try:
+                result = search_local(_store, q, limit=min(limit, 20))
+                return {
+                    "query": q,
+                    "total": result.total,
+                    "elapsed_ms": round(result.elapsed_ms, 1),
+                    "results": [
+                        {
+                            "url": r.url,
+                            "title": r.title,
+                            "snippet": r.snippet[:300],
+                            "score": round(r.combined_score, 4),
+                        }
+                        for r in result.results
+                    ],
+                }
+            finally:
+                _store.close()
+        except Exception as exc:
+            logger.warning("search_api_error", error=str(exc))
+            return {"results": [], "error": str(exc)[:200]}
 
     @app.get("/readiness")
     async def readiness(request: Request) -> JSONResponse:
@@ -243,6 +364,49 @@ def create_admin_app(
             "uptime_seconds": round(time.time() - st.start_time, 1),
         }
 
+    # ── #25: MCP Tool Usage Statistics ──────────────────────
+
+    @app.get("/analytics/tools")
+    async def tool_stats(request: Request) -> dict[str, Any]:
+        """MCP tool usage breakdown."""
+        st: AdminState = request.app.state.admin
+        total = st.total_searches + st.total_crawls + st.total_fetches
+        return {
+            "tool_usage": {
+                "web_search": st.total_searches,
+                "crawl_url": st.total_crawls,
+                "fetch_page": st.total_fetches,
+                "total": total,
+            },
+            "search_fetch_rate": (
+                round(st.total_fetches / st.total_searches * 100, 1)
+                if st.total_searches > 0
+                else 0.0
+            ),
+        }
+
+    # ── #15: Index Compression Stats ────────────────────────
+
+    @app.get("/index/compression")
+    async def index_compression(request: Request) -> dict[str, Any]:
+        """Index compression statistics."""
+        st: AdminState = request.app.state.admin
+        stats = _get_index_stats(st.config)
+        doc_count = stats.get("document_count", 0)
+        db_mb = stats.get("db_size_mb", 0.0)
+        avg_kb = (
+            round(float(db_mb) * 1024 / int(doc_count), 2)
+            if isinstance(doc_count, int) and doc_count > 0
+            else 0.0
+        )
+        return {
+            "documents": doc_count,
+            "db_size_mb": db_mb,
+            "avg_doc_kb": avg_kb,
+            "compression_enabled": st.config.storage.compression_enabled,
+            "compression_level": st.config.storage.compression_level,
+        }
+
     # ── Metrics (Prometheus) ────────────────────────────────
 
     @app.get("/metrics")
@@ -274,6 +438,13 @@ def create_admin_app(
         from infomesh.api.extensions import generate_openapi_spec
 
         return generate_openapi_spec()
+
+    # ── Web Dashboard ───────────────────────────────────────
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def dashboard_page() -> HTMLResponse:
+        """Serve the web analytics dashboard (HTML)."""
+        return HTMLResponse(content=_DASHBOARD_HTML)
 
     return app
 
@@ -352,3 +523,238 @@ def _format_duration(seconds: float) -> str:
     hours = seconds / 3600
     minutes = (seconds % 3600) / 60
     return f"{hours:.0f}h {minutes:.0f}m"
+
+
+# ── Inline dashboard HTML ───────────────────────────────────────────
+
+_DASHBOARD_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InfoMesh Dashboard</title>
+<style>
+  :root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;
+    --dim:#8b949e;--accent:#58a6ff;--green:#3fb950;--red:#f85149;
+    --orange:#d29922}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,
+    Arial,sans-serif;background:var(--bg);color:var(--text);padding:24px}
+  h1{font-size:1.5rem;margin-bottom:8px;color:var(--accent)}
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--border);
+    margin-bottom:16px}
+  .tab{padding:8px 16px;cursor:pointer;color:var(--dim);border-bottom:
+    2px solid transparent;font-size:.9rem;transition:all .15s}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .page{display:none}
+  .page.active{display:block}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:16px;margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--border);
+    border-radius:8px;padding:20px}
+  .card h2{font-size:.85rem;color:var(--dim);text-transform:uppercase;
+    letter-spacing:.5px;margin-bottom:12px}
+  .metric{font-size:2rem;font-weight:600}
+  .metric small{font-size:.75rem;color:var(--dim);margin-left:4px}
+  .sub{font-size:.85rem;color:var(--dim);margin-top:4px}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+    margin-right:6px}
+  .dot.ok{background:var(--green)}.dot.err{background:var(--red)}
+  .dot.warn{background:var(--orange)}
+  #refresh-bar{text-align:right;color:var(--dim);font-size:.8rem;
+    margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
+    font-size:.85rem}
+  th{color:var(--dim);font-weight:500}
+  .bar{height:6px;border-radius:3px;background:var(--border);margin-top:4px}
+  .bar-fill{height:100%;border-radius:3px;background:var(--accent);
+    transition:width .3s}
+  .section{margin-top:16px}
+  .section h3{font-size:.9rem;color:var(--dim);margin-bottom:8px}
+</style>
+</head>
+<body>
+<h1>InfoMesh Node Dashboard</h1>
+<div id="refresh-bar">Loading...</div>
+<div class="tabs">
+  <div class="tab active" data-page="overview">Overview</div>
+  <div class="tab" data-page="search">Search</div>
+  <div class="tab" data-page="crawl">Crawl</div>
+  <div class="tab" data-page="network">Network</div>
+  <div class="tab" data-page="credits">Credits</div>
+</div>
+
+<div class="page active" id="pg-overview">
+  <div class="grid" id="overview-cards"></div>
+</div>
+
+<div class="page" id="pg-search">
+  <div class="grid" id="search-cards"></div>
+  <div class="card section" id="search-detail"></div>
+</div>
+
+<div class="page" id="pg-crawl">
+  <div class="grid" id="crawl-cards"></div>
+  <div class="card section" id="crawl-detail"></div>
+</div>
+
+<div class="page" id="pg-network">
+  <div class="grid" id="net-cards"></div>
+  <div class="card section" id="net-detail"></div>
+</div>
+
+<div class="page" id="pg-credits">
+  <div class="grid" id="cred-cards"></div>
+  <div class="card section" id="cred-detail"></div>
+</div>
+
+<script>
+// Tab navigation
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('pg-'+t.dataset.page).classList.add('active');
+  });
+});
+
+async function fetchJSON(u){const r=await fetch(u);return r.ok?r.json():null}
+function fmt(n,d=1){return typeof n==='number'?n.toFixed(d):n||'\\u2014'}
+function fmtB(mb){return mb>=1024?(mb/1024).toFixed(1)+' GB':mb.toFixed(1)+' MB'}
+
+async function refresh(){
+  const[st,idx,cred,net,an]=await Promise.all([
+    fetchJSON('/status'),fetchJSON('/index/stats'),
+    fetchJSON('/credits/balance'),fetchJSON('/network/peers'),
+    fetchJSON('/analytics')]);
+
+  // Overview
+  document.getElementById('overview-cards').innerHTML=`
+  <div class="card"><h2>Node Status</h2>
+    <div class="metric"><span class="dot ok"></span>${
+      st?.status||'unknown'}</div>
+    <div class="sub">Uptime: ${st?.uptime_human||'\\u2014'}</div></div>
+  <div class="card"><h2>Index</h2>
+    <div class="metric">${fmt(idx?.document_count,0)}<small>docs</small></div>
+    <div class="sub">DB: ${fmtB(idx?.db_size_mb||0)}</div></div>
+  <div class="card"><h2>Peers</h2>
+    <div class="metric">${fmt(net?.connected||net?.total_peers||0,0)}</div>
+    <div class="sub">DHT: ${net?.dht_mode||'\\u2014'}</div></div>
+  <div class="card"><h2>Credits</h2>
+    <div class="metric">${fmt(cred?.balance)}</div>
+    <div class="sub">Earned: ${fmt(cred?.total_earned)}</div></div>
+  <div class="card"><h2>Searches</h2>
+    <div class="metric">${fmt(an?.total_searches,0)}</div>
+    <div class="sub">Latency: ${fmt(an?.avg_latency_ms)}ms</div></div>
+  <div class="card"><h2>Crawls</h2>
+    <div class="metric">${fmt(an?.total_crawls,0)}</div>
+    <div class="sub">Fetches: ${fmt(an?.total_fetches,0)}</div></div>`;
+
+  // Search Analytics
+  const latMs=an?.avg_latency_ms||0;
+  const latBar=Math.min(latMs/1000*100,100);
+  const latColor=latMs<200?'var(--green)':latMs<500?'var(--orange)':'var(--red)';
+  document.getElementById('search-cards').innerHTML=`
+  <div class="card"><h2>Total Searches</h2>
+    <div class="metric">${fmt(an?.total_searches,0)}</div>
+    <div class="sub">Since node started</div></div>
+  <div class="card"><h2>Avg Latency</h2>
+    <div class="metric" style="color:${latColor}">${fmt(latMs)}
+      <small>ms</small></div>
+    <div class="bar"><div class="bar-fill" style="width:${latBar}%;
+      background:${latColor}"></div></div>
+    <div class="sub">${latMs<200?'Excellent':latMs<500?'Good':'Slow'}
+    </div></div>
+  <div class="card"><h2>Fetches</h2>
+    <div class="metric">${fmt(an?.total_fetches,0)}</div>
+    <div class="sub">Pages fetched after search</div></div>`;
+  const sr=an?.total_searches||0;const fr=an?.total_fetches||0;
+  const ctr=sr>0?((fr/sr)*100).toFixed(1):'0.0';
+  document.getElementById('search-detail').innerHTML=`
+    <h3>Search Quality Signals</h3>
+    <table><tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>Search \\u2192 Fetch Rate</td>
+      <td>${ctr}%</td></tr>
+    <tr><td>Avg Latency</td><td>${fmt(latMs)} ms</td></tr>
+    <tr><td>Uptime</td><td>${st?.uptime_human||'\\u2014'}</td></tr>
+    </table>`;
+
+  // Crawl Status
+  const docs=idx?.document_count||0;
+  const dbMb=idx?.db_size_mb||0;
+  const avgKb=docs>0?((dbMb*1024)/docs).toFixed(1):'0.0';
+  document.getElementById('crawl-cards').innerHTML=`
+  <div class="card"><h2>Total Crawled</h2>
+    <div class="metric">${fmt(an?.total_crawls,0)}</div>
+    <div class="sub">Pages crawled</div></div>
+  <div class="card"><h2>Indexed Documents</h2>
+    <div class="metric">${fmt(docs,0)}</div>
+    <div class="sub">${fmtB(dbMb)} on disk</div></div>
+  <div class="card"><h2>Avg Doc Size</h2>
+    <div class="metric">${avgKb}<small>KB</small></div>
+    <div class="sub">Per document</div></div>`;
+  document.getElementById('crawl-detail').innerHTML=`
+    <h3>Index Details</h3>
+    <table><tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>Documents</td><td>${fmt(docs,0)}</td></tr>
+    <tr><td>Database Size</td><td>${fmtB(dbMb)}</td></tr>
+    <tr><td>Avg Size/Doc</td><td>${avgKb} KB</td></tr>
+    <tr><td>Total Crawl Actions</td><td>${fmt(an?.total_crawls,0)}</td></tr>
+    </table>`;
+
+  // Network
+  const peers=net?.connected||net?.total_peers||0;
+  const peerId=net?.peer_id||'\\u2014';
+  document.getElementById('net-cards').innerHTML=`
+  <div class="card"><h2>Connected Peers</h2>
+    <div class="metric"><span class="dot ${peers>0?'ok':'warn'}"></span>${
+      fmt(peers,0)}</div>
+    <div class="sub">${peers>0?'Network active':'No peers'}</div></div>
+  <div class="card"><h2>DHT Mode</h2>
+    <div class="metric" style="font-size:1.4rem">${
+      net?.dht_mode||'\\u2014'}</div>
+    <div class="sub">Kademlia routing</div></div>`;
+  document.getElementById('net-detail').innerHTML=`
+    <h3>Peer Info</h3>
+    <table><tr><th>Field</th><th>Value</th></tr>
+    <tr><td>Peer ID</td><td style="font-family:monospace;font-size:.8rem">${
+      peerId}</td></tr>
+    <tr><td>Connected Peers</td><td>${fmt(peers,0)}</td></tr>
+    <tr><td>Uptime</td><td>${fmt(net?.uptime_seconds,0)}s</td></tr>
+    </table>`;
+
+  // Credits
+  const bal=cred?.balance||0;const earn=cred?.total_earned||0;
+  const spent=cred?.total_spent||0;
+  const tier=bal>=1000?'High':bal>=100?'Medium':'Starter';
+  document.getElementById('cred-cards').innerHTML=`
+  <div class="card"><h2>Balance</h2>
+    <div class="metric">${fmt(bal)}</div>
+    <div class="sub">Tier: ${tier}</div></div>
+  <div class="card"><h2>Total Earned</h2>
+    <div class="metric" style="color:var(--green)">${fmt(earn)}</div>
+    <div class="sub">From contributions</div></div>
+  <div class="card"><h2>Total Spent</h2>
+    <div class="metric" style="color:var(--orange)">${fmt(spent)}</div>
+    <div class="sub">On searches</div></div>`;
+  document.getElementById('cred-detail').innerHTML=`
+    <h3>Credit Breakdown</h3>
+    <table><tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>Balance</td><td>${fmt(bal)}</td></tr>
+    <tr><td>Total Earned</td><td>${fmt(earn)}</td></tr>
+    <tr><td>Total Spent</td><td>${fmt(spent)}</td></tr>
+    <tr><td>Contribution Tier</td><td>${tier}</td></tr>
+    </table>`;
+
+  document.getElementById('refresh-bar').textContent=
+    'Last refreshed: '+new Date().toLocaleTimeString()+' (every 5s)';
+}
+refresh();setInterval(refresh,5000);
+</script>
+</body>
+</html>
+"""

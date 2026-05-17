@@ -69,7 +69,24 @@ class NodeInfoPanel(Static):
 
         running = self._node_running_cached
         uptime = self._node_uptime_cached
-        state_icon = "🟢 Running" if running else "🔴 Stopped"
+
+        # Determine display state — also detect active crawling
+        if running:
+            state_icon = "🟢 Running"
+        else:
+            # Check DB freshness as secondary indicator
+            db_path = self._config.index.db_path
+            try:
+                if db_path.exists():
+                    db_age = time.time() - db_path.stat().st_mtime
+                    if db_age < 120:
+                        state_icon = "🟡 Crawling (local)"
+                    else:
+                        state_icon = "🔴 Stopped"
+                else:
+                    state_icon = "🔴 Stopped"
+            except OSError:
+                state_icon = "🔴 Stopped"
 
         short_id = peer_id[:16] + "..." if len(peer_id) > 16 else peer_id
 
@@ -236,7 +253,8 @@ class ActivityPanel(Widget):
     def update_crawl(self, count: int) -> None:
         self._crawl_count = count
         try:
-            self.query_one("#act-crawl-count", Static).update(f"{count} pages")
+            label = f"{count} pages" if count > 0 else "idle"
+            self.query_one("#act-crawl-count", Static).update(label)
             self.query_one("#spark-crawl", SparklineChart).push_value(float(count))
         except Exception:  # noqa: BLE001
             pass

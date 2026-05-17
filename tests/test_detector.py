@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 
 from infomesh.credits.farming import ANOMALY_FLAG_THRESHOLD, FarmingDetector
@@ -14,13 +16,17 @@ from infomesh.trust.scoring import TrustStore
 
 
 @pytest.fixture()
-def trust_store() -> TrustStore:
-    return TrustStore()
+def trust_store() -> Generator[TrustStore, None, None]:
+    ts = TrustStore()
+    yield ts
+    ts.close()
 
 
 @pytest.fixture()
-def farming_detector() -> FarmingDetector:
-    return FarmingDetector()
+def farming_detector() -> Generator[FarmingDetector, None, None]:
+    fd = FarmingDetector()
+    yield fd
+    fd.close()
 
 
 @pytest.fixture()

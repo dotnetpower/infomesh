@@ -60,8 +60,11 @@ llm = [
 browser = [
     "playwright>=1.40",
 ]
+cjk = [
+    "jieba>=0.42",
+]
 all = [
-    "infomesh[p2p,vector,llm,browser]",
+    "infomesh[p2p,vector,llm,browser,cjk]",
 ]
 
 [project.scripts]

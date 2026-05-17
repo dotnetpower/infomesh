@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from infomesh.config import Config, NodeConfig
 from infomesh.crawler.parser import ParsedPage
 from infomesh.services import (
+    AppContext,
     CrawlAndIndexResult,
     FetchPageResult,
     _truncate_to_bytes,
@@ -17,6 +20,8 @@ from infomesh.services import (
     fetch_page_async,
     index_document,
     is_paywall_content,
+    publish_document_to_network,
+    republish_local_index,
 )
 
 # ─── Helpers ──────────────────────────────────────────────
@@ -50,6 +55,40 @@ def _mock_store(*, doc: object | None = None) -> MagicMock:
 
 def _mock_worker() -> AsyncMock:
     return AsyncMock()
+
+
+class TestAppContextPriority:
+    def test_applies_os_priority_before_store_initialization(
+        self, tmp_path: Path
+    ) -> None:
+        events: list[str] = []
+
+        class FakeGovernor:
+            def apply_os_priority(self) -> None:
+                events.append("priority")
+
+            def check_and_adjust(self) -> None:
+                events.append("check")
+
+        class FakeStore:
+            def __init__(self, **kwargs: object) -> None:
+                events.append("store")
+
+            def close(self) -> None:
+                events.append("close")
+
+        config = Config(node=NodeConfig(data_dir=tmp_path, role="control"))
+
+        with (
+            patch("infomesh.services.ResourceGovernor", return_value=FakeGovernor()),
+            patch("infomesh.services.LocalStore", FakeStore),
+            patch("infomesh.services.ensure_keys", return_value=None),
+            patch("infomesh.services.resolve_github_email", return_value=""),
+        ):
+            ctx = AppContext(config, apply_os_priority=True)
+            ctx.close()
+
+        assert events[:2] == ["priority", "store"]
 
 
 # ─── is_paywall_content ──────────────────────────────────
@@ -154,6 +193,76 @@ class TestIndexDocument:
         store = _mock_store()
         doc_id = index_document(page, store, None)
         assert doc_id == 42
+
+
+class TestDistributedPublishing:
+    @pytest.mark.asyncio
+    async def test_publish_document_uses_p2p_node(self) -> None:
+        page = _make_page(text="Python distributed search")
+        p2p_node = AsyncMock()
+        p2p_node.publish_document_to_network.return_value = 7
+
+        published = await publish_document_to_network(
+            page,
+            42,
+            p2p_node=p2p_node,
+        )
+
+        assert published == 7
+        p2p_node.publish_document_to_network.assert_awaited_once_with(
+            42,
+            page.url,
+            page.title,
+            page.text,
+        )
+
+    @pytest.mark.asyncio
+    async def test_publish_document_skips_duplicates(self) -> None:
+        page = _make_page()
+        p2p_node = AsyncMock()
+
+        published = await publish_document_to_network(
+            page,
+            None,
+            p2p_node=p2p_node,
+        )
+
+        assert published == 0
+        p2p_node.publish_document_to_network.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_republish_local_index_batches_documents(self) -> None:
+        store = MagicMock()
+        store.get_documents_for_publish.side_effect = [
+            [
+                {
+                    "doc_id": 1,
+                    "url": "https://a.example",
+                    "title": "A",
+                    "text": "Python search",
+                }
+            ],
+            [
+                {
+                    "doc_id": 2,
+                    "url": "https://b.example",
+                    "title": "B",
+                    "text": "Distributed search",
+                }
+            ],
+            [],
+        ]
+        distributed_index = AsyncMock()
+        distributed_index.publish_batch.return_value = 3
+
+        published = await republish_local_index(
+            store,
+            distributed_index=distributed_index,
+            batch_size=1,
+        )
+
+        assert published == 6
+        assert distributed_index.publish_batch.await_count == 2
 
 
 # ─── FetchPageResult ─────────────────────────────────────
@@ -367,6 +476,30 @@ class TestCrawlAndIndex:
         assert result.title == "Example"
         assert result.links_discovered == 2
         store.add_document.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_successful_crawl_publishes_to_network(self) -> None:
+        worker = _mock_worker()
+        store = _mock_store()
+        p2p_node = AsyncMock()
+        p2p_node.publish_document_to_network.return_value = 4
+        page = _make_page(text="distributed content")
+        crawl_result = MagicMock()
+        crawl_result.success = True
+        crawl_result.page = page
+        crawl_result.discovered_links = []
+        crawl_result.elapsed_ms = 12.0
+        worker.crawl_url.return_value = crawl_result
+
+        result = await crawl_and_index(
+            "https://example.com",
+            worker=worker,
+            store=store,
+            p2p_node=p2p_node,
+        )
+
+        assert result.success is True
+        p2p_node.publish_document_to_network.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_updates_link_graph(self) -> None:

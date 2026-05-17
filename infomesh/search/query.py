@@ -16,6 +16,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -111,11 +112,15 @@ def search_local(
     Returns:
         QueryResult with ranked search results.
     """
+    from infomesh.search.cjk import tokenize_query_cjk
+    from infomesh.search.nlp import expand_query
     from infomesh.search.passage import _tokenize
 
     start = time.monotonic()
 
-    sanitized = _sanitize_fts_query(query)
+    # CJK-aware query preprocessing (generates bigrams for CJK chars)
+    preprocessed = tokenize_query_cjk(query)
+    sanitized = _sanitize_fts_query(preprocessed)
     raw_results = store.search(
         sanitized,
         limit=limit * 2,
@@ -126,6 +131,29 @@ def search_local(
         include_domains=include_domains,
         exclude_domains=exclude_domains,
     )
+
+    # Query expansion: if initial results are sparse, broaden search
+    if len(raw_results) < limit:
+        expansions = expand_query(query, max_expansions=3)
+        seen_urls = {r.url for r in raw_results}
+        for term in expansions:
+            term_q = _sanitize_fts_query(term)
+            if not term_q or term_q == "infomesh":
+                continue
+            extra = store.search(
+                term_q,
+                limit=limit,
+                offset=0,
+                language=language,
+                date_from=date_from,
+                date_to=date_to,
+                include_domains=include_domains,
+                exclude_domains=exclude_domains,
+            )
+            for r in extra:
+                if r.url not in seen_urls:
+                    raw_results.append(r)
+                    seen_urls.add(r.url)
 
     # Extract query tokens for title/URL ranking signals
     query_tokens = _tokenize(query)
@@ -178,9 +206,15 @@ def _enhance_snippets(
         query: Original user query.
         max_enhance: Maximum results to enhance (to limit I/O).
     """
-    from infomesh.search.passage import select_best_passage
+    from infomesh.search.passage import _tokenize, select_best_passage
+
+    query_tokens = set(_tokenize(query))
 
     for i, r in enumerate(results[:max_enhance]):
+        snippet_tokens = set(_tokenize(r.snippet))
+        if len(r.snippet) >= 80 and query_tokens & snippet_tokens:
+            continue
+
         doc = store.get_document(
             int(r.doc_id) if isinstance(r.doc_id, str) else r.doc_id,
         )
@@ -315,7 +349,7 @@ def _make_remote_result(
     DHT pointer-stub fallback to avoid duplicated construction.
     """
     return RankedResult(
-        doc_id=int(doc_id if isinstance(doc_id, (int, float, str)) else 0),
+        doc_id=_safe_remote_int(doc_id),
         url=url,
         title=title,
         snippet=snippet,
@@ -323,10 +357,32 @@ def _make_remote_result(
         freshness_score=0.0,
         trust_score=0.0,
         authority_score=0.0,
-        combined_score=float(score if isinstance(score, (int, float, str)) else 0.0),
+        combined_score=_safe_remote_float(score),
         crawled_at=0.0,
         peer_id=peer_id,
     )
+
+
+def _safe_remote_int(value: object, *, default: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return default
+    try:
+        parsed = float(value) if isinstance(value, str) else value
+        if not isfinite(float(parsed)):
+            return default
+        return int(parsed)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _safe_remote_float(value: object, *, default: float = 0.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if isfinite(parsed) else default
 
 
 async def search_distributed(
@@ -394,6 +450,8 @@ async def search_distributed(
                 limit,
             )
             for r in raw_results:
+                if not isinstance(r, dict):
+                    continue
                 url = str(r.get("url", ""))
                 if not url:
                     continue

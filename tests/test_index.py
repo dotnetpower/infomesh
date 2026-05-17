@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from infomesh.index.local_store import LocalStore
 
 
@@ -99,6 +101,59 @@ def test_multiple_documents_ranked() -> None:
     # Top results should be about Rust
     assert "rust" in results[0].url
 
+    store.close()
+
+
+def test_search_filters_and_offset() -> None:
+    """LocalStore search should support language, domain, date, and offset filters."""
+    store = LocalStore()
+    for i in range(10):
+        store.add_document(
+            url=f"https://example.com/page{i}",
+            title=f"Python Page {i}",
+            text=f"python programming search content item {i}",
+            raw_html_hash=f"rh{i}",
+            text_hash=f"th{i}",
+            language="en",
+        )
+    store.add_document(
+        url="https://docs.kr/intro",
+        title="소개 페이지",
+        text="한국어로 작성된 문서입니다",
+        raw_html_hash="kr-rh",
+        text_hash="kr-th",
+        language="ko",
+    )
+
+    assert store.search("programming", language="en")
+    assert store.search("한국어로", language="en") == []
+    assert all(
+        "example.com" in r.url
+        for r in store.search("programming", include_domains=["example.com"])
+    )
+    assert all(
+        "example.com" not in r.url
+        for r in store.search("programming", exclude_domains=["example.com"])
+    )
+    assert store.search("programming", date_from=time.time() + 86400) == []
+    assert len(store.search("programming", limit=10, offset=5)) == 5
+    store.close()
+
+
+def test_suggest_sanitizes_prefixes() -> None:
+    """Autocomplete suggestions should be case-insensitive and wildcard-safe."""
+    store = LocalStore()
+    store.add_document(
+        url="https://example.com/python",
+        title="Python Guide",
+        text="Python programming tutorial",
+        raw_html_hash="suggest-rh",
+        text_hash="suggest-th",
+    )
+
+    assert any("Python" in suggestion for suggestion in store.suggest("pyth"))
+    assert store.suggest("xyznonexistent") == []
+    assert isinstance(store.suggest("test%_string"), list)
     store.close()
 
 

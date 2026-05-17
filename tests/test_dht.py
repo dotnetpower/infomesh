@@ -79,6 +79,37 @@ class TestInfoMeshDHT:
         assert result[0]["score"] == 0.9
 
     @pytest.mark.asyncio
+    async def test_publish_keyword_merges_existing_pointers(
+        self, infomesh_dht: InfoMeshDHT
+    ) -> None:
+        await infomesh_dht.publish_keyword(
+            "python",
+            [
+                {
+                    "peer_id": "peer-a",
+                    "doc_id": 1,
+                    "url": "https://a.example",
+                    "score": 0.9,
+                }
+            ],
+        )
+        await infomesh_dht.publish_keyword(
+            "python",
+            [
+                {
+                    "peer_id": "peer-b",
+                    "doc_id": 2,
+                    "url": "https://b.example",
+                    "score": 0.8,
+                }
+            ],
+        )
+
+        result = await infomesh_dht.query_keyword("python")
+        keys = {(p["peer_id"], p["doc_id"]) for p in result}
+        assert keys == {("peer-a", 1), ("peer-b", 2)}
+
+    @pytest.mark.asyncio
     async def test_query_nonexistent_keyword(self, infomesh_dht: InfoMeshDHT) -> None:
         result = await infomesh_dht.query_keyword("nonexistent")
         assert result == []

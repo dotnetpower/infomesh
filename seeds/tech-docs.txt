@@ -22,7 +22,7 @@ https://stackoverflow.com/
 https://huggingface.co/
 
 # ── News & Tech Media (for recent events) ────────────────────
-https://www.reuters.com/technology/
+https://www.bbc.com/news/technology
 https://www.bbc.com/news/technology
 https://techcrunch.com/
 https://www.theverge.com/

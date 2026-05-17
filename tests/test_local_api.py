@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from infomesh.api.local_api import (
+    AdminState,
     _format_duration,
     _redact_paths,
     create_admin_app,
@@ -44,6 +45,31 @@ class TestHealth:
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+    def test_security_headers(self, client: TestClient) -> None:
+        resp = client.get("/health")
+        assert "Content-Security-Policy" in resp.headers
+        assert "X-Content-Type-Options" in resp.headers
+        assert resp.headers["X-Frame-Options"] == "DENY"
+
+
+class TestReadiness:
+    def test_not_ready_without_db(self, client: TestClient) -> None:
+        resp = client.get("/readiness")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "not_ready"
+
+    def test_ready_with_db(self, config: Config) -> None:
+        from infomesh.index.local_store import LocalStore
+
+        store = LocalStore(db_path=config.index.db_path)
+        store.close()
+
+        app = create_admin_app(config=config)
+        client = TestClient(app)
+        resp = client.get("/readiness")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
 
 
 # ── Status endpoint ─────────────────────────────────────────
@@ -93,6 +119,36 @@ class TestConfig:
         resp = client.post("/config/reload")
         assert resp.status_code == 200
         assert resp.json()["status"] == "reloaded"
+
+
+class TestApiKeyMiddleware:
+    def test_no_key_configured_allows_request(self, config: Config) -> None:
+        app = create_admin_app(config=config)
+        client = TestClient(app)
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+    def test_valid_key_allows_request(
+        self,
+        config: Config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("INFOMESH_API_KEY", "test-key-123")
+        app = create_admin_app(config=config)
+        client = TestClient(app)
+        resp = client.get("/health", headers={"x-api-key": "test-key-123"})
+        assert resp.status_code == 200
+
+    def test_invalid_key_rejected(
+        self,
+        config: Config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("INFOMESH_API_KEY", "test-key-123")
+        app = create_admin_app(config=config)
+        client = TestClient(app)
+        resp = client.get("/health", headers={"x-api-key": "wrong"})
+        assert resp.status_code == 401
 
 
 # ── Index stats endpoint ───────────────────────────────────
@@ -165,6 +221,27 @@ class TestNetwork:
         assert resp.status_code == 200
         data = resp.json()
         assert "total_peers" in data
+
+
+class TestAnalytics:
+    def test_endpoint_initial_values(self, client: TestClient) -> None:
+        resp = client.get("/analytics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_searches"] == 0
+        assert data["total_crawls"] == 0
+        assert data["total_fetches"] == 0
+
+    def test_admin_state_records_events(self, config: Config) -> None:
+        state = AdminState(config=config)
+        state.record_search(100.0)
+        state.record_search(200.0)
+        state.record_crawl()
+        state.record_fetch()
+        assert state.total_searches == 2
+        assert state.avg_latency_ms == 150.0
+        assert state.total_crawls == 1
+        assert state.total_fetches == 1
 
 
 # ── Helper functions ────────────────────────────────────────

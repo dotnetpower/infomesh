@@ -33,6 +33,15 @@ logger = structlog.get_logger()
 _IMDS_TIMEOUT = 2.0  # seconds
 
 
+def _validate_port(port: int) -> int:
+    """Validate a TCP port before shelling out or rendering commands."""
+    if isinstance(port, bool) or not isinstance(port, int):
+        raise ValueError(f"Invalid TCP port: {port!r}")
+    if port < 1 or port > 65535:
+        raise ValueError(f"Invalid TCP port: {port!r}")
+    return port
+
+
 class CloudProvider(StrEnum):
     """Detected cloud service provider."""
 
@@ -193,6 +202,7 @@ def _get_wsl_ip() -> str | None:
 
 def is_port_listening(port: int) -> bool:
     """Check if *port* is bound locally (i.e., some process is listening)."""
+    port = _validate_port(port)
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1.0):
             return True
@@ -210,6 +220,7 @@ def is_port_open_externally(port: int) -> bool:
     # Strategy: if we can bind, it means nothing is blocking the bind.
     # But we can't truly test inbound without an external probe.
     # So we use iptables/nftables inspection as a fallback on Linux.
+    port = _validate_port(port)
     try:
         result = subprocess.run(
             ["ss", "-tlnp", f"sport = :{port}"],
@@ -230,6 +241,7 @@ def _check_iptables_allows(port: int) -> bool:
 
     Returns True if allowed or if we can't determine.
     """
+    port = _validate_port(port)
     for cmd in (
         ["iptables", "-L", "INPUT", "-n", "--line-numbers"],
         ["nft", "list", "ruleset"],
@@ -439,6 +451,7 @@ def _discover_azure_nsgs(
 
 def _auto_open_azure(port: int) -> tuple[bool, str]:
     """Attempt to open *port* in all Azure NSGs (NIC + subnet level)."""
+    port = _validate_port(port)
     if not shutil.which("az"):
         return False, (
             "Azure CLI ('az') is not installed.\n"
@@ -542,6 +555,7 @@ def _auto_open_azure(port: int) -> tuple[bool, str]:
 
 def _auto_open_aws(port: int) -> tuple[bool, str]:
     """Attempt to open *port* in all AWS Security Groups for this instance."""
+    port = _validate_port(port)
     if not shutil.which("aws"):
         return False, (
             "AWS CLI ('aws') is not installed.\n"
@@ -649,6 +663,7 @@ def _auto_open_aws(port: int) -> tuple[bool, str]:
 
 def _auto_open_gcp(port: int) -> tuple[bool, str]:
     """Attempt to open *port* via gcloud CLI and auto-add network tag."""
+    port = _validate_port(port)
     if not shutil.which("gcloud"):
         return False, (
             "Google Cloud CLI ('gcloud') is not installed.\n"
@@ -759,6 +774,7 @@ def _auto_open_wsl(port: int) -> tuple[bool, str]:
     Both operations require Administrator privileges on the Windows side.
     We invoke them via ``powershell.exe`` which is accessible from WSL.
     """
+    port = _validate_port(port)
     ps = shutil.which("powershell.exe")
     if not ps:
         return False, (
@@ -858,6 +874,7 @@ def _auto_open_wsl(port: int) -> tuple[bool, str]:
 
 def _get_manual_instructions(provider: CloudProvider, port: int) -> str:
     """Return human-readable manual fix instructions per provider."""
+    port = _validate_port(port)
     match provider:
         case CloudProvider.AZURE:
             return (
@@ -937,6 +954,7 @@ def _get_manual_instructions(provider: CloudProvider, port: int) -> str:
 
 def _get_wsl_manual_instructions(port: int) -> str:
     """Return manual fix instructions for WSL2 users."""
+    port = _validate_port(port)
     return (
         f"To open port {port}/TCP on WSL2 manually:\n"
         f"\n"
@@ -969,6 +987,7 @@ def _get_wsl_manual_instructions(port: int) -> str:
 
 def _wsl_firewall_exists(port: int) -> bool:
     """Check if a Windows Firewall rule for *port* already exists."""
+    port = _validate_port(port)
     ps = shutil.which("powershell.exe")
     if not ps:
         return False
@@ -996,6 +1015,7 @@ def _wsl_firewall_exists(port: int) -> bool:
 
 def _wsl_portproxy_target(port: int) -> str | None:
     """Return the current portproxy connect-address for *port*, or None."""
+    port = _validate_port(port)
     ps = shutil.which("powershell.exe")
     if not ps:
         return None
@@ -1022,6 +1042,7 @@ def _wsl_portproxy_target(port: int) -> str | None:
 
 def _wsl_update_portproxy(port: int, wsl_ip: str) -> bool:
     """Silently update the portproxy connect-address to *wsl_ip*."""
+    port = _validate_port(port)
     ps = shutil.which("powershell.exe")
     if not ps:
         return False
@@ -1052,6 +1073,7 @@ def _check_port_wsl(port: int) -> bool:
     If the port proxy exists but points to a stale WSL2 IP, it is
     silently updated.
     """
+    port = _validate_port(port)
     wsl_ip = _get_wsl_ip()
     host_ip = _get_wsl_host_ip()
 
@@ -1142,6 +1164,7 @@ def check_port_accessibility(port: int) -> PortCheckResult:
 
     This does NOT prompt the user — it only inspects.
     """
+    port = _validate_port(port)
     provider = detect_cloud_provider()
 
     # On cloud VMs, the OS firewall usually allows all traffic —
@@ -1174,6 +1197,7 @@ def check_port_and_offer_fix(port: int) -> bool:
         True if port appears accessible (or was fixed), False if user
         declined or fix failed.
     """
+    port = _validate_port(port)
     provider = detect_cloud_provider()
 
     if provider == CloudProvider.UNKNOWN:

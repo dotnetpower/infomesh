@@ -1,6 +1,6 @@
 """Background music player for the dashboard.
 
-Plays MP3/audio files using system CLI players (ffplay, mpv).
+Plays MP3/audio files using system CLI players (mpv, ffplay).
 Runs as a subprocess so it doesn't block the TUI event loop.
 
 Usage::
@@ -18,7 +18,9 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 from pathlib import Path
+from typing import Any
 from urllib.request import urlretrieve
 
 import structlog
@@ -27,10 +29,20 @@ logger = structlog.get_logger()
 
 # Supported players in order of preference.
 _PLAYERS: list[tuple[str, list[str]]] = [
+    # mpv has smoother loop handling and explicit audio buffering.
+    (
+        "mpv",
+        [
+            "--no-video",
+            "--really-quiet",
+            "--no-terminal",
+            "--loop-file=inf",
+            "--gapless-audio=yes",
+            "--audio-buffer=2.0",
+        ],
+    ),
     # ffplay: no video, quiet, loop forever
     ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", "-loop", "0"]),
-    # mpv: no video, loop
-    ("mpv", ["--no-video", "--really-quiet", "--loop"]),
 ]
 
 # BGM cache directory (~/.infomesh/bgm/ — downloaded on first launch)
@@ -46,6 +58,104 @@ _BGM_FILES: list[str] = [
     "coin-street-fighter.mp3",
 ]
 
+_MPV_INSTALL_TIMEOUT_SECONDS = 180
+
+
+def _sudo_prefix() -> list[str] | None:
+    """Return a non-interactive privilege prefix for system package managers."""
+    if os.name != "posix":
+        return None
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return []
+    if shutil.which("sudo"):
+        return ["sudo", "-n"]
+    return None
+
+
+def _candidate_mpv_install_commands() -> list[list[str]]:
+    """Build supported non-interactive mpv install commands for this host."""
+    commands: list[list[str]] = []
+    privilege_prefix = _sudo_prefix()
+
+    if privilege_prefix is not None:
+        if shutil.which("apt-get"):
+            commands.append([*privilege_prefix, "apt-get", "install", "-y", "mpv"])
+        if shutil.which("dnf"):
+            commands.append([*privilege_prefix, "dnf", "install", "-y", "mpv"])
+        if shutil.which("yum"):
+            commands.append([*privilege_prefix, "yum", "install", "-y", "mpv"])
+        if shutil.which("pacman"):
+            commands.append([*privilege_prefix, "pacman", "-S", "--noconfirm", "mpv"])
+        if shutil.which("apk"):
+            commands.append([*privilege_prefix, "apk", "add", "mpv"])
+        if shutil.which("zypper"):
+            commands.append(
+                [*privilege_prefix, "zypper", "--non-interactive", "install", "mpv"]
+            )
+
+    if shutil.which("brew"):
+        commands.append(["brew", "install", "mpv"])
+
+    return commands
+
+
+def _install_command_manager(command: list[str]) -> str:
+    """Return the package manager name from a static install command."""
+    if command[:2] == ["sudo", "-n"]:
+        return command[2]
+    return command[0]
+
+
+def _install_mpv_best_effort(
+    *, timeout_seconds: int = _MPV_INSTALL_TIMEOUT_SECONDS
+) -> bool:
+    """Try to install mpv without interactive prompts.
+
+    Returns ``True`` only when ``mpv`` is available after the attempt. Failures are
+    logged and otherwise non-fatal so BGM can still fall back to ``ffplay``.
+    """
+    if shutil.which("mpv"):
+        return True
+
+    commands = _candidate_mpv_install_commands()
+    if not commands:
+        logger.info("bgm_mpv_install_unavailable")
+        return False
+
+    for command in commands:
+        manager = _install_command_manager(command)
+        logger.info("bgm_mpv_install_start", manager=manager)
+        try:
+            result = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("bgm_mpv_install_timeout", manager=manager)
+            continue
+        except OSError as exc:
+            logger.warning(
+                "bgm_mpv_install_failed",
+                manager=manager,
+                error=str(exc),
+            )
+            continue
+
+        if result.returncode == 0 and shutil.which("mpv"):
+            logger.info("bgm_mpv_install_succeeded", manager=manager)
+            return True
+        logger.warning(
+            "bgm_mpv_install_failed",
+            manager=manager,
+            returncode=result.returncode,
+        )
+
+    return shutil.which("mpv") is not None
+
 
 def ensure_bgm_assets() -> Path:
     """Download BGM assets from GitHub if not already cached.
@@ -60,6 +170,7 @@ def ensure_bgm_assets() -> Path:
         logger.debug("bgm_cache_dir_failed")
         return _BGM_CACHE_DIR
 
+    failed_downloads: list[str] = []
     for filename in _BGM_FILES:
         local_path = _BGM_CACHE_DIR / filename
         if local_path.exists():
@@ -69,11 +180,17 @@ def ensure_bgm_assets() -> Path:
             logger.info("bgm_downloading", file=filename)
             urlretrieve(url, local_path)  # noqa: S310
             logger.info("bgm_downloaded", file=filename)
-        except Exception:  # noqa: BLE001
-            logger.debug("bgm_download_failed", file=filename)
+        except Exception as exc:  # noqa: BLE001
+            failed_downloads.append(filename)
+            logger.warning("bgm_download_failed", file=filename, error=str(exc))
             # Remove partial download
             with contextlib.suppress(OSError):
                 local_path.unlink(missing_ok=True)
+
+    if failed_downloads and not any(
+        (_BGM_CACHE_DIR / filename).exists() for filename in _BGM_FILES
+    ):
+        logger.warning("bgm_assets_unavailable", files=failed_downloads)
 
     return _BGM_CACHE_DIR
 
@@ -132,6 +249,31 @@ def kill_orphaned_bgm() -> None:
                 pass
 
 
+def _restore_best_effort_priority() -> None:
+    """Try to keep audio playback at normal scheduling priority."""
+    if sys.platform == "win32":
+        return
+    try:
+        current = os.nice(0)
+        if current > 0:
+            os.nice(-current)
+    except OSError:
+        pass
+
+
+def _popen_kwargs() -> dict[str, Any]:
+    """Build subprocess kwargs shared by BGM and SFX players."""
+    kwargs: dict[str, Any] = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "stdin": subprocess.DEVNULL,
+    }
+    if sys.platform != "win32":
+        kwargs["start_new_session"] = True
+        kwargs["preexec_fn"] = _restore_best_effort_priority
+    return kwargs
+
+
 class BGMPlayer:
     """Background music player using system audio tools.
 
@@ -142,10 +284,12 @@ class BGMPlayer:
     # Maximum consecutive auto-restarts before giving up.
     _MAX_AUTO_RESTARTS: int = 5
 
-    def __init__(self) -> None:
+    def __init__(self, *, auto_install_mpv: bool = False) -> None:
         self._proc: subprocess.Popen[bytes] | None = None
         self._current_file: Path | None = None
         self._sfx_procs: list[subprocess.Popen[bytes]] = []
+        self._auto_install_mpv = auto_install_mpv
+        self._mpv_install_attempted = False
         player = _find_player()
         self._player_cmd = player[0] if player else None
         self._player_args = player[1] if player else []
@@ -203,6 +347,28 @@ class BGMPlayer:
         """Whether an audio player is available on this system."""
         return self._player_cmd is not None
 
+    def _refresh_player(self) -> None:
+        """Refresh the selected player after an installation attempt."""
+        player = _find_player()
+        self._player_cmd = player[0] if player else None
+        self._player_args = player[1] if player else []
+
+    def _ensure_player_available(self) -> bool:
+        """Ensure an audio player is available, installing mpv on first use."""
+        if self._player_cmd != "mpv" and shutil.which("mpv"):
+            self._refresh_player()
+        elif (
+            self._auto_install_mpv
+            and not self._mpv_install_attempted
+            and not shutil.which("mpv")
+        ):
+            self._mpv_install_attempted = True
+            _install_mpv_best_effort()
+            self._refresh_player()
+        elif self._player_cmd is None:
+            self._refresh_player()
+        return self._player_cmd is not None
+
     def play(
         self,
         path: str | Path,
@@ -220,11 +386,14 @@ class BGMPlayer:
         Returns:
             True if playback started successfully.
         """
-        if self._player_cmd is None:
+        if not self._ensure_player_available():
             logger.warning(
                 "bgm_no_player",
                 hint="Install ffplay (ffmpeg) or mpv for BGM support",
             )
+            return False
+        player_cmd = self._player_cmd
+        if player_cmd is None:
             return False
 
         path = Path(path).resolve()
@@ -245,31 +414,26 @@ class BGMPlayer:
         self._volume = max(0, min(100, volume))
 
         # Build command
-        cmd = [self._player_cmd, *self._player_args]
+        cmd = [player_cmd, *self._player_args]
 
         # Remove loop args if not looping
         if not loop:
-            if self._player_cmd == "ffplay":
+            if player_cmd == "ffplay":
                 cmd = [c for c in cmd if c not in ("-loop", "0")]
-            elif self._player_cmd == "mpv":
-                cmd = [c for c in cmd if c != "--loop"]
+            elif player_cmd == "mpv":
+                cmd = [c for c in cmd if not c.startswith("--loop")]
 
         # Add volume control
-        cmd.extend(_build_volume_args(self._player_cmd, self._volume))
+        cmd.extend(_build_volume_args(player_cmd, self._volume))
         cmd.append(str(path))
 
         try:
-            self._proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
+            self._proc = subprocess.Popen(cmd, **_popen_kwargs())
             self._current_file = path
             logger.info(
                 "bgm_started",
                 file=path.name,
-                player=self._player_cmd,
+                player=player_cmd,
                 volume=self._volume,
             )
             return True
@@ -287,7 +451,10 @@ class BGMPlayer:
         Returns:
             True if SFX playback started successfully.
         """
-        if self._player_cmd is None:
+        if not self._ensure_player_available():
+            return False
+        player_cmd = self._player_cmd
+        if player_cmd is None:
             return False
 
         path = Path(path)
@@ -299,23 +466,18 @@ class BGMPlayer:
         self._sfx_procs = [p for p in self._sfx_procs if p.poll() is None]
 
         # Build one-shot command (no loop)
-        cmd: list[str] = [self._player_cmd]
-        if self._player_cmd == "ffplay":
+        cmd: list[str] = [player_cmd]
+        if player_cmd == "ffplay":
             cmd.extend(["-nodisp", "-autoexit", "-loglevel", "quiet"])
-        elif self._player_cmd == "mpv":
+        elif player_cmd == "mpv":
             cmd.extend(["--no-video", "--really-quiet"])
 
         vol = max(0, min(100, volume))
-        cmd.extend(_build_volume_args(self._player_cmd, vol))
+        cmd.extend(_build_volume_args(player_cmd, vol))
         cmd.append(str(path))
 
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
+            proc = subprocess.Popen(cmd, **_popen_kwargs())
             self._sfx_procs.append(proc)
             logger.info("sfx_started", file=path.name)
             return True

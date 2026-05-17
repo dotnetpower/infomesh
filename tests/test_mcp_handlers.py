@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from infomesh.credits.types import ContributionTier
 from infomesh.mcp.handlers import (
     MCP_API_VERSION,
     deduct_search_cost,
@@ -159,6 +160,7 @@ class TestHandleStats:
         store = _mock_store()
         ledger = MagicMock()
         ledger.balance.return_value = 42.5
+        ledger.tier.return_value = ContributionTier.TIER_1
         allowance = MagicMock()
         allowance.search_cost = 0.05
         allowance.state = MagicMock()
@@ -179,6 +181,32 @@ class TestHandleStats:
         data = json.loads(result[0].text)
         assert data["credits"]["balance"] == 42.5
         assert data["credits"]["state"] == "normal"
+
+    def test_with_ledger_tier_uses_contribution_score_not_balance(self) -> None:
+        store = _mock_store()
+        ledger = MagicMock()
+        ledger.balance.return_value = 5.0
+        ledger.tier.return_value = ContributionTier.TIER_3
+        allowance = MagicMock()
+        allowance.search_cost = 0.033
+        allowance.state = MagicMock()
+        allowance.state.value = "normal"
+        ledger.search_allowance.return_value = allowance
+
+        result = handle_stats(
+            {"format": "json"},
+            store=store,
+            vector_store=None,
+            link_graph=None,
+            ledger=ledger,
+            scheduler=None,
+            p2p_node=None,
+            distributed_index=None,
+            analytics=AnalyticsTracker(),
+        )
+        data = json.loads(result[0].text)
+        assert data["credits"]["balance"] == 5.0
+        assert data["credits"]["tier"] == 3
 
     def test_with_vector_store(self) -> None:
         store = _mock_store()
@@ -637,6 +665,7 @@ class TestHandleStatus:
         store = _mock_store()
         ledger = MagicMock()
         ledger.balance.return_value = 42.5
+        ledger.tier.return_value = ContributionTier.TIER_1
         allowance = MagicMock()
         allowance.search_cost = 0.05
         allowance.state = MagicMock()

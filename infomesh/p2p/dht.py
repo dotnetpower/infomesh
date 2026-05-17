@@ -110,9 +110,15 @@ class InfoMeshDHT:
             return False
 
         dht_key = keyword_to_dht_key(keyword)
+        existing_pointers = await self._read_keyword_pointers(keyword)
+        merged_pointers = _merge_pointers(
+            existing_pointers,
+            pointers,
+            limit=MAX_POINTERS_PER_KEYWORD,
+        )
         entry = {
             "keyword": keyword,
-            "pointers": pointers[:MAX_POINTERS_PER_KEYWORD],
+            "pointers": merged_pointers,
             "peer_id": self._peer_id,
             "timestamp": time.time(),
             "signature": signature,
@@ -125,12 +131,27 @@ class InfoMeshDHT:
             self._stats.keys_published += 1
             self._record_publish(keyword)
             logger.debug(
-                "dht_keyword_published", keyword=keyword, pointers=len(pointers)
+                "dht_keyword_published",
+                keyword=keyword,
+                pointers=len(merged_pointers),
             )
             return True
         except Exception:
             logger.exception("dht_publish_failed", keyword=keyword)
             return False
+
+    async def _read_keyword_pointers(self, keyword: str) -> list[dict[str, Any]]:
+        dht_key = keyword_to_dht_key(keyword)
+        try:
+            raw = await self._dht.get_value(dht_key)  # type: ignore[attr-defined]
+            if raw is None:
+                return []
+            entry = safe_unpackb(raw)
+            pointers = entry.get("pointers", [])
+            return pointers if isinstance(pointers, list) else []
+        except Exception:
+            logger.debug("dht_existing_keyword_read_failed", keyword=keyword)
+            return []
 
     async def query_keyword(self, keyword: str) -> list[dict[str, Any]]:
         """Query the DHT for peer pointers associated with a keyword.
@@ -357,3 +378,23 @@ class InfoMeshDHT:
     def _record_publish(self, keyword: str) -> None:
         """Record a publish timestamp for rate limiting."""
         self._publish_times.setdefault(keyword, []).append(time.time())
+
+
+def _merge_pointers(
+    existing: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, int], dict[str, Any]] = {}
+    for pointer in [*new, *existing]:
+        peer_id = pointer.get("peer_id", "")
+        doc_id = pointer.get("doc_id", 0)
+        if not isinstance(peer_id, str) or not isinstance(doc_id, int):
+            continue
+        key = (peer_id, doc_id)
+        if key not in merged:
+            merged[key] = pointer
+        if len(merged) >= limit:
+            break
+    return list(merged.values())

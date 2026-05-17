@@ -15,6 +15,8 @@ Usage::
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -58,7 +60,7 @@ class DegradeLevel(IntEnum):
 class GovernorState:
     """Observable state of the governor."""
 
-    degrade_level: int = DegradeLevel.NORMAL
+    degrade_level: DegradeLevel = DegradeLevel.NORMAL
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
     throttle_factor: float = 1.0  # 1.0 = full speed, 0.0 = paused
@@ -89,6 +91,26 @@ class ResourceGovernor:
     @property
     def state(self) -> GovernorState:
         return self._state
+
+    @property
+    def degrade_level(self) -> DegradeLevel:
+        """Current degradation level."""
+        return self._state.degrade_level
+
+    @property
+    def throttle_factor(self) -> float:
+        """Current crawl throttle factor between 0.0 and 1.0."""
+        return self._state.throttle_factor
+
+    @property
+    def cpu_percent(self) -> float:
+        """Last sampled CPU usage percentage."""
+        return self._state.cpu_percent
+
+    @property
+    def memory_percent(self) -> float:
+        """Last sampled memory usage percentage."""
+        return self._state.memory_percent
 
     @property
     def should_throttle_crawl(self) -> bool:
@@ -124,7 +146,7 @@ class ResourceGovernor:
     # ── OS-level priority ───────────────────────────────────────────────
 
     def apply_os_priority(self) -> None:
-        """Apply nice and ionice values from the profile.
+        """Apply CPU and I/O priority values from the profile.
 
         Safe to call on any OS — non-Unix platforms are silently skipped.
         """
@@ -132,6 +154,11 @@ class ResourceGovernor:
             logger.debug("os_priority_skip", reason="windows")
             return
 
+        self._apply_cpu_priority()
+        self._apply_io_priority()
+
+    def _apply_cpu_priority(self) -> None:
+        """Apply Unix nice value from the profile."""
         nice_value = self._profile.cpu_nice
         try:
             current = os.nice(0)
@@ -140,6 +167,30 @@ class ResourceGovernor:
                 logger.info("os_nice_set", nice=nice_value)
         except OSError as exc:
             logger.warning("os_nice_failed", error=str(exc))
+
+    def _apply_io_priority(self) -> None:
+        """Apply best-effort Linux ionice priority from the profile."""
+        if sys.platform != "linux" or shutil.which("ionice") is None:
+            return
+
+        match self._profile.disk_io_priority:
+            case "low":
+                args = ["ionice", "-c", "3", "-p", str(os.getpid())]
+            case "high":
+                args = ["ionice", "-c", "2", "-n", "0", "-p", str(os.getpid())]
+            case _:
+                args = ["ionice", "-c", "2", "-n", "4", "-p", str(os.getpid())]
+
+        try:
+            subprocess.run(
+                args,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("ionice_set", priority=self._profile.disk_io_priority)
+        except OSError as exc:
+            logger.debug("ionice_failed", error=str(exc))
 
     # ── Periodic check ──────────────────────────────────────────────────
 

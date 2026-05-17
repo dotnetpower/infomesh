@@ -200,7 +200,7 @@ On the first run it may take a few seconds to download; subsequent runs are inst
 # Crawl a webpage and index it
 uvx infomesh crawl https://docs.python.org/3/library/asyncio.html
 
-# Search your local index
+# Search your local index and peers
 uvx infomesh search "asyncio"
 
 # View the node dashboard (works over SSH too)
@@ -291,7 +291,7 @@ docker run -d --name infomesh \
 ### Verify It Works
 
 ```bash
-# Search your local index
+# Search your local index and peers
 uvx infomesh search "python asyncio tutorial"
 
 # Check node status
@@ -339,28 +339,28 @@ See [examples/README.md](examples/README.md) for the full list.
 | 🔐 **Content Integrity** | SHA-256 + Ed25519 attestation on every page. Random audits + Merkle proofs |
 | 🤏 **zstd Compression** | Index snapshots and network transfers compressed with zstandard |
 | 📊 **Console Dashboard** | Beautiful Textual TUI with 6 tabs: Overview, Crawl, Search, Network, Credits, Settings |
+| 🌏 **CJK Search** | Native Chinese/Japanese/Korean tokenization with bigram/trigram expansion |
+| 📡 **RSS Monitoring** | Continuous RSS/Atom feed polling with priority-based scheduling |
+| 🖥️ **JS Rendering** | Optional Playwright for SPA/React pages (headless Chromium) |
+| 📈 **Implicit Feedback** | LLM-native quality signals (fetch/skip/cite) for ranking improvement |
+| 🩺 **Diagnostics** | `infomesh doctor` checks health; `infomesh bench` measures performance |
+| 🔌 **Plugin System** | Extensible hook-based API for custom crawlers, rankers, and tokenizers |
+| 🌐 **Web Dashboard** | Browser-based dashboard at `localhost:8080/dashboard` with 5 tabs |
 
 ### MCP Integration — Free Web Search for AI Assistants
 
 Most commercial search APIs charge per query or require a paid subscription.
-InfoMesh exposes **15 MCP tools completely free** — no API key, no billing:
+InfoMesh exposes **5 consolidated MCP tools completely free** — no API key, no billing:
 
 | Tool | Description |
 |------|-------------|
-| `search(query, limit)` | Full network search — merges local + remote results, ranked by BM25 + freshness + trust |
-| `search_local(query, limit)` | Local-only search (works offline, < 10ms) |
-| `fetch_page(url)` | Return full extracted text for a URL (from index cache or live crawl) |
-| `crawl_url(url, depth)` | Submit a URL to be crawled and indexed by the network |
-| `network_stats()` | Network status: peer count, index size, credit balance |
-| `batch_search(queries)` | Run up to 10 search queries in one call |
-| `suggest(prefix)` | Autocomplete / search suggestions |
-| `register_webhook(url)` | Register webhook for crawl completion notifications |
-| `analytics()` | Search/crawl/fetch counts and average latency |
-| `explain(query)` | **NEW** — Score breakdown: BM25, freshness, trust components per result |
-| `search_history(action)` | **NEW** — View or clear past search queries with latency stats |
-| `search_rag(query)` | **NEW** — RAG-optimized chunked output with source attribution |
-| `extract_answer(query)` | **NEW** — Direct answer extraction with confidence scores |
-| `fact_check(claim)` | **NEW** — Cross-reference claims against indexed sources |
+| `web_search(query, ...)` | Unified search — P2P + local, RAG, explain, answer extraction. CJK auto-detect |
+| `fetch_page(url)` | Full extracted text for a URL (cached or live, max 100KB) |
+| `crawl_url(url, depth, force)` | Crawl a URL and add to the index (60/hr rate limit) |
+| `fact_check(claim, top_k)` | Cross-reference claims against indexed sources |
+| `status()` | Node status: index size, peers, credits, analytics |
+
+> Legacy tool names (`search`, `search_local`, `network_stats`, etc.) are still accepted for backward compatibility.
 
 #### Configure in VS Code / Copilot / Claude Desktop / Cursor
 
@@ -379,10 +379,39 @@ InfoMesh exposes **15 MCP tools completely free** — no API key, no billing:
 
 ```bash
 # Vector search with ChromaDB + sentence-transformers
-uv sync --extra vector
+pip install 'infomesh[vector]'
 
 # Local LLM summarization via Ollama
-uv sync --extra llm
+pip install 'infomesh[llm]'
+
+# JavaScript rendering for SPA pages (Playwright)
+pip install 'infomesh[browser]'
+
+# Chinese/Japanese/Korean tokenization (jieba)
+pip install 'infomesh[cjk]'
+
+# Everything
+pip install 'infomesh[all]'
+```
+
+### CLI Commands
+
+```bash
+infomesh start                  # Start node (auto-prompts starter index download)
+infomesh start --background     # Headless mode (no dashboard)
+infomesh start --role crawler   # DMZ crawler-only node
+infomesh search "query"         # Search local index + peers
+infomesh search --local "query" # Search local index only
+infomesh crawl https://...      # Crawl a URL
+infomesh dashboard              # Interactive TUI dashboard
+infomesh doctor                 # System diagnostics (10 checks)
+infomesh bench                  # Performance benchmarks
+infomesh feedback stats         # Implicit search quality signals
+infomesh feedback top-urls      # Highest-quality URLs by feedback
+infomesh feeds import subs.opml # Import RSS/Atom feeds from OPML
+infomesh index import --starter # Download community starter index
+infomesh mcp                    # Start MCP server (stdio)
+infomesh mcp --http --port 8081 # Start MCP server (HTTP)
 ```
 
 ---
@@ -735,17 +764,17 @@ We welcome contributions of all kinds — code, documentation, bug reports, feat
 # Clone and install
 git clone https://github.com/dotnetpower/infomesh.git
 cd infomesh
-uv sync --dev
+uv sync --dev --locked
 
-# Run the test suite (1,307 tests)
-uv run pytest
+# Run the supported test suite
+uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short
 
 # Run linter + formatter
 uv run ruff check infomesh/ tests/
-uv run ruff format .
+uv run ruff format --check .
 
 # Run type checker
-uv run mypy infomesh/
+uv run mypy infomesh/ --ignore-missing-imports
 ```
 
 ### Ways to Contribute
@@ -755,7 +784,7 @@ uv run mypy infomesh/
 | 🐛 Report a bug | Easy | High — helps everyone |
 | 📝 Improve docs / translations | Easy | High — lowers entry barrier |
 | 🌱 Add seed URLs | Easy | Medium — expands crawl coverage |
-| 🧪 Write tests | Medium | High — currently 1,307 tests, always need more |
+| 🧪 Write tests | Medium | High — keeps distributed search, crawling, and dashboard regressions covered |
 | 🔧 Fix an issue | Medium | Direct impact |
 | ✨ Implement a feature | Hard | Moves the project forward |
 | 🔐 Security audit | Hard | Critical for trust |
@@ -774,7 +803,7 @@ uv run mypy infomesh/
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feat/my-feature`
 3. Write code + tests
-4. Run `uv run pytest && uv run ruff check .`
+4. Run `uv run ruff check infomesh/ tests/`, `uv run ruff format --check .`, `uv run mypy infomesh/ --ignore-missing-imports`, and `uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short`
 5. Submit a PR — you earn **1,000 – 100,000 credits** per merged PR!
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
@@ -806,12 +835,12 @@ Detailed documentation is available in the [docs/](docs/) directory:
 
 | Metric | Value |
 |--------|-------|
-| Source modules | 130+ |
-| Test files | 67 |
-| Source lines | ~27,000 |
-| Test lines | ~14,000 |
-| Tests passing | 1,307 |
-| MCP tools | 15 |
+| Source modules | 158 |
+| Test files | 89 |
+| Source lines | ~46,000 |
+| Test lines | ~23,000 |
+| Tests passing | 1,844 |
+| MCP tools | 5 consolidated tools (legacy names supported) |
 | Test coverage | Core modules fully tested |
 | Development phases | 10 (Phase 0 → 6, all complete) |
 | Python version | 3.12+ |

@@ -18,10 +18,12 @@ Usage::
 from __future__ import annotations
 
 import gzip
+import io
 import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 import httpx
 import structlog
@@ -37,9 +39,59 @@ logger = structlog.get_logger()
 # Maximum text size per document (100KB)
 _MAX_TEXT_SIZE = 102_400
 
+# Maximum WET payload size to hold in memory. The importer still parses WET
+# files in-memory, so keep both compressed downloads and decompressed text bound.
+_MAX_WET_FILE_BYTES = 256 * 1024 * 1024
+_WET_CHUNK_SIZE = 1024 * 1024
+
 # WARC record boundary
 _WARC_RECORD_RE = re.compile(r"^WARC/1\.0\r?\n", re.MULTILINE)
 _WARC_HEADER_RE = re.compile(r"^([A-Za-z-]+):\s*(.+?)\s*$", re.MULTILINE)
+
+
+class _BinaryReader(Protocol):
+    def read(self, size: int = -1) -> bytes: ...
+
+
+def _format_bytes(size: int) -> str:
+    """Return a compact MiB string for diagnostics."""
+    return f"{size / (1024 * 1024):.0f} MiB"
+
+
+def _too_large_message(source: str, limit: int | None = None) -> str:
+    """Build a consistent size-limit error message."""
+    max_bytes = _MAX_WET_FILE_BYTES if limit is None else limit
+    return f"WET input exceeds {_format_bytes(max_bytes)} limit: {source}"
+
+
+def _read_binary_limited(
+    stream: _BinaryReader,
+    source: str,
+    *,
+    limit: int | None = None,
+) -> bytes:
+    """Read a binary stream while enforcing a hard byte limit."""
+    max_bytes = _MAX_WET_FILE_BYTES if limit is None else limit
+    chunks: list[bytes] = []
+    total = 0
+
+    while True:
+        chunk = stream.read(_WET_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(_too_large_message(source, max_bytes))
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
+def _decode_gzip_limited(data: bytes, source: str) -> str:
+    """Decode gzip content while bounding the decompressed payload size."""
+    with gzip.GzipFile(fileobj=io.BytesIO(data)) as stream:
+        raw = _read_binary_limited(stream, source)
+    return raw.decode("utf-8", errors="replace")
 
 
 @dataclass(frozen=True)
@@ -307,17 +359,43 @@ class CommonCrawlImporter:
         async with httpx.AsyncClient(
             timeout=120.0, verify=create_ssl_context()
         ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
+            async with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+
+                content_length = resp.headers.get("content-length")
+                if content_length is not None:
+                    try:
+                        declared_size = int(content_length)
+                    except ValueError:
+                        declared_size = 0
+                    if declared_size > _MAX_WET_FILE_BYTES:
+                        raise ValueError(_too_large_message(url))
+
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes(chunk_size=_WET_CHUNK_SIZE):
+                    total += len(chunk)
+                    if total > _MAX_WET_FILE_BYTES:
+                        raise ValueError(_too_large_message(url))
+                    chunks.append(chunk)
+
+            raw = b"".join(chunks)
 
             if url.endswith(".gz"):
-                return gzip.decompress(resp.content).decode("utf-8", errors="replace")
-            return resp.text
+                return _decode_gzip_limited(raw, url)
+            return raw.decode("utf-8", errors="replace")
 
     def _read_local_wet(self, path: str) -> str:
         """Read a local WET file (supports .gz)."""
+        source = str(path)
+        file_size = Path(path).stat().st_size
+        if file_size > _MAX_WET_FILE_BYTES:
+            raise ValueError(_too_large_message(source))
+
         if path.endswith(".gz"):
-            with gzip.open(path, "rt", encoding="utf-8", errors="replace") as f:
-                return f.read()
-        with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read()
+            with open(path, "rb") as f:
+                compressed = _read_binary_limited(f, source)
+            return _decode_gzip_limited(compressed, source)
+        with open(path, "rb") as f:
+            raw = _read_binary_limited(f, source)
+        return raw.decode("utf-8", errors="replace")

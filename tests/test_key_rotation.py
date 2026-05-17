@@ -72,10 +72,7 @@ class TestRotateKeys:
         assert len(revocation_files) == 1
 
     def test_rotate_twice_creates_two_backups(self, keys_dir: Path) -> None:
-        import time
-
         rotate_keys(keys_dir)
-        time.sleep(1.1)  # ensure different timestamp
         rotate_keys(keys_dir)
 
         backups = list((keys_dir / "keys").glob("backup-*"))

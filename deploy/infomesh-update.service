@@ -1,0 +1,8 @@
+[Unit]
+Description=InfoMesh auto-update check
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/infomesh-update.sh
+User=root

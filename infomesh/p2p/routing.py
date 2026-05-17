@@ -19,24 +19,27 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from math import isfinite
 
 import structlog
 
 from infomesh.p2p.peer_profile import PeerProfileTracker
 from infomesh.p2p.protocol import (
+    MAX_MESSAGE_SIZE,
     PROTOCOL_SEARCH,
     MessageType,
     SearchRequest,
     SearchResponse,
     dataclass_to_payload,
+    decode_message,
     encode_message,
-    safe_unpackb,
 )
 
 logger = structlog.get_logger()
 
-# Timeout for remote search responses (ms)
-SEARCH_TIMEOUT_MS = 2000
+# Timeout for remote search responses (ms).  Bootstrap and low-resource peers can
+# be busy republishing or crawling, so keep this above transient VM jitter.
+SEARCH_TIMEOUT_MS = 5000
 
 # Maximum peers to fan-out a query to
 MAX_FANOUT = 5
@@ -47,6 +50,9 @@ MAX_RESULTS_PER_PEER = 20
 # Hedged request: if first peer doesn't respond within this fraction
 # of the adaptive timeout, also send to a backup peer.
 HEDGE_TIMEOUT_FRACTION = 0.5
+
+_LENGTH_PREFIX_BYTES = 4
+_SEARCH_STREAM_MAX_BYTES = min(MAX_MESSAGE_SIZE, 1024 * 1024)
 
 
 @dataclass
@@ -148,20 +154,30 @@ class QueryRouter:
         import trio
 
         self._stats.queries_routed += 1
+        if limit <= 0:
+            return []
 
         # Step 1: Find candidate peers via DHT
         peer_scores: dict[str, float] = {}
         for kw in keywords:
             pointers = await self._dht.query_keyword(kw)  # type: ignore[attr-defined]
             for ptr in pointers:
-                pid = ptr.get("peer_id", "")
+                pid = _payload_str(ptr.get("peer_id"))
                 if pid and pid != self._peer_id:
-                    peer_scores[pid] = peer_scores.get(pid, 0) + ptr.get("score", 0.5)
+                    score = _payload_float(ptr.get("score"), default=0.5)
+                    peer_scores[pid] = peer_scores.get(pid, 0.0) + score
 
         if not peer_scores:
-            logger.debug("route_query_no_peers", query=query)
-            self._stats.queries_local_only += 1
-            return []
+            peer_scores.update(self._connected_peer_scores())
+            if not peer_scores:
+                logger.debug("route_query_no_peers", query=query)
+                self._stats.queries_local_only += 1
+                return []
+            logger.debug(
+                "route_query_connected_peer_fallback",
+                query=query,
+                peers=len(peer_scores),
+            )
 
         # Step 2: Select top-N peers — latency-aware ranking
         ranked_peers = sorted(peer_scores.items(), key=lambda x: x[1], reverse=True)
@@ -193,7 +209,7 @@ class QueryRouter:
                 self._stats.record_response(elapsed)
                 self._profiles.record(peer_id, elapsed, success=True)
                 return results
-            except Exception:
+            except Exception as exc:
                 elapsed = (time.monotonic() - start) * 1000
                 self._stats.peers_timed_out += 1
                 self._profiles.record(peer_id, elapsed, success=False)
@@ -201,6 +217,8 @@ class QueryRouter:
                     "peer_query_failed",
                     peer_id=peer_id,
                     elapsed_ms=elapsed,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
                 )
                 return []
 
@@ -215,13 +233,23 @@ class QueryRouter:
             )
 
             async def _task(pid: str, send_chan: object) -> None:
-                peer_timeout = self._profiles.adaptive_timeout(
-                    pid,
-                    base_ms=float(self._timeout_ms),
-                )
-                with trio.move_on_after(peer_timeout / 1000):
-                    res = await _query_peer(pid)
-                    await send_chan.send(res)  # type: ignore[attr-defined]
+                async with send_chan:  # type: ignore[attr-defined]
+                    peer_timeout = self._profiles.adaptive_timeout(
+                        pid,
+                        base_ms=float(self._timeout_ms),
+                    )
+                    with trio.move_on_after(peer_timeout / 1000) as cancel_scope:
+                        res = await _query_peer(pid)
+                        await send_chan.send(res)  # type: ignore[attr-defined]
+                    if cancel_scope.cancelled_caught:
+                        self._stats.peers_timed_out += 1
+                        self._profiles.record(pid, peer_timeout, success=False)
+                        logger.debug(
+                            "peer_query_timeout",
+                            peer_id=pid,
+                            timeout_ms=peer_timeout,
+                        )
+                        await send_chan.send([])  # type: ignore[attr-defined]
 
             async with results_chan_send:
                 for pid in target_peers:
@@ -237,6 +265,22 @@ class QueryRouter:
         # Step 4: Sort by score and limit
         all_results.sort(key=lambda r: r.score, reverse=True)
         return all_results[:limit]
+
+    def _connected_peer_scores(self) -> dict[str, float]:
+        get_connected = getattr(self._host, "get_connected_peers", None)
+        if not callable(get_connected):
+            return {}
+        try:
+            peer_ids = get_connected()
+        except Exception:
+            return {}
+
+        scores: dict[str, float] = {}
+        for peer_id in peer_ids:
+            pid = str(peer_id)
+            if pid and pid != self._peer_id:
+                scores[pid] = 0.1
+        return scores
 
     async def _send_search_request(
         self,
@@ -264,21 +308,25 @@ class QueryRouter:
             await stream.write(msg)
 
             # Read response
-            response_data = await stream.read(1024 * 64)  # 64KB max
-            if not response_data:
+            msg_type, payload = await _read_stream_message(stream)
+            if msg_type != MessageType.SEARCH_RESPONSE:
                 return []
-
-            unpacked = safe_unpackb(response_data)
             results = []
-            for r in unpacked.get("payload", {}).get("results", []):
+            response_results = payload.get("results", [])
+            if not isinstance(response_results, list):
+                return []
+            result_limit = min(max(request.limit, 0), MAX_RESULTS_PER_PEER)
+            for r in response_results[:result_limit]:
+                if not isinstance(r, dict):
+                    continue
                 results.append(
                     RemoteSearchResult(
-                        url=r.get("url", ""),
-                        title=r.get("title", ""),
-                        snippet=r.get("snippet", ""),
-                        score=r.get("score", 0.0),
+                        url=_payload_str(r.get("url")),
+                        title=_payload_str(r.get("title")),
+                        snippet=_payload_str(r.get("snippet")),
+                        score=_payload_float(r.get("score")),
                         peer_id=peer_id,
-                        doc_id=r.get("doc_id", 0),
+                        doc_id=_payload_int(r.get("doc_id")),
                     )
                 )
             return results
@@ -300,24 +348,21 @@ class QueryRouter:
             local_search_fn: Async function(query, limit) → list of SearchResult dicts.
         """
         try:
-            data = await stream.read(1024 * 64)  # type: ignore[attr-defined]
-            if not data:
+            msg_type, payload = await _read_stream_message(stream)
+
+            if msg_type != MessageType.SEARCH_REQUEST:
                 return
 
-            unpacked = safe_unpackb(data)
-            msg_type = unpacked.get("type", -1)
-            payload = unpacked.get("payload", {})
-
-            if msg_type != int(MessageType.SEARCH_REQUEST):
-                return
-
-            query = payload.get("query", "")
-            limit = min(payload.get("limit", 10), 100)
-            request_id = payload.get("request_id", "")
+            query = _payload_str(payload.get("query"))
+            limit = min(max(_payload_int(payload.get("limit"), default=10), 1), 100)
+            request_id = _payload_str(payload.get("request_id"))
 
             # Perform local search
             start = time.monotonic()
-            results = await local_search_fn(query, limit)  # type: ignore[operator]
+            if query.strip():
+                results = await local_search_fn(query, limit)  # type: ignore[operator]
+            else:
+                results = []
             elapsed = (time.monotonic() - start) * 1000
 
             # Build response
@@ -335,3 +380,56 @@ class QueryRouter:
             logger.exception("handle_search_request_failed")
         finally:
             await stream.close()  # type: ignore[attr-defined]
+
+
+async def _read_stream_message(stream: object) -> tuple[MessageType, dict[str, object]]:
+    prefix = await _read_exact(stream, _LENGTH_PREFIX_BYTES)
+    length = int.from_bytes(prefix, byteorder="big")
+    if length <= 0:
+        raise ValueError("Empty P2P search message")
+    if length > _SEARCH_STREAM_MAX_BYTES:
+        raise ValueError(f"P2P search message too large: {length} bytes")
+    body = await _read_exact(stream, length)
+    msg_type, payload = decode_message(prefix + body)
+    if not isinstance(payload, dict):
+        raise ValueError("P2P search payload must be a map")
+    return msg_type, payload
+
+
+async def _read_exact(stream: object, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining > 0:
+        chunk = await stream.read(remaining)  # type: ignore[attr-defined]
+        if not isinstance(chunk, bytes):
+            raise TypeError("P2P stream read returned non-bytes data")
+        if not chunk:
+            raise EOFError("P2P stream closed before message was complete")
+        if len(chunk) > remaining:
+            raise ValueError("P2P stream returned more bytes than requested")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _payload_str(value: object, *, default: str = "") -> str:
+    return value if isinstance(value, str) else default
+
+
+def _payload_int(value: object, *, default: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _payload_float(value: object, *, default: float = 0.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if isfinite(parsed) else default

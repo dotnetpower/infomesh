@@ -1,0 +1,11 @@
+[Unit]
+Description=InfoMesh auto-update timer
+Documentation=https://github.com/dotnetpower/infomesh
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

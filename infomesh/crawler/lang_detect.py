@@ -217,6 +217,60 @@ _COMMON_WORDS: dict[str, set[str]] = {
         "так",
         "его",
     },
+    "tr": {
+        "bir",
+        "ve",
+        "bu",
+        "da",
+        "de",
+        "için",
+        "ile",
+        "olan",
+        "gibi",
+        "daha",
+        "çok",
+        "var",
+        "ama",
+        "olarak",
+        "sonra",
+        "kadar",
+    },
+    "vi": {
+        "của",
+        "và",
+        "là",
+        "có",
+        "trong",
+        "được",
+        "cho",
+        "không",
+        "này",
+        "với",
+        "các",
+        "những",
+        "một",
+        "để",
+        "từ",
+        "đã",
+    },
+    "id": {
+        "dan",
+        "di",
+        "yang",
+        "untuk",
+        "dengan",
+        "ini",
+        "itu",
+        "dari",
+        "pada",
+        "adalah",
+        "atau",
+        "tidak",
+        "juga",
+        "akan",
+        "ke",
+        "oleh",
+    },
 }
 
 # Unicode block patterns for script detection
@@ -238,6 +292,11 @@ _HIRAGANA_KATAKANA = (
 )
 
 _CYRILLIC_RANGE = ("\u0400", "\u04ff")
+
+# Additional script ranges
+_ARABIC_RANGE = ("\u0600", "\u06ff")  # Arabic
+_DEVANAGARI_RANGE = ("\u0900", "\u097f")  # Devanagari (Hindi, Sanskrit)
+_THAI_RANGE = ("\u0e00", "\u0e7f")  # Thai
 
 
 def _detect_script(text: str) -> str:
@@ -273,6 +332,12 @@ def _detect_script(text: str) -> str:
                     lo_c, hi_c = _CYRILLIC_RANGE
                     if ord(lo_c) <= cp <= ord(hi_c):
                         counts["Cyrillic"] += 1
+                    elif ord(_ARABIC_RANGE[0]) <= cp <= ord(_ARABIC_RANGE[1]):
+                        counts["Arabic"] += 1
+                    elif ord(_DEVANAGARI_RANGE[0]) <= cp <= ord(_DEVANAGARI_RANGE[1]):
+                        counts["Devanagari"] += 1
+                    elif ord(_THAI_RANGE[0]) <= cp <= ord(_THAI_RANGE[1]):
+                        counts["Thai"] += 1
                     elif ch.isalpha():
                         counts["Latin"] += 1
 
@@ -329,6 +394,24 @@ def detect_language(
         return LanguageDetectionResult(
             language=lang,
             confidence=0.85,
+            script=script,
+        )
+    if script == "Arabic":
+        return LanguageDetectionResult(
+            language="ar",
+            confidence=0.90,
+            script=script,
+        )
+    if script == "Devanagari":
+        return LanguageDetectionResult(
+            language="hi",
+            confidence=0.90,
+            script=script,
+        )
+    if script == "Thai":
+        return LanguageDetectionResult(
+            language="th",
+            confidence=0.95,
             script=script,
         )
 

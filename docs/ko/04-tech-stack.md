@@ -28,6 +28,8 @@
 | **BeautifulSoup4** | trafilatura 실패 시 HTML 파싱 폴백 |
 | **vLLM** | 고성능 GPU 추론 (올라마/llama.cpp 대안) |
 | **sentence-transformers** | ChromaDB 벡터 인덱스용 임베딩 생성 |
+| **Playwright** | JS 렌더링 페이지용 헤드리스 Chromium (`pip install 'infomesh[browser]'`) |
+| **jieba** | CJK 검색용 중국어 단어 분할 (`pip install 'infomesh[cjk]'`) |
 
 ---
 
@@ -162,12 +164,12 @@ infomesh/
 ### 주요 명령
 
 ```bash
-uv sync              # 모든 의존성 설치 (.venv 자동 생성)
-uv sync --dev        # 개발 의존성 포함 설치
+uv sync --locked     # uv.lock 기반으로 모든 의존성 설치
+uv sync --dev --locked  # uv.lock 기반으로 개발 의존성 포함 설치
 uv add <package>     # 새 의존성 추가
 uv add --dev <pkg>   # 개발 의존성 추가
 uv run <command>     # 프로젝트 환경에서 명령 실행
-uv run pytest        # 테스트 실행
+uv run pytest tests/ --ignore=tests/test_vector.py -x -q --tb=short
 uv run infomesh start  # 애플리케이션 실행
 ```
 

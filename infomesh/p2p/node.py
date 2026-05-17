@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
 
 import structlog
 
@@ -124,6 +125,7 @@ class InfoMeshNode:
         # libp2p objects (initialized in trio context)
         self._host: object | None = None
         self._dht: InfoMeshDHT | None = None
+        self._distributed_index: object | None = None
         self._router: QueryRouter | None = None
         self._replicator: Replicator | None = None
 
@@ -253,6 +255,11 @@ class InfoMeshNode:
         return self._router
 
     @property
+    def distributed_index(self) -> object | None:
+        """Distributed index bound to this node's trio DHT."""
+        return self._distributed_index
+
+    @property
     def replicator(self) -> Replicator | None:
         """The replicator (available when running)."""
         return self._replicator
@@ -367,6 +374,74 @@ class InfoMeshNode:
                 timeout=_SEARCH_NETWORK_TIMEOUT,
             )
             return []
+
+    async def publish_document_to_network(
+        self,
+        doc_id: int,
+        url: str,
+        title: str,
+        text: str,
+        score: float = 1.0,
+    ) -> int:
+        """Publish one local document to the DHT from asyncio code."""
+        return await self.publish_documents_to_network(
+            [
+                {
+                    "doc_id": doc_id,
+                    "url": url,
+                    "title": title,
+                    "text": text,
+                    "score": score,
+                }
+            ]
+        )
+
+    async def publish_documents_to_network(
+        self,
+        documents: list[dict[str, object]],
+    ) -> int:
+        """Publish local documents to the DHT from asyncio code."""
+        if (
+            self._distributed_index is None
+            or self._trio_token is None
+            or self._state != NodeState.RUNNING
+            or not documents
+        ):
+            return 0
+
+        import asyncio
+
+        _PUBLISH_TIMEOUT = 60
+
+        def _sync_bridge() -> int:
+            import trio
+
+            from infomesh.index.distributed import DistributedIndex
+
+            async def _do() -> int:
+                dist = cast(DistributedIndex, self._distributed_index)
+                return await dist.publish_batch(documents)
+
+            return trio.from_thread.run(
+                _do,
+                trio_token=self._trio_token,  # type: ignore[arg-type]
+            )
+
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_sync_bridge),
+                timeout=_PUBLISH_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.warning(
+                "publish_network_timeout",
+                documents=len(documents),
+                timeout=_PUBLISH_TIMEOUT,
+            )
+            return 0
+        except Exception:
+            logger.exception("publish_network_failed", documents=len(documents))
+            return 0
 
     # ─── Lifecycle ─────────────────────────────────────────
 
@@ -565,7 +640,10 @@ class InfoMeshNode:
 
     def _init_subsystems(self, kad_dht: object) -> None:
         """Initialize DHT, router, replicator, and URL assigner."""
+        from infomesh.index.distributed import DistributedIndex
+
         self._dht = InfoMeshDHT(kad_dht, self._peer_id)
+        self._distributed_index = DistributedIndex(self._dht, self._peer_id)
         self._router = QueryRouter(self._dht, self._host, self._peer_id)
         self._replicator = Replicator(
             self._host,
@@ -964,6 +1042,10 @@ class InfoMeshNode:
             try:
                 maddr = Multiaddr(addr_str)
                 peer_info = info_from_p2p_addr(maddr)
+                peer_id = str(getattr(peer_info, "peer_id", ""))
+                if peer_id == self._peer_id:
+                    logger.debug("bootstrap_self_skipped", addr=addr_str)
+                    continue
                 timed_out = True
                 with _trio.move_on_after(10):  # 10s timeout per peer
                     await self._host.connect(peer_info)  # type: ignore[union-attr]

@@ -3,16 +3,28 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from infomesh.crawler.dedup import DeduplicatorDB, content_hash, normalize_url
-from infomesh.crawler.parser import extract_canonical, extract_links
+from infomesh.crawler.intelligence import (
+    CrawlSpeedTuner,
+    RobotsCache,
+    extract_image_alt_texts,
+)
+from infomesh.crawler.parser import (
+    ParsedPage,
+    _extract_image_alts,
+    extract_canonical,
+    extract_links,
+)
 from infomesh.crawler.robots import _CRAWL_DELAY_RE, _SITEMAP_RE, RobotsChecker
 from infomesh.crawler.scheduler import Scheduler
 from infomesh.crawler.seeds import load_seeds
+from infomesh.resources.governor import DegradeLevel
 
 
 class TestNormalizeUrl:
@@ -134,6 +146,45 @@ class TestExtractLinks:
         html = '<a href="javascript:void(0)">Click</a>'
         links = extract_links(html, "https://example.com/")
         assert len(links) == 0
+
+
+class TestImageAltExtraction:
+    def test_parser_extracts_and_deduplicates_alt_text(self) -> None:
+        html = '<img alt="First image"><img alt="First image"><img alt="Second image">'
+        alts = _extract_image_alts(html)
+        assert alts == ["First image", "Second image"]
+
+    def test_parser_skips_short_alt_text(self) -> None:
+        assert _extract_image_alts('<img alt="Hi">') == []
+
+    def test_parsed_page_default_image_alt_texts(self) -> None:
+        page = ParsedPage(
+            url="https://example.com",
+            title="Test",
+            text="Content",
+            language="en",
+            raw_html_hash="abc",
+            text_hash="def",
+        )
+        assert page.image_alt_texts == ()
+
+
+class TestCrawlIntelligence:
+    def test_robots_cache_export_import(self) -> None:
+        cache = RobotsCache()
+        cache.put("a.com", True)
+        cache.put("b.com", False)
+
+        imported = RobotsCache().import_from_dht(cache.export_for_dht())
+        assert imported == 2
+
+    def test_crawl_speed_tuner_returns_positive_delay(self) -> None:
+        state = CrawlSpeedTuner().adjust()
+        assert state.current_delay > 0
+
+    def test_extract_image_alt_texts_filters_placeholders(self) -> None:
+        html = '<img alt="Python logo"><img alt="icon">'
+        assert extract_image_alt_texts(html) == ["Python logo"]
 
 
 # ── Canonical tag tests ──────────────────────────────────────────────
@@ -692,3 +743,59 @@ class TestReseedQueue:
 
         added = await _reseed_queue(ctx, MagicMock())
         assert added == 0
+
+
+class TestCrawlLoopGovernorBackpressure:
+    """Tests for resource-governor integration in the crawl loop."""
+
+    @pytest.mark.asyncio
+    async def test_pause_uses_public_governor_state(self) -> None:
+        from infomesh.crawler.crawl_loop import _apply_governor_backpressure
+
+        state = SimpleNamespace(
+            degrade_level=DegradeLevel.WARNING,
+            cpu_percent=65.0,
+            memory_percent=40.0,
+            throttle_factor=0.5,
+        )
+        governor = MagicMock()
+        governor.check_and_adjust.return_value = state
+        governor.should_pause_crawl = True
+        governor.should_throttle_crawl = True
+        ctx = MagicMock()
+        ctx.governor = governor
+
+        with patch(
+            "infomesh.crawler.crawl_loop.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            paused = await _apply_governor_backpressure(ctx, MagicMock())
+
+        assert paused is True
+        mock_sleep.assert_awaited_once_with(10)
+
+    @pytest.mark.asyncio
+    async def test_throttle_delay_increases_as_factor_drops(self) -> None:
+        from infomesh.crawler.crawl_loop import _apply_governor_backpressure
+
+        state = SimpleNamespace(
+            degrade_level=DegradeLevel.NORMAL,
+            cpu_percent=50.0,
+            memory_percent=30.0,
+            throttle_factor=0.25,
+        )
+        governor = MagicMock()
+        governor.check_and_adjust.return_value = state
+        governor.should_pause_crawl = False
+        governor.should_throttle_crawl = True
+        ctx = MagicMock()
+        ctx.governor = governor
+
+        with patch(
+            "infomesh.crawler.crawl_loop.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            paused = await _apply_governor_backpressure(ctx, MagicMock())
+
+        assert paused is False
+        mock_sleep.assert_awaited_once_with(1.5)

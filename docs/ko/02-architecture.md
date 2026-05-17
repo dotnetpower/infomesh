@@ -69,6 +69,10 @@ InfoMesh DHT:
 ```
 
 DHT는 Kademlia 기반. 노드 ID는 160비트. 거리 = XOR 메트릭.
+키워드 항목은 기존 포인터를 덮어쓰지 않고 병합하므로 여러 피어와
+문서가 같은 키워드를 광고할 수 있습니다. 노드는 시작 시 기존 로컬
+인덱스를 다시 발행하고, 새로 크롤링한 문서는 로컬 인덱싱 직후
+DHT에 발행하여 부트스트랩 노드의 콘텐츠가 재시작 후에도 발견됩니다.
 
 두 가지 용도:
 1. **역인덱스**: `hash(keyword)` → `(peer_id, doc_id, score)` 포인터 목록
@@ -349,8 +353,10 @@ infomesh stop                       # 정상 종료
 infomesh status                     # 노드 상태 및 통계
 
 # 검색
-infomesh search "쿼리"              # 터미널에서 검색
-infomesh search --local "쿼리"      # 로컬 전용 검색
+infomesh search "쿼리"              # 로컬 인덱스 + 피어 검색
+infomesh search --limit 5 "쿼리"    # 결과 1-100개 반환
+infomesh search --local "쿼리"      # 로컬 전용/오프라인 검색
+infomesh search --local-only "쿼리" # --local 별칭
 
 # 관리
 infomesh config show                # 현재 설정 표시
@@ -439,6 +445,10 @@ Common Crawl:
 
 노드는 하드웨어에 맞는 4가지 사전 정의된 리소스 프로파일을 선택할 수 있습니다:
 
+이 프로파일 한도는 worker governor가 throttling과 priority 결정을 할 때
+사용하는 목표값입니다. 명시적인 P2P 대역폭 제한이 필요하면 하위 `[network]`
+설정을 그대로 사용할 수 있습니다.
+
 | 프로파일 | CPU 제한 | 네트워크 | 동시 크롤링 | LLM | 적합한 환경 |
 |---------|---------|---------|-----------|-----|-----------|
 | **minimal** | 1 코어, nice 19 | ↓1/↑0.5 Mbps | 1 | 비활성 | 노트북, 배터리 |
@@ -452,6 +462,9 @@ Common Crawl:
 - CPU > 80% → 크롤링 50% 감속
 - CPU < 30% → 프로파일 한도 내에서 크롤링 복원
 - 네트워크 > 90% → P2P 트래픽 30% 감소
+- 장시간 실행되는 worker 프로세스는 프로파일의 CPU nice 값과 Linux I/O
+  우선순위를 초기에 적용합니다. 대시보드/BGM 재생은 상호작용용 control
+  프로세스에 남겨 두어 crawler 우선순위 변경으로 오디오가 밀리지 않게 합니다.
 
 ### 단계적 서비스 감소 (Graceful Degradation)
 
@@ -464,6 +477,57 @@ Common Crawl:
 | 2 (과부하) | 리소스 과도한 부담 | 원격 검색 비활성, 로컬만 응답 |
 | 3 (심각) | 리소스 거의 고갈 | 읽기 전용 모드, 인덱싱 중단 |
 | 4 (방어) | 시스템 위험 | 속도 제한 강화, 로컬 검색만 허용 |
+
+---
+
+## 고급 서브시스템
+
+### 부트스트랩 탐색
+
+새로운 노드는 여러 병렬 소스를 통해 피어를 발견합니다:
+
+1. **정적 목록** — 번들된 `bootstrap/nodes.json`
+2. **DNS SRV** — `_infomesh._tcp.infomesh.io` SRV 레코드
+3. **DNS TXT** — `_infomesh-bootstrap.infomesh.io` TXT 레코드 (multiaddr)
+4. **GitHub** — 리포지토리에서 최신 `nodes.json` 가져오기
+5. **로컬 캐시** — 저장된 부트스트랩 결과 (1시간 TTL)
+
+모든 소스를 병렬로 시도하고 중복 제거합니다. TCP 지연시간으로 상태 확인합니다.
+
+### RSS 피드 모니터
+
+우선순위 기반 스케줄링으로 RSS/Atom 피드를 지속적으로 모니터링합니다:
+- **CRITICAL** (1분) — 보안 권고
+- **HIGH** (5분) — 속보, 릴리스
+- **NORMAL** (15분) — 블로그, 문서
+- **LOW** (60분) — 비정기 업데이트
+
+피드의 새 URL이 우선 크롤링을 트리거합니다. OPML 가져오기를 지원합니다.
+
+### JavaScript 렌더링
+
+SPA/React/Next.js 페이지를 위한 선택적 Playwright 통합:
+- 6개 신호 JS 감지 (SPA 루트, 프레임워크 블롭, noscript, 텍스트 비율)
+- 동시성 제한기 (3탭), 메모리 가드 (512MB)를 갖춘 헤드리스 Chromium
+- 지연 브라우저 실행 — JS가 많은 페이지가 감지될 때만 시작
+- 설정: `[crawl] js_rendering = true`
+
+### 검색 품질 파이프라인
+
+쿼리 처리에는 다음이 포함됩니다:
+- **CJK 토큰화** — 중국어/일본어/한국어 자동 감지, 바이그램 확장
+- **쿼리 확장** — 결과가 부족할 때 동의어 기반 확장
+- **의도 분류** — how-to, 정의, 비교, 오류 디버그, API 참조
+- **시간 힌트** — "지난 주", "오늘", "2025" → 자동 최신도 필터
+- **구절 선택** — TF 기반 점수로 결과별 최적 스니펫 선택
+- **암묵적 피드백** — fetch/skip/cite 신호가 시간이 지남에 따라 랭킹을 개선
+
+### 플러그인 시스템
+
+확장 가능한 훅 기반 아키텍처 (`infomesh/plugins.py`):
+- 10개 훅 포인트: PRE_CRAWL, POST_CRAWL, PRE_INDEX, POST_INDEX, PRE_SEARCH, POST_SEARCH, PRE_RANK, POST_RANK, CUSTOM_TOKENIZER, CUSTOM_SCORER
+- 데코레이터 기반 등록: `@registry.hook(HookPoint.PRE_SEARCH)`
+- 이름이 지정된 플러그인 지원이 있는 글로벌 레지스트리
 
 ---
 

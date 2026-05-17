@@ -1,4 +1,5 @@
 # ── Build stage ──────────────────────────────────────────────────────────
+# Supports linux/amd64 and linux/arm64 (#42: ARM64 Docker support)
 FROM python:3.13-slim AS builder
 
 # Install build tools for native extensions (P2P: fastecdsa, etc.)
@@ -57,9 +58,9 @@ RUN mkdir -p /data && chown infomesh:infomesh /data
 #   8080 — Admin API (FastAPI)
 EXPOSE 4001 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "from pathlib import Path; assert Path('/data/infomesh.pid').exists()" || exit 1
+# Health check — use the admin API /health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" || exit 1
 
 # Run as non-root
 USER infomesh

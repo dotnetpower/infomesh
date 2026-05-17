@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -720,6 +722,123 @@ class TestTextReport:
 class TestBGMPlayer:
     """Tests for BGMPlayer auto-restart and orphan detection."""
 
+    def test_mpv_preferred_over_ffplay(self) -> None:
+        """mpv should be selected first when both players are available."""
+        from unittest.mock import patch
+
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        def fake_which(cmd: str) -> str | None:
+            return f"/usr/bin/{cmd}" if cmd in {"mpv", "ffplay"} else None
+
+        with patch("shutil.which", side_effect=fake_which):
+            player = BGMPlayer()
+
+        assert player._player_cmd == "mpv"
+        assert "--gapless-audio=yes" in player._player_args
+        assert "--audio-buffer=2.0" in player._player_args
+
+    def test_auto_install_mpv_on_first_play(self) -> None:
+        """Dashboard opt-in mpv install should run on first playback."""
+        from unittest.mock import patch
+
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        installed = False
+
+        def fake_install() -> bool:
+            nonlocal installed
+            installed = True
+            return True
+
+        def fake_which(cmd: str) -> str | None:
+            if cmd == "mpv" and installed:
+                return "/usr/bin/mpv"
+            if cmd == "ffplay":
+                return "/usr/bin/ffplay"
+            return None
+
+        fake_path = Path("/tmp/bgm_test_fake.mp3")
+        with (
+            patch("shutil.which", side_effect=fake_which),
+            patch(
+                "infomesh.dashboard.bgm._install_mpv_best_effort",
+                side_effect=fake_install,
+            ) as mock_install,
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "resolve", return_value=fake_path),
+            patch("infomesh.dashboard.bgm.kill_orphaned_bgm"),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            player = BGMPlayer(auto_install_mpv=True)
+            assert mock_install.call_count == 0
+            result = player.play(fake_path, volume=50)
+
+        assert result is True
+        mock_install.assert_called_once_with()
+        assert player._player_cmd == "mpv"
+        assert mock_popen.call_args.args[0][0] == "mpv"
+
+    def test_auto_install_mpv_failure_falls_back_to_ffplay(self) -> None:
+        """Failed mpv auto-install should keep the ffplay fallback path."""
+        from unittest.mock import patch
+
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        def fake_which(cmd: str) -> str | None:
+            return "/usr/bin/ffplay" if cmd == "ffplay" else None
+
+        fake_path = Path("/tmp/bgm_test_fake.mp3")
+        with (
+            patch("shutil.which", side_effect=fake_which),
+            patch(
+                "infomesh.dashboard.bgm._install_mpv_best_effort",
+                return_value=False,
+            ) as mock_install,
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "resolve", return_value=fake_path),
+            patch("infomesh.dashboard.bgm.kill_orphaned_bgm"),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            player = BGMPlayer(auto_install_mpv=True)
+            result = player.play(fake_path, volume=50)
+
+        assert result is True
+        mock_install.assert_called_once_with()
+        assert player._player_cmd == "ffplay"
+        assert mock_popen.call_args.args[0][0] == "ffplay"
+
+    def test_mpv_installer_uses_non_interactive_apt(self) -> None:
+        """mpv auto-install should avoid interactive sudo prompts."""
+        from unittest.mock import MagicMock, patch
+
+        from infomesh.dashboard.bgm import _install_mpv_best_effort
+
+        installed = False
+
+        def fake_which(cmd: str) -> str | None:
+            if cmd == "mpv":
+                return "/usr/bin/mpv" if installed else None
+            if cmd in {"apt-get", "sudo"}:
+                return f"/usr/bin/{cmd}"
+            return None
+
+        def fake_run(command: list[str], **kwargs: object) -> MagicMock:
+            nonlocal installed
+            assert command == ["sudo", "-n", "apt-get", "install", "-y", "mpv"]
+            assert kwargs["stdin"] == subprocess.DEVNULL
+            installed = True
+            result = MagicMock()
+            result.returncode = 0
+            return result
+
+        with (
+            patch("shutil.which", side_effect=fake_which),
+            patch("infomesh.dashboard.bgm.os.geteuid", return_value=1000),
+            patch("subprocess.run", side_effect=fake_run),
+        ):
+            assert _install_mpv_best_effort(timeout_seconds=1) is True
+
     def test_check_and_restart_when_intentionally_stopped(self) -> None:
         """check_and_restart should not restart after stop()."""
         from infomesh.dashboard.bgm import BGMPlayer
@@ -796,6 +915,42 @@ class TestBGMPlayer:
             assert result is True
             assert player._intentionally_stopped is False
             assert player._auto_restart_count == 0
+            if os.name == "posix":
+                assert mock_popen.call_args.kwargs["start_new_session"] is True
+                assert "preexec_fn" in mock_popen.call_args.kwargs
+
+    def test_play_uses_mpv_gapless_buffering(self) -> None:
+        """mpv playback should use gapless looping and audio buffering."""
+        from unittest.mock import patch
+
+        from infomesh.dashboard.bgm import BGMPlayer
+
+        player = BGMPlayer()
+        player._player_cmd = "mpv"
+        player._player_args = [
+            "--no-video",
+            "--really-quiet",
+            "--no-terminal",
+            "--loop-file=inf",
+            "--gapless-audio=yes",
+            "--audio-buffer=2.0",
+        ]
+
+        fake_path = Path("/tmp/bgm_test_fake.mp3")
+        with (
+            patch.object(Path, "exists", return_value=True),
+            patch.object(Path, "resolve", return_value=fake_path),
+            patch("infomesh.dashboard.bgm.kill_orphaned_bgm"),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            mock_popen.return_value.poll.return_value = None
+            result = player.play(fake_path, volume=50)
+
+        cmd = mock_popen.call_args.args[0]
+        assert result is True
+        assert "--loop-file=inf" in cmd
+        assert "--gapless-audio=yes" in cmd
+        assert "--audio-buffer=2.0" in cmd
 
     def test_kill_orphaned_bgm_patterns(self) -> None:
         """kill_orphaned_bgm uses both patterns."""
@@ -817,12 +972,13 @@ class TestBGMPlayer:
 class TestBGMIdleStopConfig:
     """Tests for bgm_idle_stop configuration option."""
 
-    def test_bgm_idle_stop_default_true(self) -> None:
-        """bgm_idle_stop defaults to True."""
+    def test_bgm_idle_stop_default_false(self) -> None:
+        """bgm_idle_stop defaults to False to avoid stop/start stutter."""
         from infomesh.config import DashboardConfig
 
         dc = DashboardConfig()
-        assert dc.bgm_idle_stop is True
+        assert dc.bgm_idle_stop is False
+        assert dc.bgm_auto_install_mpv is True
 
     def test_bgm_idle_stop_can_be_disabled(self) -> None:
         """bgm_idle_stop can be set to False."""

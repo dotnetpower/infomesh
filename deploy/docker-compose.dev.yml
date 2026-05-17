@@ -1,0 +1,86 @@
+# InfoMesh Development Cluster — 3-node P2P test environment
+# Feature #40: docker-compose dev cluster for local testing
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#   # Node 1 admin: http://localhost:8080/dashboard
+#   # Node 2 admin: http://localhost:8082/dashboard
+#   # Node 3 admin: http://localhost:8084/dashboard
+
+services:
+  node1:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: infomesh-node1
+    ports:
+      - "4001:4001"   # P2P
+      - "8080:8080"   # Admin API + Dashboard
+      - "8081:8081"   # MCP HTTP
+    volumes:
+      - node1-data:/data
+    environment:
+      INFOMESH_NODE_DATA_DIR: /data
+      INFOMESH_NODE_LISTEN_PORT: "4001"
+      INFOMESH_RESOURCES_PROFILE: minimal
+    command: ["infomesh", "serve", "--mcp-http"]
+    restart: unless-stopped
+    healthcheck:
+      test: >-
+        python -c "import urllib.request;
+        urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  node2:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: infomesh-node2
+    ports:
+      - "4002:4001"
+      - "8082:8080"
+      - "8083:8081"
+    volumes:
+      - node2-data:/data
+    environment:
+      INFOMESH_NODE_DATA_DIR: /data
+      INFOMESH_NODE_LISTEN_PORT: "4001"
+      INFOMESH_RESOURCES_PROFILE: minimal
+      INFOMESH_NETWORK_BOOTSTRAP_NODES: >-
+        /ip4/node1/tcp/4001
+    depends_on:
+      node1:
+        condition: service_healthy
+    command: ["infomesh", "serve", "--mcp-http"]
+    restart: unless-stopped
+
+  node3:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: infomesh-node3
+    ports:
+      - "4003:4001"
+      - "8084:8080"
+      - "8085:8081"
+    volumes:
+      - node3-data:/data
+    environment:
+      INFOMESH_NODE_DATA_DIR: /data
+      INFOMESH_NODE_LISTEN_PORT: "4001"
+      INFOMESH_RESOURCES_PROFILE: minimal
+      INFOMESH_NETWORK_BOOTSTRAP_NODES: >-
+        /ip4/node1/tcp/4001
+    depends_on:
+      node1:
+        condition: service_healthy
+    command: ["infomesh", "serve", "--mcp-http"]
+    restart: unless-stopped
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
